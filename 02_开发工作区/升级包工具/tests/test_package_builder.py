@@ -233,17 +233,19 @@ class PackageBuilderTests(unittest.TestCase):
                 with self.assertRaises(builder.PackageBuildError):
                     builder._assert_safe_relative_path(invalid)
 
-        # 反斜杠在 macOS 上可作为文件名，生成器也必须按 Windows 风险拒绝。
-        dangerous = self.payload / "_程序文件" / "static" / r"..\outside.css"
-        dangerous.write_text("bad", encoding="utf-8")
-        with self.assertRaisesRegex(builder.PackageBuildError, "反斜杠"):
-            self.build()
+        # 非 Windows 系统允许创建这些名称，借此验证目录遍历层也会拒绝它们。
+        # Windows 文件系统本身不会创建这些名称，上面的直接校验已覆盖同一风险。
+        if os.name != "nt":
+            dangerous = self.payload / "_程序文件" / "static" / r"..\outside.css"
+            dangerous.write_text("bad", encoding="utf-8")
+            with self.assertRaisesRegex(builder.PackageBuildError, "反斜杠"):
+                self.build()
 
-        dangerous.unlink()
-        windows_invalid = self.payload / "_程序文件" / "static" / "bad?.css"
-        windows_invalid.write_text("bad", encoding="utf-8")
-        with self.assertRaisesRegex(builder.PackageBuildError, "Windows 非法字符"):
-            self.build()
+            dangerous.unlink()
+            windows_invalid = self.payload / "_程序文件" / "static" / "bad?.css"
+            windows_invalid.write_text("bad", encoding="utf-8")
+            with self.assertRaisesRegex(builder.PackageBuildError, "Windows 非法字符"):
+                self.build()
 
     def test_windows_case_collision_registration_is_rejected(self):
         seen = {}
