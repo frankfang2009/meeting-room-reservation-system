@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
@@ -280,7 +281,7 @@ class MeetingRoomSystemTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertEqual(sum("预约成功" in result for result in results), 1)
         self.assertEqual(sum("该时段已被预约" in result for result in results), 1)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db:
             count = db.execute(
                 """
                 SELECT COUNT(*) FROM reservations
@@ -645,7 +646,7 @@ class MeetingRoomSystemTests(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         self.assertFalse(list(backup_dir.glob("*.db-wal")))
         self.assertFalse(list(backup_dir.glob("*.db-shm")))
-        with sqlite3.connect(backups[0]) as backup_db:
+        with closing(sqlite3.connect(backups[0])) as backup_db:
             self.assertEqual(
                 backup_db.execute("PRAGMA journal_mode").fetchone()[0], "delete"
             )
@@ -815,21 +816,23 @@ class MigrateCheckCommandTests(unittest.TestCase):
     def test_precheck_success_and_failure_exit_codes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             healthy = Path(temp_dir) / "healthy.db"
-            with sqlite3.connect(healthy) as db:
+            with closing(sqlite3.connect(healthy)) as db:
                 db.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY)")
+                db.commit()
 
             success = self.run_command("--precheck", healthy)
             self.assertEqual(success.returncode, 0, success.stderr)
             self.assertIn("数据库预检通过", success.stdout)
 
             broken = Path(temp_dir) / "broken.db"
-            with sqlite3.connect(broken) as db:
+            with closing(sqlite3.connect(broken)) as db:
                 db.execute("PRAGMA foreign_keys = OFF")
                 db.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
                 db.execute(
                     "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id))"
                 )
                 db.execute("INSERT INTO child (parent_id) VALUES (999)")
+                db.commit()
 
             log_path = Path(temp_dir) / "upgrade.log"
             environment = dict(os.environ)
@@ -857,7 +860,7 @@ class MigrateCheckCommandTests(unittest.TestCase):
             success = self.run_command("--migrate", environment=environment)
             self.assertEqual(success.returncode, 0, success.stderr)
             self.assertIn("结构版本 1", success.stdout)
-            with sqlite3.connect(data_dir / "reservation.db") as db:
+            with closing(sqlite3.connect(data_dir / "reservation.db")) as db:
                 self.assertEqual(
                     db.execute(
                         "SELECT value FROM app_meta WHERE key = 'schema_version'"
@@ -868,7 +871,7 @@ class MigrateCheckCommandTests(unittest.TestCase):
             future_data_dir = Path(temp_dir) / "future-data"
             future_data_dir.mkdir()
             future_database = future_data_dir / "reservation.db"
-            with sqlite3.connect(future_database) as db:
+            with closing(sqlite3.connect(future_database)) as db:
                 db.execute(
                     "CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
                 )
@@ -876,6 +879,7 @@ class MigrateCheckCommandTests(unittest.TestCase):
                     "INSERT INTO app_meta (key, value) VALUES (?, ?)",
                     (("initial_seed_complete", "1"), ("schema_version", "2")),
                 )
+                db.commit()
 
             environment["MEETING_ROOM_DATA_DIR"] = str(future_data_dir)
             failure = self.run_command("--migrate", environment=environment)
