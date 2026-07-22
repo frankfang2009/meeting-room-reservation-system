@@ -27,10 +27,65 @@ function Invoke-NativeChecked {
     return $exitCode
 }
 
+function Invoke-PythonCodeChecked {
+    param(
+        [string]$Python,
+        [string]$Code,
+        [string[]]$Arguments = @()
+    )
+    $variableName = 'MEETING_ROOM_CI_PYTHON_CODE'
+    $hadPreviousValue = Test-Path -LiteralPath "Env:$variableName"
+    $previousValue = [Environment]::GetEnvironmentVariable($variableName)
+    try {
+        [Environment]::SetEnvironmentVariable($variableName, $Code)
+        $bootstrap = "import os; exec(os.environ['MEETING_ROOM_CI_PYTHON_CODE'])"
+        $result = Invoke-NativeChecked -FilePath $Python -Arguments (@('-c', $bootstrap) + $Arguments)
+        return $result
+    }
+    finally {
+        if ($hadPreviousValue) {
+            [Environment]::SetEnvironmentVariable($variableName, $previousValue)
+        }
+        else {
+            Remove-Item -LiteralPath "Env:$variableName" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Invoke-PythonCodeCapture {
+    param(
+        [string]$Python,
+        [string]$Code,
+        [string[]]$Arguments = @()
+    )
+    $variableName = 'MEETING_ROOM_CI_PYTHON_CODE'
+    $hadPreviousValue = Test-Path -LiteralPath "Env:$variableName"
+    $previousValue = [Environment]::GetEnvironmentVariable($variableName)
+    try {
+        [Environment]::SetEnvironmentVariable($variableName, $Code)
+        $bootstrap = "import os; exec(os.environ['MEETING_ROOM_CI_PYTHON_CODE'])"
+        $nativeArguments = @('-c', $bootstrap) + $Arguments
+        $output = @(& $Python @nativeArguments)
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 0) {
+            throw "Python 测试代码失败（退出码 $exitCode）"
+        }
+        return ($output -join "`n").Trim()
+    }
+    finally {
+        if ($hadPreviousValue) {
+            [Environment]::SetEnvironmentVariable($variableName, $previousValue)
+        }
+        else {
+            Remove-Item -LiteralPath "Env:$variableName" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Copy-TreeWithRobocopy {
     param([string]$Source, [string]$Destination)
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $output = @(& robocopy.exe $Source $Destination /MIR /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NP)
+    $output = @(& robocopy.exe $Source $Destination /MIR /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NP /NFL /NDL /NJH)
     $exitCode = $LASTEXITCODE
     foreach ($line in $output) { Write-Host ([string]$line) }
     if ($exitCode -lt 0 -or $exitCode -gt 7) {
@@ -49,16 +104,13 @@ function New-TestInstall {
     $runtimePythonw = Join-Path $runtime 'pythonw.exe'
     Assert-True (Test-Path -LiteralPath $runtimePython -PathType Leaf) '测试 runtime 缺少 python.exe'
     Assert-True (Test-Path -LiteralPath $runtimePythonw -PathType Leaf) '测试 runtime 缺少 pythonw.exe'
-    Invoke-NativeChecked -FilePath $runtimePython -Arguments @('-c', 'import flask, waitress; print("runtime-ok")') | Out-Null
+    Invoke-PythonCodeChecked -Python $runtimePython -Code 'import flask, waitress; print("runtime-ok")' | Out-Null
 
     $programRoot = Join-Path $root '_程序文件'
     $env:MEETING_ROOM_INITIAL_ADMIN_PASSWORD = 'CI-Only-Admin-Password-2026'
     Push-Location $programRoot
     try {
-        Invoke-NativeChecked -FilePath $runtimePython -Arguments @(
-            '-c',
-            'from app import app, init_db; app.app_context().push(); init_db()'
-        ) | Out-Null
+        Invoke-PythonCodeChecked -Python $runtimePython -Code 'from app import app, init_db; app.app_context().push(); init_db()' | Out-Null
     }
     finally {
         Pop-Location
@@ -83,7 +135,7 @@ db.execute("INSERT INTO app_meta (key, value) VALUES ('ci_preserve_marker', 'kee
 db.commit()
 db.close()
 '@
-    Invoke-NativeChecked -FilePath $runtimePython -Arguments @('-c', $seedCode, $database) | Out-Null
+    Invoke-PythonCodeChecked -Python $runtimePython -Code $seedCode -Arguments @($database) | Out-Null
 
     return [pscustomobject]@{
         Root = $root
@@ -110,9 +162,7 @@ state = {
 print(json.dumps(state, ensure_ascii=False, sort_keys=True))
 db.close()
 '@
-    $output = & $Install.RuntimePython -c $stateCode $Install.Database
-    if ($LASTEXITCODE -ne 0) { throw '无法读取测试数据库状态' }
-    return ($output -join "`n").Trim()
+    return Invoke-PythonCodeCapture -Python $Install.RuntimePython -Code $stateCode -Arguments @($Install.Database)
 }
 
 function Invoke-UpgradeBat {
