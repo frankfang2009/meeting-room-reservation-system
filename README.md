@@ -41,4 +41,5 @@ GitHub Actions 的 Windows PowerShell 5.1 作业会重新生成升级 BAT，并�
 ## 安全
 
 仓库忽略所有 `data`、`logs`、`backups`、runtime、本机虚拟环境、数据库、首次登录凭据和
-V1.0.0 正式交付归档。不要把客户安装目录直接复制到仓库。
+V1.0.0 正式交付归档。升级包输出目录中仅明确用于 Windows 验收的 V1.0.1 候选 BAT 纳入仓库；
+不要把客户安装目录直接复制到仓库。

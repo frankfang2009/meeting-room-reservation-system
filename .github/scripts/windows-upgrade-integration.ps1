@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $toolRoot = Join-Path $repoRoot '02_开发工作区\升级包工具'
 $payloadRoot = Join-Path $toolRoot '负载示例'
+$candidatePackage = Join-Path $toolRoot '输出-待Windows验收\升级到V1.0.1.bat'
+$expectedCandidateSha256 = '2901ea1f36997bb0c58e6d3302098f2c1aa66fe3c29c46c8b5b89d0981a0acc7'
 $oldReference = Join-Path $repoRoot '02_开发工作区\Windows部署目录-V1.0.0'
 $workRoot = Join-Path $env:RUNNER_TEMP 'meeting-room-upgrade-ci'
 $packageRoot = Join-Path $workRoot 'packages'
@@ -190,13 +192,10 @@ $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 Assert-True ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'GitHub Windows runner 不是管理员，无法验证真实 BAT 主路径'
 
 $goodPackage = Join-Path $packageRoot '升级到V1.0.1.bat'
-Invoke-NativeChecked -FilePath $hostPython -Arguments @(
-    (Join-Path $toolRoot '制作升级包.py'),
-    $payloadRoot,
-    '1.0.1',
-    '--out',
-    $goodPackage
-) | Out-Null
+Assert-True (Test-Path -LiteralPath $candidatePackage -PathType Leaf) '仓库缺少待验收的 V1.0.1 BAT'
+$candidateSha256 = (Get-FileHash -LiteralPath $candidatePackage -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-True ($candidateSha256 -eq $expectedCandidateSha256) "候选 BAT SHA-256 不匹配：$candidateSha256"
+Copy-Item -LiteralPath $candidatePackage -Destination $goodPackage
 
 $brokenPayload = Join-Path $workRoot 'broken-payload'
 Copy-TreeWithRobocopy -Source $payloadRoot -Destination $brokenPayload
