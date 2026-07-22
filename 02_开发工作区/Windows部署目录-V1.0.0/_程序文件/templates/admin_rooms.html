@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}会议室管理 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">管理后台</p><h1>会议室管理</h1></div></section>
+{% include "_admin_tabs.html" %}
+
+<div class="admin-grid">
+    <section class="card side-form-card">
+        <h2>添加会议室</h2>
+        <form method="post" action="{{ url_for('admin_add_room') }}" class="stack-form">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <label><span>会议室名称</span><input type="text" name="name" maxlength="80" required placeholder="例如：笔录室4"></label>
+            <label><span>排序号</span><input type="number" name="sort_order" value="0"><small>数字越小越靠前</small></label>
+            <button class="button button-primary button-wide" type="submit">添加会议室</button>
+        </form>
+    </section>
+
+    <section class="card table-card">
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead><tr><th>ID</th><th>名称</th><th>排序</th><th>状态</th><th>未来预约数</th><th>操作</th></tr></thead>
+                <tbody>
+                {% for room in rooms %}
+                    <tr>
+                        <td class="secondary-text">{{ room.id }}</td>
+                        <td>{{ room.name }}</td>
+                        <td>{{ room.sort_order }}</td>
+                        <td><span class="status status-{{ 'active' if room.is_active else 'disabled' }}">{{ '启用' if room.is_active else '停用' }}</span></td>
+                        <td>{{ room.reservation_count }}</td>
+                        <td class="action-cell">
+                            <button class="button button-secondary button-small" type="button" data-open-dialog="edit-room-{{ room.id }}">编辑</button>
+                            <dialog class="edit-dialog" id="edit-room-{{ room.id }}">
+                                <form method="post" action="{{ url_for('admin_edit_room', rid=room.id) }}" class="dialog-form">
+                                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                    <div class="dialog-heading"><h2>编辑会议室</h2><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+                                    <label><span>名称</span><input type="text" name="name" maxlength="80" value="{{ room.name }}" required></label>
+                                    <label><span>排序号</span><input type="number" name="sort_order" value="{{ room.sort_order }}"></label>
+                                    <label class="check-label"><input type="checkbox" name="is_active" value="1" {% if room.is_active %}checked{% endif %}><span>启用会议室</span></label>
+                                    <p class="form-help">停用后，该会议室会从预约日历隐藏；已有预约不会自动取消。</p>
+                                    <div class="dialog-actions"><button class="button button-secondary" type="button" data-close-dialog>取消</button><button class="button button-primary" type="submit">保存修改</button></div>
+                                </form>
+                            </dialog>
+                            {% if room.reservation_count == 0 %}
+                            <form method="post" action="{{ url_for('admin_delete_room', rid=room.id) }}" data-confirm="确定删除这个会议室吗？历史预约仍会保留。">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <button class="button button-danger button-small" type="submit">删除</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

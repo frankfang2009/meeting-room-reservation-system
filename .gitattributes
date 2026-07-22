@@ -1,0 +1,12 @@
+* text=auto
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.zip binary
+*.pdf binary

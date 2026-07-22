@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}会议室预约系统{% endblock %}</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    {% if current_user %}
+    <header class="site-header">
+        <div class="header-inner">
+            <a class="brand" href="{{ url_for('index') }}">会议室预约系统</a>
+            <nav class="main-nav" aria-label="主导航">
+                <a class="{% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">预约日历</a>
+                <a class="{% if request.endpoint == 'my_reservations' %}active{% endif %}" href="{{ url_for('my_reservations') }}">我的预约</a>
+                {% if current_user.is_admin %}
+                <a class="{% if request.endpoint and request.endpoint.startswith('admin') %}active{% endif %}" href="{{ url_for('admin') }}">管理后台</a>
+                {% endif %}
+            </nav>
+            <div class="account-area">
+                <span class="account-name">{{ current_user.display_name }}</span>
+                {% if current_user.is_admin %}<span class="role-label">管理员</span>{% endif %}
+                <a class="logout-link" href="{{ url_for('logout') }}">退出</a>
+            </div>
+        </div>
+    </header>
+    {% endif %}
+
+    <div class="flash-area" aria-live="polite">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">
+                <span>{{ message }}</span>
+                <button type="button" class="flash-close" aria-label="关闭提示">×</button>
+            </div>
+            {% endfor %}
+        {% endwith %}
+    </div>
+
+    <main class="page-shell">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

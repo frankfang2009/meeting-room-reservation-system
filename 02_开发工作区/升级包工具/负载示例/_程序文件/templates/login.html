@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}登录 - 会议室预约系统{% endblock %}
+{% block body_class %}login-page{% endblock %}
+{% block content %}
+<section class="login-wrap">
+    <div class="login-card">
+        <div class="login-mark" aria-hidden="true">会</div>
+        <h1>会议室预约系统</h1>
+        <p class="muted">请使用单位分配的账号登录</p>
+        <form method="post" class="stack-form" novalidate>
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <label>
+                <span>用户名</span>
+                <input type="text" name="username" autocomplete="username" maxlength="80" required autofocus placeholder="请输入用户名">
+            </label>
+            <label>
+                <span>密码</span>
+                <input type="password" name="password" autocomplete="current-password" maxlength="256" required placeholder="请输入密码">
+            </label>
+            <button class="button button-primary button-wide" type="submit">登录</button>
+        </form>
+    </div>
+</section>
+{% endblock %}

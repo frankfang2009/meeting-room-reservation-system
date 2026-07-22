@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}预约管理 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">管理后台</p><h1>预约管理</h1></div></section>
+{% include "_admin_tabs.html" %}
+
+<form method="get" class="card filter-bar">
+    <label><span>开始日期</span><input type="date" name="start_date" value="{{ start_date }}"></label>
+    <label><span>结束日期</span><input type="date" name="end_date" value="{{ end_date }}"></label>
+    <button class="button button-primary" type="submit">筛选</button>
+    <a class="button button-secondary" href="{{ url_for('admin_reservations') }}">重置</a>
+</form>
+
+{% if reservations %}
+<section class="card table-card">
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead><tr><th>日期</th><th>时间</th><th>会议室</th><th>预约人</th><th>当事人/单位</th><th>案号</th><th>备注</th><th>状态</th><th>操作</th></tr></thead>
+            <tbody>
+            {% for reservation in reservations %}
+                <tr>
+                    <td>{{ reservation.reserve_date }}</td>
+                    <td class="nowrap">{{ reservation.start_time }}–{{ reservation.end_time }}</td>
+                    <td>{{ reservation.room_name }}</td>
+                    <td>{{ reservation.display_name }}</td>
+                    <td>{{ reservation.party_name or '—' }}</td>
+                    <td>{{ reservation.case_number or '—' }}</td>
+                    <td>{{ reservation.notes or '—' }}</td>
+                    <td><span class="status status-{{ 'pending' if reservation.display_status == '待使用' else ('cancelled' if reservation.display_status == '已取消' else 'done') }}">{{ reservation.display_status }}</span></td>
+                    <td>
+                        {% if reservation.display_status == '待使用' %}
+                        <form method="post" action="{{ url_for('admin_cancel_reservation', res_id=reservation.id) }}" data-confirm="确定取消这条预约吗？">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="start_date" value="{{ start_date }}">
+                            <input type="hidden" name="end_date" value="{{ end_date }}">
+                            <button class="button button-danger button-small" type="submit">取消</button>
+                        </form>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+<p class="result-count">共 {{ reservations|length }} 条记录</p>
+{% else %}
+<div class="empty-state card"><h2>没有预约记录</h2><p>当前日期范围内没有预约。</p></div>
+{% endif %}
+{% endblock %}

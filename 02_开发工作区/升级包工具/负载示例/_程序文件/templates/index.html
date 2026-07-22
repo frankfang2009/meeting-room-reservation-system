@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}预约日历 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="page-heading calendar-heading">
+    <div>
+        <p class="eyebrow">预约日历</p>
+        <h1>{{ current_date.strftime('%Y年%m月%d日') }}</h1>
+    </div>
+    <div class="date-controls" aria-label="日期切换">
+        <a class="button button-secondary" href="{{ url_for('index', date=prev_date) }}">前一天</a>
+        <a class="button {% if current_date == today %}button-primary{% else %}button-secondary{% endif %}" href="{{ url_for('index') }}">今天</a>
+        <a class="button button-secondary" href="{{ url_for('index', date=next_date) }}">后一天</a>
+    </div>
+</section>
+
+{% if rooms %}
+<section class="card calendar-card" aria-label="会议室预约表">
+    <div class="table-scroll calendar-scroll">
+        <table class="calendar-table">
+            <thead>
+                <tr>
+                    <th class="sticky-time">时间</th>
+                    {% for room in rooms %}<th>{{ room.name }}</th>{% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for slot in time_slots %}
+                <tr>
+                    <th class="sticky-time time-cell">{{ slot }}</th>
+                    {% for room in rooms %}
+                        {% set reservation = room.slot_map.get(slot) %}
+                        {% if reservation %}
+                        <td class="calendar-slot busy-slot" title="{{ reservation.party_name or '' }} {{ reservation.case_number or '' }}（{{ reservation.start_time }}–{{ reservation.end_time }}，预约人：{{ reservation.display_name }}）">
+                            <strong>{{ reservation.display_name }}</strong>
+                            {% if reservation.party_name %}<span>{{ reservation.party_name }}</span>{% endif %}
+                        </td>
+                        {% else %}
+                        <td class="calendar-slot free-slot">
+                            <a href="{{ url_for('reserve', room_id=room.id, date=current_date, start_time=slot) }}">空闲</a>
+                        </td>
+                        {% endif %}
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+<div class="calendar-legend">
+    <span><i class="legend-dot free-dot"></i>空闲可预约</span>
+    <span><i class="legend-dot busy-dot"></i>已预约</span>
+    <span class="legend-help">点击“空闲”即可预约</span>
+</div>
+{% else %}
+<div class="empty-state card">
+    <h2>暂无可用会议室</h2>
+    <p>请联系管理员添加或启用会议室。</p>
+</div>
+{% endif %}
+{% endblock %}

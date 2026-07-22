@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}我的预约 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="page-heading">
+    <div>
+        <p class="eyebrow">个人记录</p>
+        <h1>我的预约</h1>
+    </div>
+</section>
+
+{% if reservations %}
+<section class="card table-card">
+    <div class="table-scroll">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>日期</th><th>时间</th><th>会议室</th><th>当事人/单位</th>
+                    <th>案号</th><th>备注</th><th>状态</th><th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for reservation in reservations %}
+                <tr>
+                    <td>{{ reservation.reserve_date }}</td>
+                    <td class="nowrap">{{ reservation.start_time }}–{{ reservation.end_time }}</td>
+                    <td>{{ reservation.room_name }}</td>
+                    <td>{{ reservation.party_name or '—' }}</td>
+                    <td>{{ reservation.case_number or '—' }}</td>
+                    <td>{{ reservation.notes or '—' }}</td>
+                    <td><span class="status status-{{ 'pending' if reservation.display_status == '待使用' else ('cancelled' if reservation.display_status == '已取消' else 'done') }}">{{ reservation.display_status }}</span></td>
+                    <td>
+                        {% if reservation.display_status == '待使用' %}
+                        <form method="post" action="{{ url_for('cancel_reservation', res_id=reservation.id) }}" data-confirm="取消后该时段会重新开放，确定取消吗？">
+                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                            <button class="button button-danger button-small" type="submit">取消预约</button>
+                        </form>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% else %}
+<div class="empty-state card">
+    <h2>还没有预约记录</h2>
+    <p>在预约日历中点击空闲时段即可创建预约。</p>
+    <a class="button button-primary" href="{{ url_for('index') }}">去预约</a>
+</div>
+{% endif %}
+{% endblock %}

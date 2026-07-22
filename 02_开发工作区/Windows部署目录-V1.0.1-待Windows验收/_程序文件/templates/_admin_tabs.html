@@ -1,0 +1,5 @@
+<nav class="admin-tabs" aria-label="管理后台">
+    <a class="{% if request.endpoint == 'admin_reservations' %}active{% endif %}" href="{{ url_for('admin_reservations') }}">预约管理</a>
+    <a class="{% if request.endpoint == 'admin_users' %}active{% endif %}" href="{{ url_for('admin_users') }}">用户管理</a>
+    <a class="{% if request.endpoint == 'admin_rooms' %}active{% endif %}" href="{{ url_for('admin_rooms') }}">会议室管理</a>
+</nav>

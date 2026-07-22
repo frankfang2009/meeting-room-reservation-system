@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - 会议室预约系统{% endblock %}
+{% block content %}
+<div class="empty-state card error-state">
+    <h1>{{ title }}</h1>
+    <p>{{ message }}</p>
+    <a class="button button-primary" href="{{ url_for('index') if current_user else url_for('login') }}">返回</a>
+</div>
+{% endblock %}

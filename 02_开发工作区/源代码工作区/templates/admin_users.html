@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}用户管理 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">管理后台</p><h1>用户管理</h1></div></section>
+{% include "_admin_tabs.html" %}
+
+<div class="admin-grid">
+    <section class="card side-form-card">
+        <h2>添加用户</h2>
+        <form method="post" action="{{ url_for('admin_add_user') }}" class="stack-form">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <label><span>用户名</span><input type="text" name="username" maxlength="80" required></label>
+            <label><span>显示名称</span><input type="text" name="display_name" maxlength="80" required></label>
+            <label><span>密码</span><input type="password" name="password" maxlength="256" autocomplete="new-password" required></label>
+            <label class="check-label"><input type="checkbox" name="is_admin" value="1"><span>管理员权限</span></label>
+            <button class="button button-primary button-wide" type="submit">添加用户</button>
+        </form>
+    </section>
+
+    <section class="card table-card">
+        <div class="table-scroll">
+            <table class="data-table">
+                <thead><tr><th>ID</th><th>用户名</th><th>显示名称</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody>
+                {% for user in users %}
+                    <tr>
+                        <td class="secondary-text">{{ user.id }}</td>
+                        <td>{{ user.username }}</td>
+                        <td>{{ user.display_name }}</td>
+                        <td>{{ '管理员' if user.is_admin else '普通用户' }}</td>
+                        <td><span class="status status-{{ 'active' if user.is_active else 'disabled' }}">{{ '启用' if user.is_active else '禁用' }}</span></td>
+                        <td class="action-cell">
+                            <button class="button button-secondary button-small" type="button" data-open-dialog="edit-user-{{ user.id }}">编辑</button>
+                            <dialog class="edit-dialog" id="edit-user-{{ user.id }}">
+                                <form method="post" action="{{ url_for('admin_edit_user', uid=user.id) }}" class="dialog-form">
+                                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                    <div class="dialog-heading"><h2>编辑用户</h2><button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button></div>
+                                    <label><span>用户名</span><input type="text" name="username" maxlength="80" value="{{ user.username }}" required></label>
+                                    <label><span>显示名称</span><input type="text" name="display_name" maxlength="80" value="{{ user.display_name }}" required></label>
+                                    <label><span>新密码</span><input type="password" name="new_password" maxlength="256" autocomplete="new-password" placeholder="留空表示不修改"></label>
+                                    <label class="check-label"><input type="checkbox" name="is_admin" value="1" {% if user.is_admin %}checked{% endif %}><span>管理员权限</span></label>
+                                    <label class="check-label"><input type="checkbox" name="is_active" value="1" {% if user.is_active %}checked{% endif %}><span>启用账号</span></label>
+                                    <div class="dialog-actions"><button class="button button-secondary" type="button" data-close-dialog>取消</button><button class="button button-primary" type="submit">保存修改</button></div>
+                                </form>
+                            </dialog>
+                            {% if user.id != current_user.id and user.is_active %}
+                            <form method="post" action="{{ url_for('admin_delete_user', uid=user.id) }}" data-confirm="确定禁用这个用户吗？">
+                                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                                <button class="button button-danger button-small" type="submit">禁用</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+{% endblock %}

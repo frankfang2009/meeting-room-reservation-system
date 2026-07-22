@@ -1,0 +1,61 @@
+name: Windows upgrade validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-upgrade:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: 02_开发工作区/源代码工作区/requirements.txt
+
+      - name: Install frozen runtime dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r "02_开发工作区/源代码工作区/requirements.txt"
+
+      - name: Run application and migration tests
+        shell: powershell
+        run: |
+          Set-Location "02_开发工作区/源代码工作区"
+          python -m unittest discover -s tests -v
+
+      - name: Run package-builder tests
+        shell: powershell
+        run: |
+          Set-Location "02_开发工作区/升级包工具"
+          python -m unittest discover -s tests -v
+
+      - name: Run real BAT integration tests with Windows PowerShell 5.1
+        shell: powershell
+        run: .\.github\scripts\windows-upgrade-integration.ps1
+
+      - name: Upload generated packages and upgrade logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-upgrade-evidence
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}\meeting-room-upgrade-ci\packages\*.bat
+            ${{ runner.temp }}\meeting-room-upgrade-ci\installs\**\upgrade-*.log

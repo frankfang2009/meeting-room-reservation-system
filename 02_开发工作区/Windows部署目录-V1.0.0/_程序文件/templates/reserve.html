@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}新建预约 - 会议室预约系统{% endblock %}
+{% block content %}
+<section class="form-page">
+    <div class="page-heading compact-heading">
+        <div>
+            <p class="eyebrow">预约日历</p>
+            <h1>新建预约</h1>
+            <p class="muted">请选择会议室和使用时间。</p>
+        </div>
+    </div>
+
+    <form method="post" class="card form-card" novalidate>
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="form-grid two-columns">
+            <label>
+                <span>会议室 <b class="required">*</b></span>
+                <select name="room_id" required>
+                    {% for room in rooms %}
+                    <option value="{{ room.id }}" {% if room.id == room_id %}selected{% endif %}>{{ room.name }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>预约日期 <b class="required">*</b></span>
+                <input type="date" name="reserve_date" value="{{ reserve_date }}" required>
+            </label>
+            <label>
+                <span>开始时间 <b class="required">*</b></span>
+                <select name="start_time" id="start-time" required>
+                    {% for value in start_times %}
+                    <option value="{{ value }}" {% if value == start_time %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>结束时间 <b class="required">*</b></span>
+                <select name="end_time" id="end-time" required>
+                    {% for value in end_times %}
+                    <option value="{{ value }}" {% if value == end_time %}selected{% endif %}>{{ value }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                <span>当事人/单位名称</span>
+                <input type="text" name="party_name" maxlength="120" value="{{ party_name }}" placeholder="选填">
+            </label>
+            <label>
+                <span>案号</span>
+                <input type="text" name="case_number" maxlength="120" value="{{ case_number }}" placeholder="选填">
+            </label>
+            <label class="full-width">
+                <span>备注</span>
+                <textarea name="notes" maxlength="500" rows="3" placeholder="选填">{{ notes }}</textarea>
+            </label>
+        </div>
+        <div class="form-actions">
+            <button class="button button-primary" type="submit">确认预约</button>
+            <a class="button button-secondary" href="{{ url_for('index', date=reserve_date) }}">返回日历</a>
+        </div>
+    </form>
+</section>
+{% endblock %}
