@@ -482,6 +482,15 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertNotRegex(
             powershell, r"&\s+\$FilePath\s+@Arguments\s+2>&1"
         )
+        self.assertIn("function Replace-FileAtomic", powershell)
+        self.assertIn(
+            "[IO.File]::Replace($Temporary, $Destination, $backup, $true)",
+            powershell,
+        )
+        self.assertNotIn("[IO.File]::Replace($temporary, $Path, $null)", powershell)
+        self.assertNotIn(
+            "[IO.File]::Replace($temporary, $destination, $null)", powershell
+        )
 
         invoke_upgrade = powershell[powershell.index("function Invoke-Upgrade") :]
         self.assertLess(

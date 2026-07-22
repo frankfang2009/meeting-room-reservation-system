@@ -74,12 +74,40 @@ function Write-Utf8NoBom {
     [IO.File]::WriteAllText($Path, $Text, $script:Utf8NoBom)
 }
 
+function Replace-FileAtomic {
+    param([string]$Temporary, [string]$Destination)
+    $backup = '{0}.replace-backup.{1}.{2}' -f @(
+        $Destination, $PID, ([Guid]::NewGuid().ToString('N'))
+    )
+    try {
+        # Windows PowerShell 5.1 的 .NET Framework 不接受 null 备份路径。
+        # 使用同目录真实备份可保持 Replace 的同卷原子语义；成功后立即清理。
+        [IO.File]::Replace($Temporary, $Destination, $backup, $true)
+    }
+    catch {
+        if (-not (Test-Path -LiteralPath $Destination) -and
+            (Test-Path -LiteralPath $backup)) {
+            [IO.File]::Move($backup, $Destination)
+        }
+        throw
+    }
+    finally {
+        if (Test-Path -LiteralPath $Temporary) {
+            Remove-Item -LiteralPath $Temporary -Force -ErrorAction SilentlyContinue
+        }
+        if ((Test-Path -LiteralPath $Destination) -and
+            (Test-Path -LiteralPath $backup)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Write-JsonAtomic {
     param([string]$Path, $Value)
     $temporary = '{0}.tmp.{1}' -f $Path, $PID
     Write-Utf8NoBom -Path $temporary -Text ($Value | ConvertTo-Json -Depth 8)
     if (Test-Path -LiteralPath $Path) {
-        [IO.File]::Replace($temporary, $Path, $null)
+        Replace-FileAtomic -Temporary $temporary -Destination $Path
     }
     else {
         [IO.File]::Move($temporary, $Path)
@@ -798,7 +826,9 @@ function Commit-VersionFile {
     if ($text -notmatch '^\d+\.\d+\.\d+(\r?\n)?$' -or $text.TrimEnd([char[]]"`r`n") -ne $script:PackageVersionText) {
         throw '最终版本文件校验失败。'
     }
-    if (Test-Path -LiteralPath $destination) { [IO.File]::Replace($temporary, $destination, $null) }
+    if (Test-Path -LiteralPath $destination) {
+        Replace-FileAtomic -Temporary $temporary -Destination $destination
+    }
     else { [IO.File]::Move($temporary, $destination) }
     Write-Log "版本最后提交完成：$($script:PackageVersionText)"
 }
