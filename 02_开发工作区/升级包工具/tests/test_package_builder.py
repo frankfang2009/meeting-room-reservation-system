@@ -507,6 +507,59 @@ class PackageBuilderTests(unittest.TestCase):
         # 定义一次，并在安装新版及恢复旧版两条路径各调用一次。
         self.assertGreaterEqual(powershell.count("Clear-RootPythonCache"), 3)
 
+    def test_real_windows_templates_cover_cold_review_regressions(self):
+        stub = (TOOL_DIR / "bat头部模板.bat").read_text(encoding="utf-8")
+        powershell = (TOOL_DIR / "升级主逻辑.ps1").read_text(encoding="utf-8")
+
+        # UAC 子进程句柄或 ExitCode 异常不得被 PowerShell 当作成功。
+        self.assertIn("$null -ne $child.ExitCode", stub)
+        self.assertIn("[System.ComponentModel.Win32Exception]", stub)
+        self.assertIn("$nativeCode -eq 1223", stub)
+        self.assertIn("goto :elevation_failed", stub)
+        self.assertIn(":elevation_failed", stub)
+        self.assertIn("exit /b 1", stub)
+
+        # 旧 .NET 缺少 ExternalAttributes 时必须能力探测并安全退化。
+        self.assertIn(
+            "$entry.PSObject.Properties['ExternalAttributes']", powershell
+        )
+        self.assertNotIn("$entry.ExternalAttributes", powershell)
+        self.assertIn("PayloadAttributeCheckDegraded", powershell)
+
+        # 外部命令必须有超时和强杀路径，Python 输出固定 UTF-8。
+        self.assertIn("$process.WaitForExit($TimeoutSeconds * 1000)", powershell)
+        self.assertIn("$process.Kill()", powershell)
+        self.assertIn("$env:PYTHONIOENCODING = 'utf-8'", powershell)
+        self.assertIn(
+            "Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue",
+            powershell,
+        )
+
+        # 版本提交之后必须持久化 version_committed；任何收尾失败都不能回滚。
+        invoke_upgrade = powershell[powershell.index("function Invoke-Upgrade") :]
+        commit_index = invoke_upgrade.index("Commit-VersionFile")
+        committed_flag_index = invoke_upgrade.index(
+            "$transactionCommitted = $true", commit_index
+        )
+        committed_stage_index = invoke_upgrade.index(
+            "-Stage 'version_committed'", committed_flag_index
+        )
+        state_delete_index = invoke_upgrade.index(
+            "Remove-Item -LiteralPath $statePath -Force", committed_stage_index
+        )
+        self.assertLess(commit_index, committed_flag_index)
+        self.assertLess(committed_flag_index, committed_stage_index)
+        self.assertLess(committed_stage_index, state_delete_index)
+
+        committed_recovery = powershell[
+            powershell.index("function Recover-CommittedTransaction") :
+            powershell.index("function Invoke-Rollback")
+        ]
+        self.assertNotIn("Invoke-Rollback", committed_recovery)
+        self.assertNotIn("Restore-ExpectedRunState", committed_recovery)
+        self.assertIn("现有程序和 data 均未回滚", committed_recovery)
+        self.assertIn("Test-CommittedTransactionState", invoke_upgrade)
+
 
 if __name__ == "__main__":
     unittest.main()

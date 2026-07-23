@@ -776,6 +776,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             (4, [(2, noop), (4, noop)], "gap"),
             (3, [(3, noop), (2, noop)], "out_of_order"),
             (3, [(2, noop)], "highest_mismatch"),
+            (1, [(2, noop)], "registered_above_schema_version"),
         )
 
         for schema_version, migrations, label in invalid_registries:
@@ -847,6 +848,11 @@ class MigrateCheckCommandTests(unittest.TestCase):
     def test_migrate_success_and_failure_exit_codes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir) / "healthy-data"
+            data_dir.mkdir()
+            # --migrate 只服务于已有安装，不能负责新建数据库；这里先放置一个
+            # 可打开的既有数据库文件，再验证 init_db/迁移与自检。
+            with closing(sqlite3.connect(data_dir / "reservation.db")):
+                pass
             log_path = Path(temp_dir) / "upgrade.log"
             environment = dict(os.environ)
             environment.update(
@@ -889,9 +895,32 @@ class MigrateCheckCommandTests(unittest.TestCase):
                 "高于当前程序版本", log_path.read_text(encoding="utf-8")
             )
 
+    def test_migrate_rejects_missing_database_without_creating_one(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir) / "missing-data"
+            log_path = Path(temp_dir) / "upgrade.log"
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "MEETING_ROOM_DATA_DIR": str(data_dir),
+                    "MEETING_ROOM_INITIAL_ADMIN_PASSWORD": "test-password",
+                    "MEETING_ROOM_UPGRADE_LOG": str(log_path),
+                }
+            )
+
+            result = self.run_command("--migrate", environment=environment)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("数据库文件不存在", result.stderr)
+            self.assertIn("疑似数据丢失", result.stderr)
+            self.assertFalse((data_dir / "reservation.db").exists())
+            self.assertIn(
+                "数据库文件不存在", log_path.read_text(encoding="utf-8")
+            )
+
     def test_version_file_is_v101(self):
         version_file = self.SCRIPT.parent / "版本.txt"
-        self.assertEqual(version_file.read_text(encoding="utf-8").strip(), "1.0.1")
+        self.assertEqual(version_file.read_bytes(), b"1.0.1\n")
 
 
 if __name__ == "__main__":

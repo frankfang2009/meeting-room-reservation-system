@@ -10,9 +10,10 @@ if not "%errorlevel%"=="0" goto :need_elevation
 goto :run_upgrade
 
 :need_elevation
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try{$child=Start-Process -FilePath $env:MEETING_ROOM_UPGRADE_BAT -Verb RunAs -Wait -PassThru; exit $child.ExitCode}catch{exit 3}"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try{$child=Start-Process -FilePath $env:MEETING_ROOM_UPGRADE_BAT -Verb RunAs -Wait -PassThru; if($null -ne $child -and $null -ne $child.ExitCode){exit ([int]$child.ExitCode)}else{exit 6}}catch{$exception=$_.Exception; $nativeCode=$null; while($null -ne $exception){if($exception -is [System.ComponentModel.Win32Exception]){$nativeCode=$exception.NativeErrorCode; break}; $exception=$exception.InnerException}; if($nativeCode -eq 1223){exit 3}else{exit 6}}"
 set "UPGRADE_RC=%errorlevel%"
 if "%UPGRADE_RC%"=="3" goto :uac_cancelled
+if "%UPGRADE_RC%"=="6" goto :elevation_failed
 exit /b %UPGRADE_RC%
 
 :uac_cancelled
@@ -21,6 +22,13 @@ echo 升级未开始，未修改任何文件。
 echo.
 pause
 exit /b 3
+
+:elevation_failed
+echo.
+echo 无法打开管理员升级窗口，请联系维护人员。
+echo.
+pause
+exit /b 1
 
 :run_upgrade
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$bat=$env:MEETING_ROOM_UPGRADE_BAT; $tmp=$null; $rc=1; try{$all=[IO.File]::ReadAllText($bat,[Text.Encoding]::UTF8); $ps=[regex]::Matches($all,'(?m)^__UPGRADE_PS1_BELOW__\r?$'); $payload=[regex]::Matches($all,'(?m)^__UPGRADE_PAYLOAD_BELOW__\r?$'); if($ps.Count -ne 1 -or $payload.Count -ne 1 -or $ps[0].Index -ge $payload[0].Index){throw '升级文件结构损坏'}; $start=$ps[0].Index+$ps[0].Length; if($start -lt $all.Length -and $all[$start] -eq [char]10){$start++}; $length=$payload[0].Index-$start; if($length -le 0){throw '升级主程序为空'}; $tmp=Join-Path $env:TEMP ('meetingroom_upgrade_{0}.ps1' -f $PID); [IO.File]::WriteAllText($tmp,$all.Substring($start,$length),(New-Object Text.UTF8Encoding($true))); & ([IO.Path]::Combine($PSHOME,'powershell.exe')) -NoProfile -ExecutionPolicy Bypass -File $tmp -PackagePath $bat; $rc=$LASTEXITCODE}catch{Write-Host ''; Write-Host ('升级文件无法读取：'+$_.Exception.Message) -ForegroundColor Red; $rc=1}finally{if($tmp -and (Test-Path -LiteralPath $tmp)){Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}; exit $rc"

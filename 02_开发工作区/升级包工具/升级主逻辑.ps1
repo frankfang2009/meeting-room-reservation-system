@@ -13,9 +13,11 @@ $script:LogPath = $null
 $script:LockStream = $null
 $script:TempRoot = $null
 $script:KeepTemporary = $false
+$script:PayloadAttributeCheckDegraded = $false
 $script:Utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 $script:TopFiles = @(
     '① 启动系统.bat', '② 立即备份.bat', '③ 设置开机自动启动.bat',
     '④ 停止本次后台系统.bat', '⑤ 取消开机自动启动.bat', '使用说明.txt'
@@ -241,8 +243,17 @@ function Initialize-Payload {
             $normalized = $entry.FullName.TrimEnd('/')
             Assert-SafePayloadPath -RelativePath $entry.FullName -IsDirectory $isDirectory
             if (-not $seen.Add($normalized)) { throw "负载含重复或仅大小写不同的路径：$normalized" }
-            $unixType = (($entry.ExternalAttributes -shr 16) -band 0xF000)
-            if ($unixType -eq 0xA000 -or (($entry.ExternalAttributes -band 0x400) -ne 0)) { throw "负载含符号链接或重解析点：$normalized" }
+            $externalAttributesProperty = $entry.PSObject.Properties['ExternalAttributes']
+            if ($null -eq $externalAttributesProperty) {
+                # 老版本 Windows 10 自带的 .NET 可能没有此属性。此时仍执行 ZIP 路径
+                # 白名单/黑名单校验，并在解包后用文件系统属性再次拒绝重解析点。
+                $script:PayloadAttributeCheckDegraded = $true
+            }
+            else {
+                $externalAttributes = [int64]$externalAttributesProperty.Value
+                $unixType = (($externalAttributes -shr 16) -band 0xF000)
+                if ($unixType -eq 0xA000 -or (($externalAttributes -band 0x400) -ne 0)) { throw "负载含符号链接或重解析点：$normalized" }
+            }
             if (-not $isDirectory) { $zipFiles.Add($normalized) }
         }
     }
@@ -359,7 +370,8 @@ function Open-UpgradeLock {
     try {
         $script:LockStream = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     }
-    catch [IO.IOException] {
+    catch {
+        Write-Log "无法取得升级独占锁：$($_.Exception.Message)" 'WARN'
         Throw-UpgradeFailure -Message '升级正在进行，请不要重复打开。' -ExitCode 4
     }
 }
@@ -378,7 +390,12 @@ function Read-InstalledVersion {
 }
 
 function Invoke-NativeCommand {
-    param([string]$FilePath, [string[]]$Arguments = @(), [string]$WorkingDirectory = $null)
+    param(
+        [string]$FilePath,
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = $null,
+        [ValidateRange(1, 3600)][int]$TimeoutSeconds = 120
+    )
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $FilePath
     $quoted = foreach ($argument in $Arguments) { '"{0}"' -f ([string]$argument).Replace('"', '\"') }
@@ -395,15 +412,34 @@ function Invoke-NativeCommand {
     if (-not $process.Start()) { throw "无法启动命令：$FilePath" }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
-    $process.WaitForExit()
-    $stdout = $stdoutTask.Result
-    $stderr = $stderrTask.Result
-    foreach ($line in @($stdout, $stderr)) {
-        if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Log ($line.TrimEnd([char[]]"`r`n")) 'CMD' }
+    try {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            Write-Log "外部命令执行超过 $TimeoutSeconds 秒，正在强制结束：$FilePath" 'WARN'
+            try { $process.Kill() } catch { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
+            if (-not $process.WaitForExit(5000)) {
+                throw "命令执行超时且无法结束进程：$FilePath"
+            }
+            $process.WaitForExit()
+            $stdout = $stdoutTask.Result
+            $stderr = $stderrTask.Result
+            foreach ($line in @($stdout, $stderr)) {
+                if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Log ($line.TrimEnd([char[]]"`r`n")) 'CMD' }
+            }
+            throw "命令执行超时（$TimeoutSeconds 秒）：$FilePath"
+        }
+        # 带超时的 WaitForExit 返回后，再调用无参版本，确保异步输出读取完全结束。
+        $process.WaitForExit()
+        $stdout = $stdoutTask.Result
+        $stderr = $stderrTask.Result
+        foreach ($line in @($stdout, $stderr)) {
+            if (-not [string]::IsNullOrWhiteSpace($line)) { Write-Log ($line.TrimEnd([char[]]"`r`n")) 'CMD' }
+        }
+        $code = $process.ExitCode
+        return [pscustomobject]@{ ExitCode = [int]$code; Stdout = $stdout; Stderr = $stderr }
     }
-    $code = $process.ExitCode
-    $process.Dispose()
-    return [pscustomobject]@{ ExitCode = [int]$code; Stdout = $stdout; Stderr = $stderr }
+    finally {
+        $process.Dispose()
+    }
 }
 
 function Invoke-Robocopy {
@@ -412,7 +448,7 @@ function Invoke-Robocopy {
     $arguments = @($Source, $Destination)
     if ($Mirror) { $arguments += '/MIR' } else { $arguments += '/E' }
     $arguments += @('/COPY:DAT', '/DCOPY:DAT', '/R:2', '/W:1', '/XJ', '/NP')
-    $result = Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments $arguments
+    $result = Invoke-NativeCommand -FilePath 'robocopy.exe' -Arguments $arguments -TimeoutSeconds 1800
     if ($result.ExitCode -lt 0 -or $result.ExitCode -gt 7) { throw "复制失败（robocopy 退出码 $($result.ExitCode)）。" }
 }
 
@@ -443,7 +479,8 @@ function Stop-OwnedRuntimeProcesses {
             $executable = [IO.Path]::GetFullPath([string]$process.ExecutablePath)
             if ($executable.StartsWith($runtime, [StringComparison]::OrdinalIgnoreCase)) {
                 Write-Log "停止本安装目录进程 PID=$($process.ProcessId)，路径=$executable"
-                Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+                # 枚举后进程可能已经自行退出；最终以 --check 的轮询结果为准。
+                Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -693,6 +730,65 @@ function Recover-PreparingTransaction {
     Write-Log 'preparing 状态已恢复并清除。'
 }
 
+function Assert-CommittedState {
+    param($State, [switch]$AllowHealthcheckHandoff)
+    $stage = [string]$State.Stage
+    $validStage = $stage -eq 'version_committed' -or
+                  ($AllowHealthcheckHandoff -and $stage -eq 'healthcheck_passed')
+    if (-not $validStage -or [string]$State.TransactionId -notmatch '^[0-9a-fA-F]{32}$') {
+        throw '升级已提交状态内容非法。'
+    }
+    if ([string]$State.PackageVersion -notmatch '^\d+\.\d+\.\d+$') {
+        throw '升级已提交状态中的包版本非法。'
+    }
+    if ($State.WasRunning -isnot [bool] -or $State.TaskExists -isnot [bool]) {
+        throw '升级已提交状态中的运行信息非法。'
+    }
+}
+
+function Test-CommittedTransactionState {
+    param([string]$ProgramRoot, $State)
+    if ([string]$State.Stage -eq 'version_committed') { return $true }
+    if ([string]$State.Stage -ne 'healthcheck_passed') { return $false }
+
+    # 版本文件提交与 version_committed 状态落盘之间无法跨两个文件做同一个原子操作。
+    # 若在这个极窄窗口断电，正式版本文件已经是目标版本，因此也必须按已提交处理，
+    # 绝不能在客户继续使用后把 data 回滚到升级前快照。
+    try {
+        $installed = Read-InstalledVersion -ProgramRoot $ProgramRoot
+        return $installed.Existed -and
+               [string]::Equals($installed.Text, [string]$State.PackageVersion, [StringComparison]::Ordinal)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Recover-CommittedTransaction {
+    param([string]$InstallRoot, $State, [string]$StatePath)
+    $allowHandoff = [string]$State.Stage -eq 'healthcheck_passed'
+    Assert-CommittedState -State $State -AllowHealthcheckHandoff:$allowHandoff
+    $programRoot = Join-Path $InstallRoot '_程序文件'
+    $installed = Read-InstalledVersion -ProgramRoot $programRoot
+    if (-not $installed.Existed -or
+        -not [string]::Equals($installed.Text, [string]$State.PackageVersion, [StringComparison]::Ordinal)) {
+        throw '升级状态显示版本已提交，但安装目录版本不一致；为保护现有数据，不会自动回滚。'
+    }
+
+    Write-Log "发现已经提交成功的升级事务，正在安全收尾，版本=$($installed.Text)，原阶段=$($State.Stage)" 'WARN'
+    # 事务早已提交后，用户可能又手动启动或停止过系统；只能观察当前状态，
+    # 不得再按升级前的 WasRunning 改变它，更不得恢复程序或 data。
+    if (Test-SystemRunning -ProgramRoot $programRoot) {
+        Write-Log '已提交版本当前正在运行，健康检查通过。'
+    }
+    else {
+        Write-Log '已提交版本当前处于停止状态；保留用户当前运行状态，不主动启动。'
+    }
+    Remove-VersionTemporaryFile -ProgramRoot $programRoot -TransactionId ([string]$State.TransactionId)
+    if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
+    Write-Log '已提交事务的残留状态已清除；现有程序和 data 均未回滚。'
+}
+
 function Invoke-Rollback {
     param([string]$InstallRoot, [string]$PayloadRoot, $State, [string]$StatePath)
     $programRoot = Join-Path $InstallRoot '_程序文件'
@@ -851,21 +947,27 @@ function Invoke-Upgrade {
     $programRoot = Join-Path $installRoot '_程序文件'
     Initialize-Log -ProgramRoot $programRoot
     Write-Log "定位安装目录：$installRoot"
+    if ($script:PayloadAttributeCheckDegraded) {
+        Write-Log '当前 .NET 不提供 ZIP ExternalAttributes；已退化为路径白名单/黑名单校验，并保留解包后重解析点检查。' 'WARN'
+    }
     Open-UpgradeLock -ProgramRoot $programRoot
     $statePath = Join-Path $programRoot '_升级状态.json'
 
     if (Test-Path -LiteralPath $statePath) {
-        Write-User '发现上次升级未完成，正在先恢复原系统……' Yellow
+        Write-User '发现上次升级状态，正在安全处理……' Yellow
         try {
             $oldState = (Read-Utf8NoBom -Path $statePath) | ConvertFrom-Json
             if ([string]$oldState.Stage -eq 'preparing') {
                 Recover-PreparingTransaction -InstallRoot $installRoot -State $oldState -StatePath $statePath
             }
+            elseif (Test-CommittedTransactionState -ProgramRoot $programRoot -State $oldState) {
+                Recover-CommittedTransaction -InstallRoot $installRoot -State $oldState -StatePath $statePath
+            }
             else {
                 Invoke-Rollback -InstallRoot $installRoot -PayloadRoot $payload.Root -State $oldState -StatePath $statePath
             }
             Remove-VersionTemporaryFile -ProgramRoot $programRoot -TransactionId ([string]$oldState.TransactionId)
-            Write-User '上次未完成的升级已安全恢复，正在重新升级。' Green
+            Write-User '上次升级状态已安全处理，正在检查当前版本。' Green
         }
         catch {
             $script:KeepTemporary = $true
@@ -923,10 +1025,18 @@ function Invoke-Upgrade {
         Test-NewVersionByStartingService -InstallRoot $installRoot -WasRunning $wasRunning -TaskExists $taskExists
         Update-TransactionStage -State $state -StatePath $statePath -Stage 'healthcheck_passed'
         Commit-VersionFile -PayloadRoot $payload.Root -ProgramRoot $programRoot -TransactionId $transactionId
-        Remove-Item -LiteralPath $statePath -Force
-        # 状态文件删除是事务完成点；此后的日志或界面异常不得再触发回滚。
+        # 版本.txt 是事务提交点。提交后即使状态清理失败，也绝不能回滚程序或 data。
         $transactionCommitted = $true
-        Write-Log '升级事务成功完成，状态文件已删除。'
+        try {
+            Update-TransactionStage -State $state -StatePath $statePath -Stage 'version_committed'
+            Remove-Item -LiteralPath $statePath -Force
+            Write-Log '升级事务成功完成，version_committed 状态文件已删除。'
+        }
+        catch {
+            # 状态文件可能仍是 healthcheck_passed，也可能已经是 version_committed。
+            # 下次运行会先核对正式版本文件并按已提交事务安全收尾，绝不回滚数据。
+            Write-Log "版本已提交，但事务状态清理未完成；下次运行将自动安全收尾：$($_.Exception.Message)" 'WARN'
+        }
         Write-User ''
         Write-User "升级成功！当前版本 V$($script:PackageVersionText)" Green
         return 0
@@ -935,6 +1045,8 @@ function Invoke-Upgrade {
         $failure = $_
         if ($transactionCommitted) {
             Write-Log "事务已提交，提交后的显示或日志步骤异常：$($failure.Exception.Message)" 'WARN'
+            Write-User ''
+            Write-User "升级成功！当前版本 V$($script:PackageVersionText)；收尾状态将在下次运行时自动清理。" Yellow
             return 0
         }
         Write-Log "升级失败：$($failure.Exception.ToString())" 'ERROR'
@@ -946,6 +1058,12 @@ function Invoke-Upgrade {
                 }
                 if ([string]$durableState.Stage -eq 'preparing') {
                     Recover-PreparingTransaction -InstallRoot $installRoot -State $durableState -StatePath $statePath
+                }
+                elseif (Test-CommittedTransactionState -ProgramRoot $programRoot -State $durableState) {
+                    Recover-CommittedTransaction -InstallRoot $installRoot -State $durableState -StatePath $statePath
+                    Write-User ''
+                    Write-User "升级成功！当前版本 V$([string]$durableState.PackageVersion)" Green
+                    return 0
                 }
                 else {
                     Invoke-Rollback -InstallRoot $installRoot -PayloadRoot $payload.Root -State $durableState -StatePath $statePath

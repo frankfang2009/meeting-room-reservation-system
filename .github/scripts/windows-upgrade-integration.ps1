@@ -5,7 +5,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $toolRoot = Join-Path $repoRoot '02_开发工作区\升级包工具'
 $payloadRoot = Join-Path $toolRoot '负载示例'
 $candidatePackage = Join-Path $toolRoot '输出-待实机验收\升级到V1.0.1.bat'
-$expectedCandidateSha256 = '2901ea1f36997bb0c58e6d3302098f2c1aa66fe3c29c46c8b5b89d0981a0acc7'
+$expectedCandidateSha256 = 'cd0d52b9ffb5d2864e7ad98d8969b86376d8577391399c30295d0722d34848cd'
 $oldReference = Join-Path $repoRoot '02_开发工作区\Windows部署目录-V1.0.0'
 $workRoot = Join-Path $env:RUNNER_TEMP 'meeting-room-upgrade-ci'
 $packageRoot = Join-Path $workRoot 'packages'
@@ -167,6 +167,34 @@ db.close()
     return Invoke-PythonCodeCapture -Python $Install.RuntimePython -Code $stateCode -Arguments @($Install.Database)
 }
 
+function Set-AppMetaValue {
+    param($Install, [string]$Key, [string]$Value)
+    $code = @'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute(
+    "INSERT INTO app_meta (key, value) VALUES (?, ?) "
+    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    (sys.argv[2], sys.argv[3]),
+)
+db.commit()
+db.close()
+'@
+    Invoke-PythonCodeChecked -Python $Install.RuntimePython -Code $code -Arguments @($Install.Database, $Key, $Value) | Out-Null
+}
+
+function Get-AppMetaValue {
+    param($Install, [string]$Key)
+    $code = @'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+row = db.execute("SELECT value FROM app_meta WHERE key=?", (sys.argv[2],)).fetchone()
+print("" if row is None else row[0])
+db.close()
+'@
+    return Invoke-PythonCodeCapture -Python $Install.RuntimePython -Code $code -Arguments @($Install.Database, $Key)
+}
+
 function Invoke-UpgradeBat {
     param([string]$BatPath)
     # 空行供 BAT 末尾 pause 使用；runner 进程本身已具管理员权限，不走交互式 UAC。
@@ -234,6 +262,36 @@ $secondExit = Invoke-UpgradeBat -BatPath $successBat
 Assert-True ($secondExit -eq 0) "重复运行返回了退出码 $secondExit"
 Assert-NoOpenTransaction -Install $successInstall
 Assert-True ((Get-LogicalDataState -Install $successInstall) -eq $successStateAfter) '重复运行改变了数据'
+
+Write-Host '=== Windows committed-state cleanup must preserve newer data ==='
+$postCommitKey = 'ci_after_version_commit'
+$postCommitValue = 'must-survive-committed-cleanup'
+Set-AppMetaValue -Install $successInstall -Key $postCommitKey -Value $postCommitValue
+$rollbackRoot = Join-Path $successInstall.ProgramRoot '_升级回滚'
+$snapshot = @(Get-ChildItem -LiteralPath $rollbackRoot -Directory | Where-Object { $_.Name -match '^[0-9a-fA-F]{32}$' } | Sort-Object LastWriteTimeUtc | Select-Object -Last 1)
+Assert-True ($snapshot.Count -eq 1) '成功升级后没有找到用于中断恢复测试的事务快照'
+$committedStatePath = Join-Path $successInstall.ProgramRoot '_升级状态.json'
+$committedState = [ordered]@{
+    TransactionId = $snapshot[0].Name
+    PackageVersion = '1.0.1'
+    SnapshotPath = $snapshot[0].FullName
+    Stage = 'version_committed'
+    OriginalVersion = '1.0.0'
+    OriginalVersionExisted = $false
+    WasRunning = $false
+    TaskExists = $false
+}
+[IO.File]::WriteAllText(
+    $committedStatePath,
+    ($committedState | ConvertTo-Json -Depth 8),
+    (New-Object Text.UTF8Encoding($false))
+)
+
+$committedCleanupExit = Invoke-UpgradeBat -BatPath $successBat
+Assert-True ($committedCleanupExit -eq 0) "version_committed 安全收尾返回了退出码 $committedCleanupExit"
+Assert-NoOpenTransaction -Install $successInstall
+Assert-True ((Get-AppMetaValue -Install $successInstall -Key $postCommitKey) -eq $postCommitValue) 'version_committed 安全收尾错误回滚了升级后新增数据'
+Assert-True ((Get-Content -LiteralPath (Join-Path $successInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq '1.0.1') 'version_committed 安全收尾改变了已提交版本'
 
 Write-Host '=== Windows failure and rollback path ==='
 $failureInstall = New-TestInstall -Name 'rollback\会议室预约系统'
