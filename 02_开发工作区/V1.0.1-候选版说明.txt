@@ -4,9 +4,9 @@
 状态
 ----
 
-升级机制和 V1.0.1 累计负载已完成 R1 独立冷审返工，并在 macOS 开发机通过自动化验证。
-R1 修复后的新 BAT 仍需重新通过 GitHub 托管 Windows 环境验证，并完成 Windows 10/11
-实机人工验收；当前不得作为正式客户版本归档或发送。
+升级机制和 V1.0.1 累计负载已完成 R1 独立冷审返工，并在 macOS 开发机及 GitHub
+托管 Windows 环境通过自动化验证。当前仍需完成 Windows 10/11 实机人工验收；
+在此之前不得作为正式客户版本归档或发送。
 
 
 候选交付物
@@ -54,8 +54,10 @@ SHA-256 用于发现传输损坏或误编辑，不是数字签名。
 - R1 独立冷审发现的 1 个阻断项、3 个严重项和 9 个建议项均已逐条复核；
   属实问题已修复，并补充 version_committed 数据保护、数据库缺失拒绝、UAC 退出码、
   老版本 .NET 退化、命令超时等回归测试与维护说明。
-- 上一版 BAT 曾通过 GitHub Windows runner 的成功升级、重复运行和故障回滚测试；
-  上述新 SHA-256 对应的 R1 修复版尚待重新运行 Windows 自动化，不沿用旧成品的测试结论。
+- 上述新 SHA-256 对应的 R1 修复版已在 GitHub Windows runner 直接执行：
+  成功升级、重复运行、version_committed 数据保留和故障回滚均通过。
+- Windows Actions：30018428665
+  https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/30018428665
 
 
 正式发布前必须完成

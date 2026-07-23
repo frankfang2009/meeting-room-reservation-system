@@ -23,6 +23,6 @@
 [ ] 设置开机自启和未设置开机自启两种状态下，升级后运行状态都与升级前一致
 [ ] 在 version_committed 状态中断后新增测试预约，再运行升级包只清理状态且保留新增预约
 
-本部署包的 R1 修复版已通过 macOS 自动测试，尚待重新通过 GitHub Windows PowerShell 5.1
-自动化；Windows 的 UAC、SmartScreen、防火墙、计划任务和真实局域网访问仍必须以本清单
-在单位实机确认一次。
+本部署包的 R1 修复版已通过 macOS 自动测试及 GitHub Windows PowerShell 5.1 的成功升级、
+重复运行、version_committed 数据保留和故障回滚测试；Windows 的 UAC、SmartScreen、
+防火墙、计划任务和真实局域网访问仍必须以本清单在单位实机确认一次。
