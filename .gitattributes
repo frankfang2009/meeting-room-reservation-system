@@ -8,5 +8,6 @@
 *.svg text eol=lf
 *.css text eol=lf
 *.js text eol=lf
+**/版本.txt text eol=lf
 *.zip binary
 *.pdf binary
