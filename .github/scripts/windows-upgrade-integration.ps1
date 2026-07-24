@@ -497,26 +497,53 @@ function Start-TestUpgradeBroker {
     $token = [Guid]::NewGuid().ToString('N')
     $job = Start-Job -ArgumentList @($request, $response, $token) -ScriptBlock {
         param($RequestPath, $ResponsePath, $Token)
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
         $encoding = New-Object Text.UTF8Encoding($false)
         $deadline = (Get-Date).AddMinutes(3)
         while ((Get-Date) -lt $deadline) {
             if (Test-Path -LiteralPath $RequestPath -PathType Leaf) {
+                $launched = $null
+                $launchedId = 0
                 try {
                     $jobRequest = (Get-Content -LiteralPath $RequestPath -Raw) | ConvertFrom-Json
                     if (-not [string]::Equals([string]$jobRequest.token, $Token, [StringComparison]::Ordinal)) {
                         throw 'CI broker token mismatch'
                     }
-                    $launched = Start-Process -FilePath ([string]$jobRequest.python_path) `
-                        -ArgumentList @(('"{0}"' -f [string]$jobRequest.server_path)) `
-                        -WorkingDirectory ([string]$jobRequest.working_directory) -PassThru -WindowStyle Hidden
-                    $reply = [ordered]@{ schema = 1; token = $Token; ok = $true; process_id = [int]$launched.Id; error = $null }
+                    $info = New-Object Diagnostics.ProcessStartInfo
+                    $info.FileName = [string]$jobRequest.python_path
+                    $info.Arguments = '"{0}"' -f [string]$jobRequest.server_path
+                    $info.WorkingDirectory = [string]$jobRequest.working_directory
+                    $info.UseShellExecute = $true
+                    $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized
+                    $launched = New-Object Diagnostics.Process
+                    $launched.StartInfo = $info
+                    if (-not $launched.Start()) { throw 'CI broker could not start the service process' }
+                    $launchedId = [int]$launched.Id
+                    if ($launchedId -le 0) { throw 'CI broker did not receive a valid service process ID' }
+                    $reply = [ordered]@{ schema = 1; token = $Token; ok = $true; process_id = $launchedId; error = $null }
                 }
                 catch {
+                    if ($launchedId -gt 0) {
+                        Stop-Process -Id $launchedId -Force -ErrorAction SilentlyContinue
+                        $launchedId = 0
+                    }
                     $reply = [ordered]@{ schema = 1; token = $Token; ok = $false; process_id = 0; error = [string]$_.Exception.Message }
                 }
                 $temporary = "$ResponsePath.tmp.$PID"
-                [IO.File]::WriteAllText($temporary, ($reply | ConvertTo-Json -Compress), $encoding)
-                [IO.File]::Move($temporary, $ResponsePath)
+                try {
+                    [IO.File]::WriteAllText($temporary, ($reply | ConvertTo-Json -Compress), $encoding)
+                    [IO.File]::Move($temporary, $ResponsePath)
+                }
+                catch {
+                    if ($launchedId -gt 0) {
+                        Stop-Process -Id $launchedId -Force -ErrorAction SilentlyContinue
+                    }
+                    throw
+                }
+                finally {
+                    if ($null -ne $launched) { $launched.Dispose() }
+                }
                 Remove-Item -LiteralPath $RequestPath -Force -ErrorAction SilentlyContinue
             }
             Start-Sleep -Milliseconds 100
@@ -534,6 +561,20 @@ function Start-TestUpgradeBroker {
 function Stop-TestUpgradeBroker {
     param($Broker)
     Stop-Job -Job $Broker.Job -ErrorAction SilentlyContinue
+    $brokerErrors = @(
+        foreach ($childJob in @($Broker.Job.ChildJobs)) {
+            foreach ($errorRecord in @($childJob.Error)) { $errorRecord }
+        }
+    )
+    $brokerOutput = @(Receive-Job -Job $Broker.Job -ErrorAction SilentlyContinue)
+    foreach ($line in $brokerOutput) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$line)) {
+            Write-Host ("CI broker: {0}" -f [string]$line)
+        }
+    }
+    foreach ($errorRecord in $brokerErrors) {
+        Write-Warning ("CI broker error: {0}" -f [string]$errorRecord)
+    }
     Remove-Job -Job $Broker.Job -Force -ErrorAction SilentlyContinue
     foreach ($name in @(
         'MEETING_ROOM_UPGRADE_BROKER_REQUEST',

@@ -872,20 +872,53 @@ function Start-ServiceWithCurrentAdministratorToken {
     $programRoot = Join-Path $InstallRoot '_程序文件'
     $python = Join-Path $programRoot 'runtime\python.exe'
     $server = Join-Path $programRoot 'server.py'
-    $process = Start-Process -FilePath $python `
-        -ArgumentList @(('"{0}"' -f $server)) `
-        -WorkingDirectory $programRoot -WindowStyle Minimized -PassThru
-    Write-Log "升级包初始即处于完整管理员令牌；使用同一用户令牌恢复普通启动方式，PID=$($process.Id)" 'WARN'
-    $deadline = (Get-Date).AddSeconds(10)
-    while ((Get-Date) -lt $deadline) {
-        $ownedIds = @(
-            Get-OwnedServerProcesses -ProgramRoot $programRoot |
-                ForEach-Object { [int]$_.ProcessId }
-        )
-        if ($ownedIds -contains [int]$process.Id) { return [int]$process.Id }
-        Start-Sleep -Milliseconds 250
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $python
+    $info.Arguments = '"{0}"' -f $server
+    $info.WorkingDirectory = $programRoot
+    $info.UseShellExecute = $true
+    $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    $startedProcessId = 0
+    $verified = $false
+    try {
+        if (-not $process.Start()) {
+            throw '使用当前管理员令牌启动服务失败。'
+        }
+        $startedProcessId = [int]$process.Id
+        if ($startedProcessId -le 0) {
+            throw '使用当前管理员令牌启动服务后没有取得有效进程 ID。'
+        }
+        Write-Log "升级包初始即处于完整管理员令牌；使用同一用户令牌恢复普通启动方式，PID=$startedProcessId" 'WARN'
+        $deadline = (Get-Date).AddSeconds(10)
+        while ((Get-Date) -lt $deadline) {
+            $ownedIds = @(
+                Get-OwnedServerProcesses -ProgramRoot $programRoot |
+                    ForEach-Object { [int]$_.ProcessId }
+            )
+            if ($ownedIds -contains $startedProcessId) {
+                $verified = $true
+                return $startedProcessId
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        throw '使用当前管理员令牌启动的服务进程不属于当前安装目录。'
     }
-    throw '使用当前管理员令牌启动的服务进程不属于当前安装目录。'
+    finally {
+        if (-not $verified) {
+            if ($startedProcessId -gt 0) {
+                Stop-Process -Id $startedProcessId -Force -ErrorAction SilentlyContinue
+            }
+            else {
+                try {
+                    if (-not $process.HasExited) { $process.Kill() }
+                }
+                catch {}
+            }
+        }
+        $process.Dispose()
+    }
 }
 
 function Request-UnelevatedServiceStart {

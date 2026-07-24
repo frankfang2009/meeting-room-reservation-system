@@ -511,9 +511,31 @@ class PackageBuilderTests(unittest.TestCase):
     def test_real_windows_templates_cover_cold_review_regressions(self):
         stub = (TOOL_DIR / "bat头部模板.bat").read_text(encoding="utf-8")
         powershell = (TOOL_DIR / "升级主逻辑.ps1").read_text(encoding="utf-8")
+        windows_ci = (
+            TOOL_DIR.parents[1]
+            / ".github"
+            / "scripts"
+            / "windows-upgrade-integration.ps1"
+        ).read_text(encoding="utf-8")
 
-        # UAC 子进程句柄或 ExitCode 异常不得被 PowerShell 当作成功。
-        self.assertIn("$null -ne $child.ExitCode", stub)
+        # UAC 子进程与普通用户服务都必须取得严格的正进程 ID。
+        self.assertIn(
+            "-Verb RunAs -PassThru -ErrorAction Stop", stub
+        )
+        self.assertIn("$null -eq $child -or [int]$child.Id -le 0", stub)
+        self.assertIn("$elevationStarted=$false", stub)
+        self.assertIn(
+            "$elevationStarted=$true; while(-not $child.HasExited)", stub
+        )
+        self.assertIn(
+            "if(-not $elevationStarted -and $nativeCode -eq 1223)",
+            stub,
+        )
+        self.assertNotIn(
+            "if($nativeCode -eq 1223){exit 3}",
+            stub,
+        )
+        self.assertIn("$child.Dispose()", stub)
         self.assertIn("[System.ComponentModel.Win32Exception]", stub)
         self.assertIn("$nativeCode -eq 1223", stub)
         self.assertIn("goto :elevation_failed", stub)
@@ -623,12 +645,58 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn("$responseTemp=$response+'.tmp.'+$PID", stub)
         self.assertIn("[IO.File]::Move($responseTemp,$response)", stub)
         self.assertIn("Remove-Item -LiteralPath $request", stub)
-        self.assertIn("-WindowStyle Minimized", stub)
+        self.assertIn("$info=New-Object Diagnostics.ProcessStartInfo", stub)
+        self.assertIn("$info.UseShellExecute=$true", stub)
+        self.assertIn(
+            "$info.WindowStyle=[Diagnostics.ProcessWindowStyle]::Minimized",
+            stub,
+        )
+        self.assertIn("$launched=New-Object Diagnostics.Process", stub)
+        self.assertIn("if(-not $launched.Start())", stub)
+        self.assertIn("$launchedId=[int]$launched.Id", stub)
+        self.assertIn("if($launchedId -le 0)", stub)
+        self.assertIn("Stop-Process -Id $launchedId", stub)
+        self.assertIn("$launched.Dispose()", stub)
         self.assertIn("Request-UnelevatedServiceStart", powershell)
         self.assertIn("function Start-ServiceWithCurrentAdministratorToken", powershell)
         self.assertIn(
             "Start-ServiceWithCurrentAdministratorToken -InstallRoot",
             powershell,
+        )
+        direct_admin = powershell[
+            powershell.index(
+                "function Start-ServiceWithCurrentAdministratorToken"
+            ) :
+            powershell.index("function Request-UnelevatedServiceStart")
+        ]
+        self.assertIn("New-Object Diagnostics.ProcessStartInfo", direct_admin)
+        self.assertIn("$info.UseShellExecute = $true", direct_admin)
+        self.assertIn(
+            "$info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized",
+            direct_admin,
+        )
+        self.assertIn("if (-not $process.Start())", direct_admin)
+        self.assertIn("$startedProcessId = [int]$process.Id", direct_admin)
+        self.assertIn("if ($startedProcessId -le 0)", direct_admin)
+        self.assertIn("Stop-Process -Id $startedProcessId", direct_admin)
+        self.assertIn("$process.Dispose()", direct_admin)
+
+        # CI broker 必须保留子作业的严格错误语义与诊断证据。
+        ci_broker = windows_ci[
+            windows_ci.index("function Start-TestUpgradeBroker") :
+            windows_ci.index("if (Test-Path -LiteralPath $workRoot)")
+        ]
+        self.assertIn("Set-StrictMode -Version Latest", ci_broker)
+        self.assertIn("$ErrorActionPreference = 'Stop'", ci_broker)
+        self.assertIn("New-Object Diagnostics.ProcessStartInfo", ci_broker)
+        self.assertIn("$info.UseShellExecute = $true", ci_broker)
+        self.assertIn("if (-not $launched.Start())", ci_broker)
+        self.assertIn("$launchedId = [int]$launched.Id", ci_broker)
+        self.assertIn("Stop-Process -Id $launchedId", ci_broker)
+        self.assertIn("$launched.Dispose()", ci_broker)
+        self.assertLess(
+            ci_broker.index("Receive-Job -Job $Broker.Job"),
+            ci_broker.index("Remove-Job -Job $Broker.Job"),
         )
         persistent_start = powershell[
             powershell.index("function Start-PersistentSystem") :
