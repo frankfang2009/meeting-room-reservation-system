@@ -875,7 +875,7 @@ function Start-ServiceWithCurrentAdministratorToken {
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $python
     $info.Arguments = '"{0}"' -f $server
-    $info.WorkingDirectory = $programRoot
+    $info.WorkingDirectory = Split-Path -Parent $python
     $info.UseShellExecute = $true
     $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized
     $process = New-Object Diagnostics.Process

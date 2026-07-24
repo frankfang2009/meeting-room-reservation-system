@@ -648,6 +648,11 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn("$info=New-Object Diagnostics.ProcessStartInfo", stub)
         self.assertIn("$info.UseShellExecute=$true", stub)
         self.assertIn(
+            "$info.WorkingDirectory=(Split-Path -Parent $python)",
+            stub,
+        )
+        self.assertNotIn("$info.WorkingDirectory=$work", stub)
+        self.assertIn(
             "$info.WindowStyle=[Diagnostics.ProcessWindowStyle]::Minimized",
             stub,
         )
@@ -672,6 +677,14 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn("New-Object Diagnostics.ProcessStartInfo", direct_admin)
         self.assertIn("$info.UseShellExecute = $true", direct_admin)
         self.assertIn(
+            "$info.WorkingDirectory = Split-Path -Parent $python",
+            direct_admin,
+        )
+        self.assertNotIn(
+            "$info.WorkingDirectory = $programRoot",
+            direct_admin,
+        )
+        self.assertIn(
             "$info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized",
             direct_admin,
         )
@@ -690,6 +703,15 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn("$ErrorActionPreference = 'Stop'", ci_broker)
         self.assertIn("New-Object Diagnostics.ProcessStartInfo", ci_broker)
         self.assertIn("$info.UseShellExecute = $true", ci_broker)
+        self.assertIn(
+            "$info.WorkingDirectory = Split-Path -Parent "
+            "([string]$jobRequest.python_path)",
+            ci_broker,
+        )
+        self.assertNotIn(
+            "$info.WorkingDirectory = [string]$jobRequest.working_directory",
+            ci_broker,
+        )
         self.assertIn("if (-not $launched.Start())", ci_broker)
         self.assertIn("$launchedId = [int]$launched.Id", ci_broker)
         self.assertIn("Stop-Process -Id $launchedId", ci_broker)

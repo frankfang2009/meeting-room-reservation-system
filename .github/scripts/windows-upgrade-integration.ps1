@@ -513,7 +513,7 @@ function Start-TestUpgradeBroker {
                     $info = New-Object Diagnostics.ProcessStartInfo
                     $info.FileName = [string]$jobRequest.python_path
                     $info.Arguments = '"{0}"' -f [string]$jobRequest.server_path
-                    $info.WorkingDirectory = [string]$jobRequest.working_directory
+                    $info.WorkingDirectory = Split-Path -Parent ([string]$jobRequest.python_path)
                     $info.UseShellExecute = $true
                     $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized
                     $launched = New-Object Diagnostics.Process
