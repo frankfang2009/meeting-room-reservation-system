@@ -7,6 +7,7 @@
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=static_revision) }}">
     <script src="{{ url_for('static', filename='app.js', v=static_revision) }}" defer></script>
+    <script src="{{ url_for('network_address_notice_script') }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
     {% if current_user %}
@@ -27,6 +28,78 @@
             </div>
         </div>
     </header>
+    {% endif %}
+
+    {% if current_user and current_user.is_admin and network_address and not network_change %}
+    <section class="network-address-current" aria-label="同事当前访问地址">
+        <div class="network-address-current-inner">
+            {% if network_address.current_url %}
+            <div class="network-address-current-copy">
+                <span>同事当前访问</span>
+                <a href="{{ network_address.current_url }}">{{ network_address.current_url }}</a>
+            </div>
+            <button
+                class="button button-secondary button-small"
+                type="button"
+                data-copy-network-url="{{ network_address.current_url }}"
+                data-copy-label="复制网址"
+            >复制网址</button>
+            {% else %}
+            <p>暂时无法可靠识别同事访问地址，请查看服务器窗口并检查网络。</p>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if current_user and current_user.is_admin and network_change %}
+    <section class="network-address-alert" aria-labelledby="network-address-alert-title">
+        <div class="network-address-alert-inner">
+            <div class="network-address-alert-copy">
+                <p class="network-address-kicker">需要告知同事</p>
+                {% if network_change.kind == 'changed' %}
+                <h2 id="network-address-alert-title">同事访问网址已发生变化</h2>
+                <p>预约数据没有变化。请把下面的新网址发给同事，旧网址将无法继续访问。</p>
+                <dl class="network-address-values">
+                    <div>
+                        <dt>原网址</dt>
+                        <dd>{{ network_change.old_url }}</dd>
+                    </div>
+                    <div>
+                        <dt>新网址</dt>
+                        <dd><a href="{{ network_change.new_url }}">{{ network_change.new_url }}</a></dd>
+                    </div>
+                </dl>
+                {% else %}
+                <h2 id="network-address-alert-title">请重新核对同事访问网址</h2>
+                <p>地址记录曾出现异常，系统无法可靠确认原网址。预约数据没有变化，请核对并把当前网址重新发给同事。</p>
+                <dl class="network-address-values">
+                    <div>
+                        <dt>当前网址</dt>
+                        <dd><a href="{{ network_change.new_url }}">{{ network_change.new_url }}</a></dd>
+                    </div>
+                </dl>
+                {% endif %}
+                {% if network_address.persistence_failed %}
+                <p class="network-address-persist-error">本次变化提醒暂时无法保存确认。请先通知同事，并尽快联系维护人员检查 data 文件夹。</p>
+                {% endif %}
+            </div>
+            <div class="network-address-actions">
+                <button
+                    class="button button-primary"
+                    type="button"
+                    data-copy-network-url="{{ network_change.new_url }}"
+                    data-copy-label="复制新网址"
+                >复制新网址</button>
+                <form action="{{ url_for('acknowledge_network_address') }}" method="post">
+                    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="expected_url" value="{{ network_change.new_url }}">
+                    <button class="button button-secondary" type="submit">
+                        {% if network_address.persistence_failed %}重新尝试保存确认{% else %}我已通知同事{% endif %}
+                    </button>
+                </form>
+            </div>
+        </div>
+    </section>
     {% endif %}
 
     <div class="flash-area" aria-live="polite">

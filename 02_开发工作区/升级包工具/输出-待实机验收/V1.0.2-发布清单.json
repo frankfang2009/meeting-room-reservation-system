@@ -7,14 +7,14 @@
     "1.0.1"
   ],
   "candidate_status": "待 Windows 10/11 实机人工验收",
-  "generated_at_utc": "2026-07-24T02:39:48.623496+00:00",
-  "source_tree_sha256": "f4ea23648cd4bc9be6b46eb5318a2e780fbc2fd935ee4c7d0b0ace1453a92f94",
+  "generated_at_utc": "2026-07-24T04:47:08.916260+00:00",
+  "source_tree_sha256": "f5812e46f5f3b2201c17a61fb7d95aa840bcd02a9b97454460420ab149c5e40d",
   "payload_file_count": 25,
   "payload_files": [
     {
       "path": "_程序文件/app.py",
-      "size": 47944,
-      "sha256": "10e3bad9e889112ab706238f38aacb6158c98812df576552962366501bdaa553"
+      "size": 71861,
+      "sha256": "d3f0d506209e800049d3c115c81435101bbc7fd43a5061de49858603baf9ffe3"
     },
     {
       "path": "_程序文件/backup.py",
@@ -33,13 +33,13 @@
     },
     {
       "path": "_程序文件/server.py",
-      "size": 7161,
-      "sha256": "d972a2c36fbcf348f7f992068485822bd911265014cac9f860f10da80fc4cb52"
+      "size": 19843,
+      "sha256": "220084cd8f1334abe713925acca37b10efe5d154621a78fd5c5971c719b04bcb"
     },
     {
       "path": "_程序文件/static/app.css",
-      "size": 14092,
-      "sha256": "a04a31401b5dcd1ac8b0fc02e5a9e6ae1e16de2f535ec4916943d2a99f15189f"
+      "size": 17044,
+      "sha256": "805ba2c32a108123432b61f8efc864fcc935130189ca28806087e1c03c15211c"
     },
     {
       "path": "_程序文件/static/app.js",
@@ -73,8 +73,8 @@
     },
     {
       "path": "_程序文件/templates/base.html",
-      "size": 2317,
-      "sha256": "dde7c3e6703073b27c752fd1a705272e607aedd9d5fa97f04e84313ba694434e"
+      "size": 6216,
+      "sha256": "2f945d1c1d30f22bbf1aa300334e0bc468d61a22cb63871d5fd2e1858f3f6dc7"
     },
     {
       "path": "_程序文件/templates/error.html",
@@ -108,8 +108,8 @@
     },
     {
       "path": "① 启动系统.bat",
-      "size": 916,
-      "sha256": "cf6c157125bfca7a53e74bd6217cb664f51dbbe49a27882aa8e82fa905e24122"
+      "size": 1103,
+      "sha256": "bbaafd6a656fc496ecae8a9540eef4b124897c98c4de179b1e575aacc54d6a5b"
     },
     {
       "path": "② 立即备份.bat",
@@ -118,8 +118,8 @@
     },
     {
       "path": "③ 设置开机自动启动.bat",
-      "size": 3619,
-      "sha256": "31d8757f2e17b03c3c7495e0978b178c24700b69359974e6c0b905ca0102acb9"
+      "size": 4073,
+      "sha256": "7c8f7f2ae099865c3833aee379230fd3e79fff909f6bc89b63fcca68da81f081"
     },
     {
       "path": "④ 停止本次后台系统.bat",
@@ -133,15 +133,15 @@
     },
     {
       "path": "使用说明.txt",
-      "size": 2716,
-      "sha256": "53b792f140b6495785c10f00174086c12118bd0e7dc9930aad45b9997b876d7f"
+      "size": 5052,
+      "sha256": "69bb0444a11fe92c39af78a8a71eff636a2377a342b4265c8af8f2273899e54c"
     }
   ],
-  "payload_zip_sha256": "8cbe9b7b8c8df798825fe7657f17a7ecbb73046f2fa40eabdfc4cb0af9ddeacc",
-  "payload_zip_size": 39401,
+  "payload_zip_sha256": "6faf103d3896ddd36c43b72dd2586a617059e1b7664889b44b11559047863fea",
+  "payload_zip_size": 50404,
   "package_file": "升级到V1.0.2.bat",
-  "package_sha256": "683072c51d68af9f04de797e95cc07a190f75f0099ca0844854d217904efc744",
-  "package_size": 116087,
+  "package_sha256": "55b43ac55de9032b6f344b2f0db09a602cb72ce7da3515d21aadf0ef51c94ce9",
+  "package_size": 186884,
   "windows_candidate_included": true,
   "runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",
   "frozen_runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",

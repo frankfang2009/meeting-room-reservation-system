@@ -474,7 +474,8 @@ class PackageBuilderTests(unittest.TestCase):
 
         # 最终 BAT 无 BOM，但 WinPS 5.1 读取含中文的临时 PS1 时必须有 BOM。
         self.assertIn("Text.UTF8Encoding($true)", stub)
-        self.assertNotIn("Text.UTF8Encoding($false)", stub)
+        run_upgrade_stub = stub[stub.index("\n:run_upgrade\n") :]
+        self.assertNotIn("Text.UTF8Encoding($false)", run_upgrade_stub)
 
         # native stderr 不能在全局 Stop 策略下变成提前终止的 NativeCommandError。
         self.assertIn("Diagnostics.ProcessStartInfo", powershell)
@@ -556,9 +557,230 @@ class PackageBuilderTests(unittest.TestCase):
             powershell.index("function Invoke-Rollback")
         ]
         self.assertNotIn("Invoke-Rollback", committed_recovery)
-        self.assertNotIn("Restore-ExpectedRunState", committed_recovery)
+        restore_index = committed_recovery.index("Restore-ExpectedRunState")
+        service_guard_index = committed_recovery.index(
+            "if ([string]$State.Stage -ne 'service_restored')"
+        )
+        exposed_branch_index = committed_recovery.index(
+            "# 服务已向用户开放后", restore_index
+        )
+        self.assertLess(service_guard_index, restore_index)
+        self.assertLess(restore_index, exposed_branch_index)
+        self.assertNotIn(
+            "Restore-ExpectedRunState",
+            committed_recovery[
+                exposed_branch_index :
+                committed_recovery.index(
+                    "function Assert-RollbackRestoredState",
+                    exposed_branch_index,
+                )
+            ],
+        )
         self.assertIn("现有程序和 data 均未回滚", committed_recovery)
         self.assertIn("Test-CommittedTransactionState", invoke_upgrade)
+
+        # 升级前不允许执行旧 server.py；运行探测只能来自 WMI/端口/HTTP。
+        running_probe = powershell[
+            powershell.index("function Test-SystemRunning") :
+            powershell.index("function Get-PortListeners")
+        ]
+        self.assertNotIn("Invoke-NativeCommand", running_probe)
+        self.assertIn("Get-OwnedServerProcesses", running_probe)
+        self.assertNotIn("@($server, '--check')", powershell)
+
+        # 安装 runtime 在任何 Python 调用前先做冻结全树哈希校验。
+        self.assertIn("function Assert-TrustedRuntime", powershell)
+        self.assertIn(
+            "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",
+            powershell,
+        )
+        self.assertLess(
+            invoke_upgrade.index("Assert-TrustedRuntime"),
+            invoke_upgrade.index("if (Test-Path -LiteralPath $statePath)"),
+        )
+
+        # 维护态只绑定回环，提交状态耐久后才恢复真实服务。
+        health_index = invoke_upgrade.index("Test-NewVersionByStartingService")
+        version_commit_index = invoke_upgrade.index("Commit-VersionFile")
+        durable_commit_index = invoke_upgrade.index(
+            "-Stage 'version_committed'", version_commit_index
+        )
+        restore_service_index = invoke_upgrade.index(
+            "Restore-ExpectedRunState", durable_commit_index
+        )
+        self.assertLess(health_index, version_commit_index)
+        self.assertLess(version_commit_index, durable_commit_index)
+        self.assertLess(durable_commit_index, restore_service_index)
+        self.assertIn("$env:MEETING_ROOM_UPGRADE_CHECK = '1'", powershell)
+        self.assertIn("Assert-LoopbackListenerOwnedByProcess", powershell)
+        self.assertIn("-ExpectedMode 'upgrade-check'", powershell)
+
+        # 无/禁用任务通过未提升父进程 broker 启动，不能从管理员 PS 直接启动 BAT。
+        self.assertIn("MEETING_ROOM_UPGRADE_BROKER_REQUEST", stub)
+        self.assertIn("MEETING_ROOM_UPGRADE_DIRECT_ADMIN", stub)
+        self.assertIn('if /i "%~1"=="--upgrade-broker"', stub)
+        self.assertIn("-ArgumentList $brokerArguments -Verb RunAs", stub)
+        self.assertIn("$responseTemp=$response+'.tmp.'+$PID", stub)
+        self.assertIn("[IO.File]::Move($responseTemp,$response)", stub)
+        self.assertIn("Remove-Item -LiteralPath $request", stub)
+        self.assertIn("-WindowStyle Minimized", stub)
+        self.assertIn("Request-UnelevatedServiceStart", powershell)
+        self.assertIn("function Start-ServiceWithCurrentAdministratorToken", powershell)
+        self.assertIn(
+            "Start-ServiceWithCurrentAdministratorToken -InstallRoot",
+            powershell,
+        )
+        persistent_start = powershell[
+            powershell.index("function Start-PersistentSystem") :
+            powershell.index("function Test-Database")
+        ]
+        self.assertIn("if ($TaskExists -and $TaskWasRunning)", persistent_start)
+        self.assertNotIn("Shell.Application", persistent_start)
+        self.assertNotIn("Start-Process -FilePath $startBat", persistent_start)
+        self.assertIn("-not $TaskEnabled", persistent_start)
+
+        # V1.0.0 的合法旧任务和相对 server.py token 仍可识别。
+        task_probe = powershell[
+            powershell.index("function Get-OwnedTaskState") :
+            powershell.index("function Set-OwnedTaskEnabledState")
+        ]
+        self.assertIn("$actualWorkingDirectory -and", task_probe)
+        self.assertIn("V1.0.0 兼容计划任务", task_probe)
+        process_probe = powershell[
+            powershell.index("function Get-OwnedServerProcesses") :
+            powershell.index("function Test-SystemRunning")
+        ]
+        self.assertIn("[regex]::Escape($server)", process_probe)
+        self.assertNotIn("IndexOf($server", process_probe)
+        self.assertIn("_程序文件[\\\\/]server\\.py", process_probe)
+
+        lock_function = powershell[
+            powershell.index("function Open-UpgradeLock") :
+            powershell.index("function Read-InstalledVersion")
+        ]
+        self.assertIn("[IO.FileShare]::None", lock_function)
+        self.assertIn("Throw-UpgradeFailure", lock_function)
+        self.assertIn("-ExitCode 4", lock_function)
+
+        # rollback_restored 先落盘再开放旧服务，重复恢复不得再次覆盖 data。
+        rollback = powershell[
+            powershell.index("function Invoke-Rollback") :
+            powershell.index("function Update-TransactionStage")
+        ]
+        self.assertLess(
+            rollback.index("-Stage 'rollback_restored'"),
+            rollback.index("Restore-ExpectedRunState"),
+        )
+        recovered_rollback = powershell[
+            powershell.index("function Recover-RollbackRestoredTransaction") :
+            powershell.index("function Invoke-Rollback")
+        ]
+        self.assertNotIn("Invoke-Robocopy", recovered_rollback)
+        self.assertNotIn("Move-Item", recovered_rollback)
+
+        # install_id 必须是 canonical lowercase UUIDv4；nil、UUIDv1 与旧宽松
+        # version 1-5 正则都不能进入健康检查或已提交恢复。
+        uuid_v4_pattern = (
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        )
+        self.assertIn(uuid_v4_pattern, powershell)
+        self.assertNotIn("[1-5][0-9a-f]{3}", powershell)
+        self.assertIsNone(re.fullmatch(uuid_v4_pattern, ""))
+        self.assertIsNone(
+            re.fullmatch(
+                uuid_v4_pattern,
+                "123e4567-e89b-12d3-a456-426614174000",
+            )
+        )
+        self.assertIsNotNone(
+            re.fullmatch(
+                uuid_v4_pattern,
+                "123e4567-e89b-42d3-a456-426614174000",
+            )
+        )
+
+        # V1.0.2 状态显式使用 Schema=2；只有冻结 V1.0.1 的精确旧字段
+        # 集合能够被规范化，已提交旧事务走不要求 install_id 的独立收尾。
+        self.assertIn("$script:TransactionStateSchema = 2", powershell)
+        self.assertIn("function Assert-CurrentTransactionStateEnvelope", powershell)
+        legacy_normalizer = powershell[
+            powershell.index("function Convert-LegacyV101TransactionState") :
+            powershell.index("function Assert-PreparingState")
+        ]
+        for field in (
+            "OriginalVersion",
+            "OriginalVersionExisted",
+            "PackageVersion",
+            "SnapshotPath",
+            "Stage",
+            "TaskExists",
+            "TransactionId",
+            "WasRunning",
+        ):
+            self.assertIn("'%s'" % field, legacy_normalizer)
+        self.assertIn("[string]$State.PackageVersion -cne '1.0.1'", legacy_normalizer)
+        self.assertIn(
+            "$taskWasRunning = [bool]$State.TaskExists -and [bool]$State.WasRunning",
+            legacy_normalizer,
+        )
+        self.assertIn("function Recover-LegacyV101CommittedTransaction", powershell)
+        legacy_committed = powershell[
+            powershell.index("function Recover-LegacyV101CommittedTransaction") :
+            powershell.index("function Assert-RollbackRestoredState")
+        ]
+        self.assertIn("Test-NormalInstallRoot", legacy_committed)
+        self.assertNotIn("Remove-SuccessfulTransactionSnapshot", legacy_committed)
+        self.assertIn(
+            "Write-JsonAtomic -Path $statePath -Value $legacyV101State",
+            invoke_upgrade,
+        )
+
+        # 两次任务采样只允许 Running 由任一次观测贡献；任务存在/启用状态
+        # 若发生竞态则在写事务状态前 fail closed。
+        self.assertIn(
+            "[bool]$taskState.Exists -ne [bool]$latestTaskState.Exists",
+            invoke_upgrade,
+        )
+        self.assertIn(
+            "[bool]$taskState.Enabled -ne [bool]$latestTaskState.Enabled",
+            invoke_upgrade,
+        )
+        self.assertIn(
+            "TaskWasRunning=$taskWasRunning",
+            invoke_upgrade,
+        )
+        self.assertIn("function Assert-RunStateInvariants", powershell)
+
+        # 地址提醒只接受 canonical 的显式 RFC1918 IPv4:port 与带时区的
+        # ISO 形状，不能依赖 [Uri]/本地文化做宽松纠正。
+        lan_url_validator = powershell[
+            powershell.index("function Test-LanHttpUrl") :
+            powershell.index("function Get-LanAddressUpgradeNotice")
+        ]
+        self.assertIn("^http://(?<address>", lan_url_validator)
+        self.assertIn("[StringComparison]::Ordinal", lan_url_validator)
+        self.assertNotIn("try { $uri = [Uri]$Value }", lan_url_validator)
+        self.assertIn("[Globalization.CultureInfo]::InvariantCulture", powershell)
+        self.assertIn("$isoOffsetShape", powershell)
+
+        health_validator = powershell[
+            powershell.index("function Get-ValidatedServiceHealth") :
+            powershell.index("function Wait-ServiceHealth")
+        ]
+        self.assertIn("install_id,lan_url,mode,ok", health_validator)
+        self.assertIn("$body.ok -isnot [bool]", health_validator)
+        self.assertIn("Test-CanonicalInstallId", health_validator)
+        self.assertIn("Test-LanHttpUrl", health_validator)
+        self.assertIn("$null -ne $body.lan_url", health_validator)
+        lan_notice = powershell[
+            powershell.index("function Show-LanAddressUpgradeNotice") :
+            powershell.index("function Invoke-Upgrade")
+        ]
+        self.assertIn("Get-ValidatedServiceHealth", lan_notice)
+        self.assertIn("[string]$health.LanUrl", lan_notice)
+        self.assertIn("[string]$notice.CurrentUrl", lan_notice)
+        self.assertIn("本次升级不对同事访问地址作结论", lan_notice)
 
 
 if __name__ == "__main__":

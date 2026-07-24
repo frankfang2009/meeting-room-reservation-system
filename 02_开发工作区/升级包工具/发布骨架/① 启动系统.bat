@@ -19,6 +19,8 @@ set "SERVER_EXIT=%errorlevel%"
 if "%SERVER_EXIT%"=="10" (
     echo.
     echo 系统本来就在运行，浏览器已经打开。
+    echo 请登录管理员账号，以页面显示的当前“同事访问”地址为准。
+    echo 如果地址发生变化，页面会持续提醒您复制新地址发给同事。
     timeout /t 3 /nobreak >nul
     exit /b 0
 )

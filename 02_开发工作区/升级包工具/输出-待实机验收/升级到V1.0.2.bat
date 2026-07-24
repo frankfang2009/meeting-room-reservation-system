@@ -4,13 +4,28 @@ chcp 65001 >nul
 title 会议室预约系统升级
 
 set "MEETING_ROOM_UPGRADE_BAT=%~f0"
+set "MEETING_ROOM_UPGRADE_DIRECT_ADMIN="
+set "MEETING_ROOM_UPGRADE_BROKER_REQUEST="
+set "MEETING_ROOM_UPGRADE_BROKER_RESPONSE="
+set "MEETING_ROOM_UPGRADE_BROKER_TOKEN="
+
+if /i "%~1"=="--upgrade-broker" (
+    if "%~2"=="" exit /b 6
+    if "%~3"=="" exit /b 6
+    if "%~4"=="" exit /b 6
+    if not "%~5"=="" exit /b 6
+    set "MEETING_ROOM_UPGRADE_BROKER_REQUEST=%~2"
+    set "MEETING_ROOM_UPGRADE_BROKER_RESPONSE=%~3"
+    set "MEETING_ROOM_UPGRADE_BROKER_TOKEN=%~4"
+)
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$identity=[Security.Principal.WindowsIdentity]::GetCurrent(); $principal=New-Object Security.Principal.WindowsPrincipal($identity); if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}" >nul 2>&1
 if not "%errorlevel%"=="0" goto :need_elevation
+if not defined MEETING_ROOM_UPGRADE_BROKER_REQUEST set "MEETING_ROOM_UPGRADE_DIRECT_ADMIN=1"
 goto :run_upgrade
 
 :need_elevation
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try{$child=Start-Process -FilePath $env:MEETING_ROOM_UPGRADE_BAT -Verb RunAs -Wait -PassThru; if($null -ne $child -and $null -ne $child.ExitCode){exit ([int]$child.ExitCode)}else{exit 6}}catch{$exception=$_.Exception; $nativeCode=$null; while($null -ne $exception){if($exception -is [System.ComponentModel.Win32Exception]){$nativeCode=$exception.NativeErrorCode; break}; $exception=$exception.InnerException}; if($nativeCode -eq 1223){exit 3}else{exit 6}}"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$brokerRoot=$null; try{$brokerRoot=Join-Path $env:TEMP ('meetingroom_upgrade_broker_'+[Guid]::NewGuid().ToString('N')); [IO.Directory]::CreateDirectory($brokerRoot)|Out-Null; $request=Join-Path $brokerRoot 'request.json'; $response=Join-Path $brokerRoot 'response.json'; $token=[Guid]::NewGuid().ToString('N'); $brokerArguments='--upgrade-broker '+[char]34+$request+[char]34+' '+[char]34+$response+[char]34+' '+[char]34+$token+[char]34; $child=Start-Process -FilePath $env:MEETING_ROOM_UPGRADE_BAT -ArgumentList $brokerArguments -Verb RunAs -PassThru; while(-not $child.HasExited){if(Test-Path -LiteralPath $request -PathType Leaf){try{$requestItem=Get-Item -LiteralPath $request -Force; if(($requestItem.Attributes-band[IO.FileAttributes]::ReparsePoint)-ne 0 -or $requestItem.Length-gt 4096 -or (Test-Path -LiteralPath $response)){throw '启动请求文件异常'}; $raw=[IO.File]::ReadAllText($request,(New-Object Text.UTF8Encoding($false,$true))); $job=$raw|ConvertFrom-Json; $names=@($job.PSObject.Properties.Name|Sort-Object); if(($names-join ',') -ne 'python_path,schema,server_path,token,working_directory' -or [int]$job.schema -ne 1 -or -not [string]::Equals([string]$job.token,$token,[StringComparison]::Ordinal)){throw '启动请求校验失败'}; $work=[IO.Path]::GetFullPath([string]$job.working_directory).TrimEnd('\'); $python=[IO.Path]::GetFullPath([string]$job.python_path); $server=[IO.Path]::GetFullPath([string]$job.server_path); if(-not [string]::Equals($python,(Join-Path $work 'runtime\python.exe'),[StringComparison]::OrdinalIgnoreCase)-or -not [string]::Equals($server,(Join-Path $work 'server.py'),[StringComparison]::OrdinalIgnoreCase)-or -not(Test-Path -LiteralPath $python -PathType Leaf)-or -not(Test-Path -LiteralPath $server -PathType Leaf)){throw '启动路径校验失败'}; $launched=Start-Process -FilePath $python -ArgumentList @(([char]34+$server+[char]34)) -WorkingDirectory $work -WindowStyle Minimized -PassThru; $reply=[ordered]@{schema=1;token=$token;ok=$true;process_id=[int]$launched.Id;error=$null}}catch{$reply=[ordered]@{schema=1;token=$token;ok=$false;process_id=0;error=[string]$_.Exception.Message}}; $responseTemp=$response+'.tmp.'+$PID; [IO.File]::WriteAllText($responseTemp,($reply|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false))); [IO.File]::Move($responseTemp,$response); Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue}; Start-Sleep -Milliseconds 200; $child.Refresh()}; $child.WaitForExit(); if($null -ne $child.ExitCode){exit([int]$child.ExitCode)}else{exit 6}}catch{$exception=$_.Exception; $nativeCode=$null; while($null -ne $exception){if($exception -is [System.ComponentModel.Win32Exception]){$nativeCode=$exception.NativeErrorCode; break}; $exception=$exception.InnerException}; if($nativeCode -eq 1223){exit 3}else{exit 6}}finally{if($brokerRoot -and (Test-Path -LiteralPath $brokerRoot)){Remove-Item -LiteralPath $brokerRoot -Recurse -Force -ErrorAction SilentlyContinue}}"
 set "UPGRADE_RC=%errorlevel%"
 if "%UPGRADE_RC%"=="3" goto :uac_cancelled
 if "%UPGRADE_RC%"=="6" goto :elevation_failed
@@ -49,8 +64,11 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:PackageVersionText = '1.0.2'
-$script:ExpectedPayloadSha256 = '8cbe9b7b8c8df798825fe7657f17a7ecbb73046f2fa40eabdfc4cb0af9ddeacc'
+$script:ExpectedPayloadSha256 = '6faf103d3896ddd36c43b72dd2586a617059e1b7664889b44b11559047863fea'
+$script:ExpectedRuntimeTreeSha256 = 'b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14'
+$script:TransactionStateSchema = 2
 $script:TaskName = '会议室预约系统'
+$script:ServicePort = 8080
 $script:LogPath = $null
 $script:LockStream = $null
 $script:TempRoot = $null
@@ -60,6 +78,7 @@ $script:Utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
 $script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONDONTWRITEBYTECODE = '1'
 $script:TopFiles = @(
     '① 启动系统.bat', '② 立即备份.bat', '③ 设置开机自动启动.bat',
     '④ 停止本次后台系统.bat', '⑤ 取消开机自动启动.bat', '使用说明.txt'
@@ -82,6 +101,12 @@ function Write-Log {
 function Write-User {
     param([string]$Message, [ConsoleColor]$Color = [ConsoleColor]::White)
     Write-Host $Message -ForegroundColor $Color
+}
+
+function Show-Stage {
+    param([string]$Message)
+    Write-User ("[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $Message) Cyan
+    Write-Log "用户阶段：$Message"
 }
 
 function Throw-UpgradeFailure {
@@ -366,6 +391,94 @@ function Assert-PackageLocationSafe {
     }
 }
 
+function Clear-RuntimePythonCaches {
+    param([string]$ProgramRoot)
+    $runtimeRoot = Join-Path $ProgramRoot 'runtime'
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
+        throw '安装目录缺少 Python runtime。'
+    }
+    Assert-NoReparsePoints -Path $runtimeRoot
+    $cacheDirectories = @(
+        Get-ChildItem -LiteralPath $runtimeRoot -Force -Recurse -Directory |
+            Where-Object { $_.Name -eq '__pycache__' } |
+            Sort-Object { $_.FullName.Length } -Descending
+    )
+    foreach ($cache in $cacheDirectories) {
+        Remove-Item -LiteralPath $cache.FullName -Recurse -Force
+    }
+    foreach ($cacheFile in @(Get-ChildItem -LiteralPath $runtimeRoot -Force -Recurse -File -Filter '*.pyc')) {
+        Remove-Item -LiteralPath $cacheFile.FullName -Force
+    }
+    if ($cacheDirectories.Count -gt 0) {
+        Write-Log "已清理 runtime 中 $($cacheDirectories.Count) 个可丢弃的 __pycache__ 目录。"
+    }
+}
+
+function Get-RuntimeTreeSha256 {
+    param([string]$ProgramRoot)
+    $runtimeRoot = Join-Path $ProgramRoot 'runtime'
+    Assert-NoReparsePoints -Path $runtimeRoot
+    $paths = @(
+        Get-ChildItem -LiteralPath $runtimeRoot -Force -Recurse -File |
+            ForEach-Object { Get-RelativeSlashPath -Root $runtimeRoot -FullName $_.FullName }
+    )
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    $builder = New-Object Text.StringBuilder
+    foreach ($relative in $paths) {
+        $path = Resolve-SafeRelativeChild -Root $runtimeRoot -RelativePath $relative
+        [void]$builder.Append($relative)
+        [void]$builder.Append([char]0)
+        [void]$builder.Append((Get-Sha256Hex -Path $path))
+        [void]$builder.Append("`n")
+    }
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = $script:Utf8NoBom.GetBytes($builder.ToString())
+        return ([BitConverter]::ToString($sha256.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Assert-TrustedRuntime {
+    param([string]$ProgramRoot)
+    Clear-RuntimePythonCaches -ProgramRoot $ProgramRoot
+    $actual = Get-RuntimeTreeSha256 -ProgramRoot $ProgramRoot
+    Write-Log "冻结 runtime 目录哈希=$actual"
+    if (-not [string]::Equals($actual, $script:ExpectedRuntimeTreeSha256, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '安装目录中的 Python runtime 与官方冻结版本不一致。为避免以管理员权限运行被替换的程序，升级已停止；请用完整原版部署包修复 runtime 后重试。'
+    }
+}
+
+function Assert-InstallLocationSafe {
+    param([string]$InstallRoot)
+    $full = [IO.Path]::GetFullPath($InstallRoot)
+    if ($full.StartsWith('\\')) {
+        throw '系统安装在网络共享目录中，无法安全升级；请先移到本机固定磁盘。'
+    }
+    $root = [IO.Path]::GetPathRoot($full)
+    if (-not $root -or $root.Length -lt 2) { throw '无法确认安装目录所在磁盘。' }
+    try {
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $root.Substring(0, 2))
+    }
+    catch {
+        throw "无法确认安装磁盘类型：$($_.Exception.Message)"
+    }
+    if ($null -eq $disk -or [int]$disk.DriveType -ne 3) {
+        throw '系统必须放在本机固定磁盘中；网络盘、U 盘和临时盘不支持无忧升级。'
+    }
+    foreach ($name in @('OneDrive', 'OneDriveCommercial', 'OneDriveConsumer')) {
+        $syncRoot = [Environment]::GetEnvironmentVariable($name)
+        if ($syncRoot) {
+            $syncFull = [IO.Path]::GetFullPath($syncRoot).TrimEnd('\') + '\'
+            if (($full.TrimEnd('\') + '\').StartsWith($syncFull, [StringComparison]::OrdinalIgnoreCase)) {
+                throw '系统安装在 OneDrive 同步目录中，升级时可能发生文件冲突；请先移到本机普通文件夹。'
+            }
+        }
+    }
+}
+
 function Find-InstallRoot {
     $candidates = New-Object System.Collections.Generic.List[string]
     $candidates.Add((Split-Path -Parent ([IO.Path]::GetFullPath($PackagePath))))
@@ -374,9 +487,18 @@ function Find-InstallRoot {
         if ($base) { $candidates.Add((Join-Path $base '会议室预约系统')) }
     }
     $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    $matches = New-Object System.Collections.Generic.List[string]
     foreach ($candidate in $candidates) {
         try { $full = [IO.Path]::GetFullPath($candidate) } catch { continue }
-        if ($seen.Add($full) -and (Test-InstallRoot -Root $full)) { return $full }
+        $full = $full.TrimEnd('\')
+        if ($seen.Add($full) -and (Test-InstallRoot -Root $full)) { $matches.Add($full) }
+    }
+    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($matches.Count -gt 1) {
+        Write-User ''
+        Write-User '发现多个会议室预约系统，升级器不会替您猜测。' Yellow
+        foreach ($match in $matches) { Write-User ("  - {0}" -f $match) Yellow }
+        Write-User '请在接下来的窗口中明确选择这次要升级的文件夹。' Yellow
     }
 
     try {
@@ -388,7 +510,7 @@ function Find-InstallRoot {
             Throw-UpgradeFailure -Message '您已取消选择，升级未开始。' -ExitCode 2
         }
         if (-not (Test-InstallRoot -Root $dialog.SelectedPath)) { throw '所选文件夹不是会议室预约系统安装目录，也没有可恢复的升级状态。' }
-        return [IO.Path]::GetFullPath($dialog.SelectedPath)
+        return [IO.Path]::GetFullPath($dialog.SelectedPath).TrimEnd('\')
     }
     catch {
         if ($_.Exception.Data.Contains('UpgradeExitCode')) { throw }
@@ -494,17 +616,262 @@ function Invoke-Robocopy {
     if ($result.ExitCode -lt 0 -or $result.ExitCode -gt 7) { throw "复制失败（robocopy 退出码 $($result.ExitCode)）。" }
 }
 
-function Test-TaskExists {
-    $result = Invoke-NativeCommand -FilePath 'schtasks.exe' -Arguments @('/Query', '/TN', $script:TaskName)
-    return $result.ExitCode -eq 0
+function Get-OwnedTaskState {
+    param([string]$InstallRoot, [switch]$AllowMissing)
+    try {
+        $tasks = @(
+            Get-ScheduledTask -TaskName $script:TaskName -ErrorAction SilentlyContinue |
+                Where-Object { [string]$_.TaskPath -eq '\' }
+        )
+    }
+    catch {
+        throw "无法读取计划任务：$($_.Exception.Message)"
+    }
+    if ($tasks.Count -eq 0) {
+        if ($AllowMissing) {
+            return [pscustomobject]@{ Exists = $false; Enabled = $false; WasRunning = $false }
+        }
+        throw '原有计划任务已经消失，无法安全恢复其状态。'
+    }
+    if ($tasks.Count -ne 1) { throw '发现多个同名计划任务，无法确认归属。' }
+
+    $task = $tasks[0]
+    $actions = @($task.Actions)
+    if ($actions.Count -ne 1) { throw '同名计划任务不是本系统创建的：动作数量不一致。' }
+    $action = $actions[0]
+    $programRoot = Join-Path $InstallRoot '_程序文件'
+    $expectedExecutable = Join-Path $programRoot 'runtime\pythonw.exe'
+    $expectedServer = Join-Path $programRoot 'server.py'
+    $actualExecutable = [Environment]::ExpandEnvironmentVariables([string]$action.Execute)
+    $actualWorkingDirectory = [Environment]::ExpandEnvironmentVariables([string]$action.WorkingDirectory)
+    $argumentText = ([Environment]::ExpandEnvironmentVariables([string]$action.Arguments)).Trim()
+    if ($argumentText -notmatch '^"([^"]+)"$') {
+        throw '同名计划任务不是本系统创建的：启动参数不一致。'
+    }
+    $actualServer = $matches[1]
+    if (-not (Test-StringEqualsPath -Left $actualExecutable -Right $expectedExecutable) -or
+        -not (Test-StringEqualsPath -Left $actualServer -Right $expectedServer) -or
+        ($actualWorkingDirectory -and
+            -not (Test-StringEqualsPath -Left $actualWorkingDirectory -Right $programRoot))) {
+        throw '同名计划任务指向另一个安装目录。为避免停止错误的系统，升级已停止。'
+    }
+    if (-not $actualWorkingDirectory) {
+        Write-Log '检测到 V1.0.0 兼容计划任务（未设置 WorkingDirectory）；执行路径和 server.py 归属已精确验证。' 'WARN'
+    }
+    $enabled = [bool]$task.Settings.Enabled
+    return [pscustomobject]@{
+        Exists = $true
+        Enabled = $enabled
+        WasRunning = ([string]$task.State -eq 'Running')
+    }
+}
+
+function Set-OwnedTaskEnabledState {
+    param([string]$InstallRoot, [bool]$TaskExists, [bool]$Enabled)
+    if (-not $TaskExists) { return }
+    [void](Get-OwnedTaskState -InstallRoot $InstallRoot)
+    if ($Enabled) {
+        Enable-ScheduledTask -TaskName $script:TaskName -TaskPath '\' | Out-Null
+    }
+    else {
+        Disable-ScheduledTask -TaskName $script:TaskName -TaskPath '\' | Out-Null
+    }
+    Write-Log "计划任务启用状态已设置为：$Enabled"
+}
+
+function Disable-OwnedTaskForTransaction {
+    param([string]$InstallRoot, $TaskState)
+    if (-not [bool]$TaskState.Exists) { return }
+    Set-OwnedTaskEnabledState -InstallRoot $InstallRoot -TaskExists $true -Enabled $false
+}
+
+function Get-OwnedServerProcesses {
+    param([string]$ProgramRoot)
+    $python = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'runtime\python.exe'))
+    $pythonw = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'runtime\pythonw.exe'))
+    $server = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'server.py'))
+    try { $processes = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'") }
+    catch { throw "无法枚举本系统进程：$($_.Exception.Message)" }
+    $owned = New-Object System.Collections.Generic.List[object]
+    foreach ($process in $processes) {
+        if (-not $process.ExecutablePath -or -not $process.CommandLine) { continue }
+        try { $executable = [IO.Path]::GetFullPath([string]$process.ExecutablePath) } catch { continue }
+        $isRuntime = [string]::Equals($executable, $python, [StringComparison]::OrdinalIgnoreCase) -or
+                     [string]::Equals($executable, $pythonw, [StringComparison]::OrdinalIgnoreCase)
+        $commandLine = [string]$process.CommandLine
+        $absoluteServerPattern = '(?i)(^|\s)"?' + [regex]::Escape($server) + '"?(?=\s|$)'
+        $hasAbsoluteServer = [regex]::IsMatch($commandLine, $absoluteServerPattern)
+        # V1.0.0 的 ① BAT 使用精确相对 token "_程序文件\server.py"；
+        # 只有可执行文件已经精确归属本 runtime 时才兼容此旧格式。
+        $hasLegacyRelativeServer = [regex]::IsMatch(
+            $commandLine,
+            '(?i)(^|\s)"?_程序文件[\\/]server\.py"?(?=\s|$)'
+        )
+        if ($isRuntime -and ($hasAbsoluteServer -or $hasLegacyRelativeServer)) {
+            $owned.Add($process)
+        }
+    }
+    return $owned.ToArray()
 }
 
 function Test-SystemRunning {
     param([string]$ProgramRoot)
-    $python = Join-Path $ProgramRoot 'runtime\python.exe'
-    $server = Join-Path $ProgramRoot 'server.py'
-    $result = Invoke-NativeCommand -FilePath $python -Arguments @($server, '--check') -WorkingDirectory $ProgramRoot
-    return $result.ExitCode -eq 0
+    return @(Get-OwnedServerProcesses -ProgramRoot $ProgramRoot).Count -gt 0
+}
+
+function Get-PortListeners {
+    if (-not (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
+        throw '当前 Windows 无法检查 TCP 端口归属，升级已停止。'
+    }
+    try {
+        return @(
+            Get-NetTCPConnection -State Listen -LocalPort $script:ServicePort -ErrorAction SilentlyContinue
+        )
+    }
+    catch {
+        throw "无法检查端口 $($script:ServicePort)：$($_.Exception.Message)"
+    }
+}
+
+function Assert-ServicePortFree {
+    $listeners = @(Get-PortListeners)
+    if ($listeners.Count -gt 0) {
+        $owners = ($listeners | ForEach-Object { [string]$_.OwningProcess } | Sort-Object -Unique) -join ', '
+        throw "端口 $($script:ServicePort) 正被其他程序占用（PID：$owners）。升级不会改用其他端口，请先关闭占用程序。"
+    }
+}
+
+function Assert-CurrentPortOwnership {
+    param([string]$ProgramRoot)
+    $listeners = @(Get-PortListeners)
+    if ($listeners.Count -eq 0) { return }
+    $ownedIds = @(
+        Get-OwnedServerProcesses -ProgramRoot $ProgramRoot |
+            ForEach-Object { [int]$_.ProcessId }
+    )
+    foreach ($listener in $listeners) {
+        if ($ownedIds -notcontains [int]$listener.OwningProcess) {
+            throw "端口 $($script:ServicePort) 由另一个程序或另一套安装占用（PID=$($listener.OwningProcess)）。升级已停止。"
+        }
+    }
+}
+
+function Wait-ServicePortFree {
+    param([int]$Seconds = 10)
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        if (@(Get-PortListeners).Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "端口 $($script:ServicePort) 未能在 $Seconds 秒内释放。"
+}
+
+function Test-CanonicalInstallId {
+    param($Value)
+    return $Value -is [string] -and
+           [regex]::IsMatch(
+               [string]$Value,
+               '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+           )
+}
+
+function Get-InstallId {
+    param([string]$ProgramRoot, [switch]$AllowMissing)
+    $path = Join-Path $ProgramRoot 'data\install_id'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        if ($AllowMissing) { return $null }
+        throw '安装标识 data\install_id 缺失。'
+    }
+    $item = Get-Item -LiteralPath $path -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 128) {
+        throw '安装标识文件异常。'
+    }
+    $value = (Read-Utf8NoBom -Path $path).TrimEnd([char[]]"`r`n")
+    if (-not (Test-CanonicalInstallId -Value $value)) {
+        throw '安装标识 data\install_id 已损坏；升级不会自动替换它，请联系维护人员。'
+    }
+    return $value
+}
+
+function Get-ValidatedServiceHealth {
+    param([string]$ExpectedInstallId, [string]$ExpectedMode)
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/healthz" -f $script:ServicePort) -TimeoutSec 2
+        if ([int]$response.StatusCode -ne 200 -or [string]$response.Headers['X-Meeting-Room-System'] -ne '1') {
+            return $null
+        }
+        if (-not $response.Content -or ([string]$response.Content).Length -gt 8192) { return $null }
+        $body = ([string]$response.Content) | ConvertFrom-Json
+        $names = @($body.PSObject.Properties.Name | Sort-Object)
+        if (($names -join ',') -cne 'install_id,lan_url,mode,ok' -or
+            $body.ok -isnot [bool] -or -not [bool]$body.ok -or
+            -not (Test-CanonicalInstallId -Value $body.install_id) -or
+            -not [string]::Equals([string]$body.install_id, $ExpectedInstallId, [StringComparison]::Ordinal) -or
+            -not [string]::Equals([string]$body.mode, $ExpectedMode, [StringComparison]::Ordinal)) {
+            return $null
+        }
+        if ($ExpectedMode -eq 'upgrade-check') {
+            if ($null -ne $body.lan_url) { return $null }
+            $lanUrl = $null
+        }
+        elseif ($ExpectedMode -eq 'normal') {
+            if ($null -ne $body.lan_url -and -not (Test-LanHttpUrl -Value $body.lan_url)) {
+                return $null
+            }
+            $lanUrl = if ($null -eq $body.lan_url) { $null } else { [string]$body.lan_url }
+        }
+        else {
+            return $null
+        }
+        return [pscustomobject]@{
+            InstallId = [string]$body.install_id
+            Mode = [string]$body.mode
+            LanUrl = $lanUrl
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-ServiceHealth {
+    param([string]$ExpectedInstallId, [string]$ExpectedMode)
+    return $null -ne (Get-ValidatedServiceHealth `
+        -ExpectedInstallId $ExpectedInstallId -ExpectedMode $ExpectedMode)
+}
+
+function Wait-ServiceHealth {
+    param(
+        [string]$ProgramRoot,
+        [string]$ExpectedInstallId,
+        [string]$ExpectedMode,
+        [int]$Seconds = 30,
+        [int]$ExpectedProcessId = 0
+    )
+    $deadline = (Get-Date).AddSeconds($Seconds)
+    while ((Get-Date) -lt $deadline) {
+        if ($ExpectedProcessId -gt 0 -and -not (Get-Process -Id $ExpectedProcessId -ErrorAction SilentlyContinue)) {
+            throw "新版健康检查进程提前退出（PID=$ExpectedProcessId）。"
+        }
+        if ((Test-ServiceHealth -ExpectedInstallId $ExpectedInstallId -ExpectedMode $ExpectedMode) -and
+            (Test-SystemRunning -ProgramRoot $ProgramRoot)) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "新版服务未能在 $Seconds 秒内通过安装标识健康检查。"
+}
+
+function Assert-LoopbackListenerOwnedByProcess {
+    param([int]$ProcessId)
+    $listeners = @(Get-PortListeners)
+    if ($listeners.Count -eq 0) { throw '临时健康检查没有找到 TCP 监听端口。' }
+    foreach ($listener in $listeners) {
+        if ([int]$listener.OwningProcess -ne $ProcessId -or
+            @('127.0.0.1', '::1') -notcontains [string]$listener.LocalAddress) {
+            throw '升级前验证服务没有严格限制在本机回环地址，升级已停止。'
+        }
+    }
 }
 
 function Stop-OwnedRuntimeProcesses {
@@ -513,18 +880,9 @@ function Stop-OwnedRuntimeProcesses {
         $endResult = Invoke-NativeCommand -FilePath 'schtasks.exe' -Arguments @('/End', '/TN', $script:TaskName)
         if ($endResult.ExitCode -ne 0) { Write-Log "计划任务当前可能未运行，/End 退出码=$($endResult.ExitCode)" 'WARN' }
     }
-    $runtime = [IO.Path]::GetFullPath((Join-Path $ProgramRoot 'runtime')).TrimEnd('\') + '\'
-    try { $processes = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'") }
-    catch { throw "无法枚举本系统进程：$($_.Exception.Message)" }
-    foreach ($process in $processes) {
-        if ($process.ExecutablePath) {
-            $executable = [IO.Path]::GetFullPath([string]$process.ExecutablePath)
-            if ($executable.StartsWith($runtime, [StringComparison]::OrdinalIgnoreCase)) {
-                Write-Log "停止本安装目录进程 PID=$($process.ProcessId)，路径=$executable"
-                # 枚举后进程可能已经自行退出；最终以 --check 的轮询结果为准。
-                Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
-            }
-        }
+    foreach ($process in @(Get-OwnedServerProcesses -ProgramRoot $ProgramRoot)) {
+        Write-Log "停止本安装目录服务进程 PID=$($process.ProcessId)，路径=$($process.ExecutablePath)"
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
     }
     $deadline = (Get-Date).AddSeconds(10)
     while ((Get-Date) -lt $deadline) {
@@ -534,28 +892,168 @@ function Stop-OwnedRuntimeProcesses {
     throw '系统未能在 10 秒内停止。'
 }
 
-function Wait-SystemHealth {
+function Wait-OwnedServerProcess {
     param([string]$ProgramRoot, [int]$Seconds = 30)
     $deadline = (Get-Date).AddSeconds($Seconds)
+    $stableChecks = 0
     while ((Get-Date) -lt $deadline) {
-        if (Test-SystemRunning -ProgramRoot $ProgramRoot) { return }
-        Start-Sleep -Seconds 1
+        $ownedIds = @(
+            Get-OwnedServerProcesses -ProgramRoot $ProgramRoot |
+                ForEach-Object { [int]$_.ProcessId }
+        )
+        $listeners = @(Get-PortListeners)
+        $ownedListener = $false
+        foreach ($listener in $listeners) {
+            if ($ownedIds -contains [int]$listener.OwningProcess) {
+                $ownedListener = $true
+                break
+            }
+        }
+        if ($ownedIds.Count -gt 0 -and $ownedListener) {
+            $stableChecks += 1
+            if ($stableChecks -ge 2) { return }
+        }
+        else {
+            $stableChecks = 0
+        }
+        Start-Sleep -Milliseconds 500
     }
-    throw "新版服务未能在 $Seconds 秒内通过健康检查。"
+    throw "系统服务未能在 $Seconds 秒内稳定启动并取得端口 $($script:ServicePort)。"
+}
+
+function Start-ServiceWithCurrentAdministratorToken {
+    param([string]$InstallRoot)
+    if ([Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_DIRECT_ADMIN') -ne '1') {
+        throw '当前管理员令牌启动降级路径未获升级包入口授权。'
+    }
+    $programRoot = Join-Path $InstallRoot '_程序文件'
+    $python = Join-Path $programRoot 'runtime\python.exe'
+    $server = Join-Path $programRoot 'server.py'
+    $process = Start-Process -FilePath $python `
+        -ArgumentList @(('"{0}"' -f $server)) `
+        -WorkingDirectory $programRoot -WindowStyle Minimized -PassThru
+    Write-Log "升级包初始即处于完整管理员令牌；使用同一用户令牌恢复普通启动方式，PID=$($process.Id)" 'WARN'
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $ownedIds = @(
+            Get-OwnedServerProcesses -ProgramRoot $programRoot |
+                ForEach-Object { [int]$_.ProcessId }
+        )
+        if ($ownedIds -contains [int]$process.Id) { return [int]$process.Id }
+        Start-Sleep -Milliseconds 250
+    }
+    throw '使用当前管理员令牌启动的服务进程不属于当前安装目录。'
+}
+
+function Request-UnelevatedServiceStart {
+    param([string]$InstallRoot)
+    $requestPath = [Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_BROKER_REQUEST')
+    $responsePath = [Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_BROKER_RESPONSE')
+    $token = [Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_BROKER_TOKEN')
+    if (-not $requestPath -or -not $responsePath -or $token -notmatch '^[0-9a-f]{32}$') {
+        if ([Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_DIRECT_ADMIN') -eq '1') {
+            $currentTokenProcessId = Start-ServiceWithCurrentAdministratorToken -InstallRoot $InstallRoot
+            return $currentTokenProcessId
+        }
+        throw '未提升的启动代理不可用。请关闭升级窗口后，再以普通方式双击升级包让它自动收尾。'
+    }
+    $requestFull = [IO.Path]::GetFullPath($requestPath)
+    $responseFull = [IO.Path]::GetFullPath($responsePath)
+    $requestParent = Split-Path -Parent $requestFull
+    if (-not (Test-StringEqualsPath -Left $requestParent -Right (Split-Path -Parent $responseFull)) -or
+        -not (Test-Path -LiteralPath $requestParent -PathType Container)) {
+        throw '未提升启动代理的临时路径非法。'
+    }
+    Assert-NoReparsePoints -Path $requestParent
+    $programRoot = Join-Path $InstallRoot '_程序文件'
+    $python = Join-Path $programRoot 'runtime\python.exe'
+    $server = Join-Path $programRoot 'server.py'
+    foreach ($oldBrokerFile in @($requestFull, $responseFull)) {
+        if (Test-Path -LiteralPath $oldBrokerFile) {
+            $oldItem = Get-Item -LiteralPath $oldBrokerFile -Force
+            if (($oldItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $oldItem.PSIsContainer) {
+                throw '未提升启动代理发现异常的旧请求文件。'
+            }
+            Remove-Item -LiteralPath $oldBrokerFile -Force
+        }
+    }
+    Write-JsonAtomic -Path $requestFull -Value ([ordered]@{
+        schema = 1
+        token = $token
+        python_path = $python
+        server_path = $server
+        working_directory = $programRoot
+    })
+    Write-Log '已请求未提升的父进程启动普通用户服务。'
+
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-Path -LiteralPath $responseFull -PathType Leaf) {
+            $item = Get-Item -LiteralPath $responseFull -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 4096) {
+                throw '未提升启动代理响应异常。'
+            }
+            $reply = (Read-Utf8NoBom -Path $responseFull) | ConvertFrom-Json
+            $names = @($reply.PSObject.Properties.Name | Sort-Object)
+            if (($names -join ',') -ne 'error,ok,process_id,schema,token' -or
+                ((($reply.schema -isnot [int]) -and ($reply.schema -isnot [long])) -or
+                    [int64]$reply.schema -ne 1) -or
+                -not [string]::Equals([string]$reply.token, $token, [StringComparison]::Ordinal) -or
+                $reply.ok -isnot [bool]) {
+                throw '未提升启动代理响应校验失败。'
+            }
+            if (-not [bool]$reply.ok) {
+                throw "普通用户服务启动失败：$([string]$reply.error)"
+            }
+            $processId = [int]$reply.process_id
+            if ($processId -le 0) { throw '未提升启动代理没有返回有效进程 ID。' }
+            $ownedDeadline = (Get-Date).AddSeconds(10)
+            while ((Get-Date) -lt $ownedDeadline) {
+                $ownedIds = @(
+                    Get-OwnedServerProcesses -ProgramRoot $programRoot |
+                        ForEach-Object { [int]$_.ProcessId }
+                )
+                if ($ownedIds -contains $processId) {
+                    Remove-Item -LiteralPath $responseFull -Force -ErrorAction SilentlyContinue
+                    return $processId
+                }
+                Start-Sleep -Milliseconds 250
+            }
+            throw '普通用户启动的进程不属于当前安装目录。'
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    throw '等待普通用户启动代理响应超时。请关闭升级窗口后重新双击升级包。'
 }
 
 function Start-PersistentSystem {
-    param([string]$InstallRoot, [bool]$TaskExists)
+    param(
+        [string]$InstallRoot,
+        [bool]$TaskExists,
+        [bool]$TaskEnabled,
+        [bool]$TaskWasRunning
+    )
     $programRoot = Join-Path $InstallRoot '_程序文件'
-    if ($TaskExists) {
-        $result = Invoke-NativeCommand -FilePath 'schtasks.exe' -Arguments @('/Run', '/TN', $script:TaskName)
-        if ($result.ExitCode -ne 0) { throw '计划任务无法启动系统。' }
+    if ($TaskExists -and $TaskWasRunning) {
+        $temporarilyEnabled = -not $TaskEnabled
+        if ($temporarilyEnabled) {
+            Set-OwnedTaskEnabledState -InstallRoot $InstallRoot -TaskExists $true -Enabled $true
+        }
+        try {
+            $result = Invoke-NativeCommand -FilePath 'schtasks.exe' -Arguments @('/Run', '/TN', $script:TaskName)
+            if ($result.ExitCode -ne 0) { throw '计划任务无法启动系统。' }
+            Wait-OwnedServerProcess -ProgramRoot $programRoot
+        }
+        finally {
+            if ($temporarilyEnabled) {
+                Set-OwnedTaskEnabledState -InstallRoot $InstallRoot -TaskExists $true -Enabled $false
+            }
+        }
     }
     else {
-        $startBat = Join-Path $InstallRoot '① 启动系统.bat'
-        Start-Process -FilePath $startBat -WorkingDirectory $InstallRoot -WindowStyle Minimized | Out-Null
+        [void](Request-UnelevatedServiceStart -InstallRoot $InstallRoot)
+        Wait-OwnedServerProcess -ProgramRoot $programRoot
     }
-    Wait-SystemHealth -ProgramRoot $programRoot
 }
 
 function Test-Database {
@@ -565,6 +1063,36 @@ function Test-Database {
     $checkScript = Join-Path $PayloadRoot '_程序文件\migrate_check.py'
     $result = Invoke-NativeCommand -FilePath $python -Arguments @($checkScript, '--precheck', $DatabasePath) -WorkingDirectory $ProgramRoot
     if ($result.ExitCode -ne 0) { throw "数据库完整性预检失败：$DatabasePath" }
+}
+
+function New-StandardPreUpgradeBackup {
+    param([string]$PayloadRoot, [string]$ProgramRoot)
+    $source = Join-Path $ProgramRoot 'data\reservation.db'
+    $backupRoot = Join-Path $ProgramRoot 'backups'
+    if (-not (Test-Path -LiteralPath $backupRoot)) {
+        New-Item -ItemType Directory -Path $backupRoot | Out-Null
+    }
+    Assert-NoReparsePoints -Path $backupRoot
+    $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss_fff'
+    $target = Join-Path $backupRoot ("reservation_before_upgrade_V{0}_{1}.db" -f $script:PackageVersionText, $stamp)
+    $temporary = "$target.part"
+    try {
+        Copy-Item -LiteralPath $source -Destination $temporary -Force
+        if ((Get-Sha256Hex -Path $source) -ne (Get-Sha256Hex -Path $temporary)) {
+            throw '升级前标准备份与原数据库哈希不一致。'
+        }
+        Test-Database -PayloadRoot $PayloadRoot -ProgramRoot $ProgramRoot -DatabasePath $temporary
+        [IO.File]::Move($temporary, $target)
+    }
+    finally {
+        foreach ($leftover in @($temporary, "$temporary-wal", "$temporary-shm", "$target-wal", "$target-shm")) {
+            if (Test-Path -LiteralPath $leftover) {
+                Remove-Item -LiteralPath $leftover -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    Write-Log "已生成可长期保留的升级前数据库备份：$target"
+    return $target
 }
 
 function Assert-FreeSpace {
@@ -735,28 +1263,172 @@ function Assert-RestoredProgram {
 }
 
 function Restore-ExpectedRunState {
-    param([string]$InstallRoot, [bool]$WasRunning, [bool]$TaskExists)
+    param(
+        [string]$InstallRoot,
+        [bool]$WasRunning,
+        [bool]$TaskExists,
+        [bool]$TaskEnabled,
+        [bool]$TaskWasRunning,
+        [string]$ExpectedInstallId = $null,
+        [switch]$RequireHealth
+    )
     $programRoot = Join-Path $InstallRoot '_程序文件'
+    Set-OwnedTaskEnabledState -InstallRoot $InstallRoot -TaskExists $TaskExists -Enabled $TaskEnabled
     if ($WasRunning) {
         if (Test-SystemRunning -ProgramRoot $programRoot) {
             Write-Log '系统已处于运行状态，无需重复启动。'
-            return
         }
-        Start-PersistentSystem -InstallRoot $InstallRoot -TaskExists $TaskExists
+        else {
+            Start-PersistentSystem -InstallRoot $InstallRoot -TaskExists $TaskExists `
+                -TaskEnabled $TaskEnabled -TaskWasRunning $TaskWasRunning
+        }
+        Wait-OwnedServerProcess -ProgramRoot $programRoot
+        if ($RequireHealth) {
+            Wait-ServiceHealth -ProgramRoot $programRoot -ExpectedInstallId $ExpectedInstallId -ExpectedMode 'normal'
+        }
     }
     else {
-        Stop-OwnedRuntimeProcesses -ProgramRoot $programRoot -TaskExists $false
+        Stop-OwnedRuntimeProcesses -ProgramRoot $programRoot -TaskExists $TaskExists
         if (Test-SystemRunning -ProgramRoot $programRoot) { throw '无法恢复升级前的停止状态。' }
+    }
+}
+
+function Assert-RunStateInvariants {
+    param(
+        [bool]$WasRunning,
+        [bool]$TaskExists,
+        [bool]$TaskEnabled,
+        [bool]$TaskWasRunning,
+        [string]$Context
+    )
+    if ((-not $TaskExists -and ($TaskEnabled -or $TaskWasRunning)) -or
+        ($TaskWasRunning -and -not $WasRunning)) {
+        throw "$Context 中的运行状态互相矛盾。"
+    }
+}
+
+function Assert-CurrentTransactionStateEnvelope {
+    param($State, [string]$Context)
+    $names = @($State.PSObject.Properties.Name | Sort-Object)
+    $expectedNames = @(
+        'BackupPath', 'InstallId', 'OriginalInstallId', 'OriginalVersion',
+        'OriginalVersionExisted', 'PackageVersion', 'Schema', 'SnapshotPath',
+        'Stage', 'TaskEnabled', 'TaskExists', 'TaskWasRunning',
+        'TransactionId', 'WasRunning'
+    )
+    if (($names -join ',') -cne ($expectedNames -join ',')) {
+        throw "$Context 的字段集合非法。"
+    }
+    if ((($State.Schema -isnot [int]) -and ($State.Schema -isnot [long])) -or
+        [int64]$State.Schema -ne [int64]$script:TransactionStateSchema) {
+        throw "$Context 的结构版本非法。"
+    }
+    if ([string]$State.TransactionId -notmatch '^[0-9a-fA-F]{32}$' -or
+        $State.PackageVersion -isnot [string] -or
+        [string]$State.PackageVersion -notmatch '^\d+\.\d+\.\d+$' -or
+        $State.OriginalVersion -isnot [string] -or
+        [string]$State.OriginalVersion -notmatch '^\d+\.\d+\.\d+$' -or
+        $State.OriginalVersionExisted -isnot [bool]) {
+        throw "$Context 的事务信息非法。"
+    }
+    if ($State.WasRunning -isnot [bool] -or $State.TaskExists -isnot [bool] -or
+        $State.TaskEnabled -isnot [bool] -or $State.TaskWasRunning -isnot [bool]) {
+        throw "$Context 中的运行信息非法。"
+    }
+    Assert-RunStateInvariants -WasRunning ([bool]$State.WasRunning) `
+        -TaskExists ([bool]$State.TaskExists) -TaskEnabled ([bool]$State.TaskEnabled) `
+        -TaskWasRunning ([bool]$State.TaskWasRunning) -Context $Context
+    if ($null -ne $State.InstallId -and
+        -not (Test-CanonicalInstallId -Value $State.InstallId)) {
+        throw "$Context 中的安装标识非法。"
+    }
+    if ($null -ne $State.OriginalInstallId -and
+        -not (Test-CanonicalInstallId -Value $State.OriginalInstallId)) {
+        throw "$Context 中的原安装标识非法。"
+    }
+}
+
+function Convert-LegacyV101TransactionState {
+    param([string]$InstallRoot, $State, [switch]$CommittedHandoff)
+    $names = @($State.PSObject.Properties.Name | Sort-Object)
+    $legacyNames = @(
+        'OriginalVersion', 'OriginalVersionExisted', 'PackageVersion',
+        'SnapshotPath', 'Stage', 'TaskExists', 'TransactionId', 'WasRunning'
+    )
+    if (($names -join ',') -cne ($legacyNames -join ',')) { return $null }
+
+    $legacyStages = @(
+        'preparing', 'snapshot_ready', 'program_replaced',
+        'migration_complete', 'healthcheck_passed', 'version_committed'
+    )
+    if ($State.PackageVersion -isnot [string] -or
+        [string]$State.PackageVersion -cne '1.0.1' -or
+        [string]$State.Stage -notin $legacyStages -or
+        [string]$State.TransactionId -notmatch '^[0-9a-fA-F]{32}$' -or
+        $State.OriginalVersion -isnot [string] -or
+        [string]$State.OriginalVersion -notmatch '^\d+\.\d+\.\d+$' -or
+        $State.OriginalVersionExisted -isnot [bool] -or
+        $State.WasRunning -isnot [bool] -or $State.TaskExists -isnot [bool]) {
+        throw 'V1.0.1 遗留升级状态内容非法。'
+    }
+    try { $legacyOriginalVersion = [version][string]$State.OriginalVersion }
+    catch { throw 'V1.0.1 遗留升级状态中的原版本非法。' }
+    if ($legacyOriginalVersion -ge [version]'1.0.1' -or
+        (-not [bool]$State.OriginalVersionExisted -and
+            [string]$State.OriginalVersion -cne '1.0.0')) {
+        throw 'V1.0.1 遗留升级状态中的版本关系非法。'
+    }
+    if ([string]$State.Stage -eq 'preparing') {
+        if ($null -ne $State.SnapshotPath -and
+            -not [string]::IsNullOrEmpty([string]$State.SnapshotPath)) {
+            throw 'V1.0.1 preparing 状态不应包含快照路径。'
+        }
+    }
+    elseif ($State.SnapshotPath -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$State.SnapshotPath)) {
+        throw 'V1.0.1 遗留升级状态缺少快照路径。'
+    }
+
+    if ($CommittedHandoff) {
+        # 已提交事务只保持用户当前运行状态，不恢复旧任务语义；用户可能在
+        # 提交后自行增删任务，因此这里不能把当前任务与旧快照强行绑定。
+        $taskEnabled = $false
+        $taskWasRunning = $false
+    }
+    else {
+        # V1.0.1 只记录“任务是否存在”，且恢复时只要升级前正在运行就一律
+        # 优先通过任务重启。未提交事务必须严格核对当前任务归属，并按旧语义补齐。
+        $currentTask = Get-OwnedTaskState -InstallRoot $InstallRoot -AllowMissing
+        if ([bool]$currentTask.Exists -ne [bool]$State.TaskExists) {
+            throw 'V1.0.1 遗留状态记录的开机任务与当前状态不一致，无法安全推断原运行方式。'
+        }
+        $taskEnabled = if ([bool]$State.TaskExists) { [bool]$currentTask.Enabled } else { $false }
+        $taskWasRunning = [bool]$State.TaskExists -and [bool]$State.WasRunning
+    }
+
+    return [pscustomobject][ordered]@{
+        Schema = $script:TransactionStateSchema
+        TransactionId = [string]$State.TransactionId
+        PackageVersion = [string]$State.PackageVersion
+        SnapshotPath = $State.SnapshotPath
+        BackupPath = $null
+        InstallId = $null
+        Stage = [string]$State.Stage
+        OriginalVersion = [string]$State.OriginalVersion
+        OriginalVersionExisted = [bool]$State.OriginalVersionExisted
+        OriginalInstallId = $null
+        WasRunning = [bool]$State.WasRunning
+        TaskExists = [bool]$State.TaskExists
+        TaskEnabled = $taskEnabled
+        TaskWasRunning = $taskWasRunning
     }
 }
 
 function Assert-PreparingState {
     param($State)
-    if ([string]$State.Stage -ne 'preparing' -or [string]$State.TransactionId -notmatch '^[0-9a-fA-F]{32}$') {
+    Assert-CurrentTransactionStateEnvelope -State $State -Context '升级准备状态'
+    if (@('preparing', 'service_stopped', 'backup_ready') -notcontains [string]$State.Stage) {
         throw '升级准备状态内容非法。'
-    }
-    if ($State.WasRunning -isnot [bool] -or $State.TaskExists -isnot [bool]) {
-        throw '升级准备状态中的运行信息非法。'
     }
     if ($null -ne $State.SnapshotPath -and -not [string]::IsNullOrEmpty([string]$State.SnapshotPath)) {
         throw '升级准备状态不应包含快照路径。'
@@ -767,30 +1439,30 @@ function Recover-PreparingTransaction {
     param([string]$InstallRoot, $State, [string]$StatePath)
     Assert-PreparingState -State $State
     Write-Log '发现停机或快照阶段中断；程序和数据尚未进入覆盖事务，正在恢复原运行状态。' 'WARN'
-    Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) -TaskExists ([bool]$State.TaskExists)
+    Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) `
+        -TaskExists ([bool]$State.TaskExists) -TaskEnabled ([bool]$State.TaskEnabled) `
+        -TaskWasRunning ([bool]$State.TaskWasRunning)
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
     Write-Log 'preparing 状态已恢复并清除。'
 }
 
 function Assert-CommittedState {
     param($State, [switch]$AllowHealthcheckHandoff)
+    Assert-CurrentTransactionStateEnvelope -State $State -Context '升级已提交状态'
     $stage = [string]$State.Stage
-    $validStage = $stage -eq 'version_committed' -or
+    $validStage = $stage -eq 'version_committed' -or $stage -eq 'service_restored' -or
                   ($AllowHealthcheckHandoff -and $stage -eq 'healthcheck_passed')
-    if (-not $validStage -or [string]$State.TransactionId -notmatch '^[0-9a-fA-F]{32}$') {
+    if (-not $validStage) {
         throw '升级已提交状态内容非法。'
     }
-    if ([string]$State.PackageVersion -notmatch '^\d+\.\d+\.\d+$') {
-        throw '升级已提交状态中的包版本非法。'
-    }
-    if ($State.WasRunning -isnot [bool] -or $State.TaskExists -isnot [bool]) {
-        throw '升级已提交状态中的运行信息非法。'
+    if (-not (Test-CanonicalInstallId -Value $State.InstallId)) {
+        throw '升级已提交状态中的安装标识非法。'
     }
 }
 
 function Test-CommittedTransactionState {
     param([string]$ProgramRoot, $State)
-    if ([string]$State.Stage -eq 'version_committed') { return $true }
+    if (@('version_committed', 'service_restored') -contains [string]$State.Stage) { return $true }
     if ([string]$State.Stage -ne 'healthcheck_passed') { return $false }
 
     # 版本文件提交与 version_committed 状态落盘之间无法跨两个文件做同一个原子操作。
@@ -806,6 +1478,21 @@ function Test-CommittedTransactionState {
     }
 }
 
+function Remove-SuccessfulTransactionSnapshot {
+    param([string]$ProgramRoot, $State)
+    $transactionId = [string]$State.TransactionId
+    if ($transactionId -notmatch '^[0-9a-fA-F]{32}$') { throw '事务 ID 非法，不能清理快照。' }
+    $expected = Join-Path $ProgramRoot (Join-Path '_升级回滚' $transactionId)
+    if (-not (Test-StringEqualsPath -Left $expected -Right ([string]$State.SnapshotPath))) {
+        throw '事务快照路径越界，拒绝清理。'
+    }
+    if (Test-Path -LiteralPath $expected) {
+        Assert-NoReparsePoints -Path $expected
+        Remove-Item -LiteralPath $expected -Recurse -Force
+        Write-Log "已清理成功事务的完整回滚副本：$expected"
+    }
+}
+
 function Recover-CommittedTransaction {
     param([string]$InstallRoot, $State, [string]$StatePath)
     $allowHandoff = [string]$State.Stage -eq 'healthcheck_passed'
@@ -817,25 +1504,101 @@ function Recover-CommittedTransaction {
         throw '升级状态显示版本已提交，但安装目录版本不一致；为保护现有数据，不会自动回滚。'
     }
 
+    $actualInstallId = Get-InstallId -ProgramRoot $programRoot
+    if (-not [string]::Equals($actualInstallId, [string]$State.InstallId, [StringComparison]::Ordinal)) {
+        throw '已提交版本的安装标识发生变化；为保护数据，不会自动回滚或启动。'
+    }
+
     Write-Log "发现已经提交成功的升级事务，正在安全收尾，版本=$($installed.Text)，原阶段=$($State.Stage)" 'WARN'
-    # 事务早已提交后，用户可能又手动启动或停止过系统；只能观察当前状态，
-    # 不得再按升级前的 WasRunning 改变它，更不得恢复程序或 data。
-    if (Test-SystemRunning -ProgramRoot $programRoot) {
-        Write-Log '已提交版本当前正在运行，健康检查通过。'
+    if ([string]$State.Stage -ne 'service_restored') {
+        if ([string]$State.Stage -eq 'healthcheck_passed') {
+            Update-TransactionStage -State $State -StatePath $StatePath -Stage 'version_committed'
+        }
+        Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) `
+            -TaskExists ([bool]$State.TaskExists) -TaskEnabled ([bool]$State.TaskEnabled) `
+            -TaskWasRunning ([bool]$State.TaskWasRunning) `
+            -ExpectedInstallId $actualInstallId -RequireHealth
+        Update-TransactionStage -State $State -StatePath $StatePath -Stage 'service_restored'
     }
     else {
-        Write-Log '已提交版本当前处于停止状态；保留用户当前运行状态，不主动启动。'
+        # 服务已向用户开放后，后续可能由用户手动启动或停止；只恢复计划任务
+        # 的原启用状态，不再强行改变服务现状。
+        Set-OwnedTaskEnabledState -InstallRoot $InstallRoot -TaskExists ([bool]$State.TaskExists) `
+            -Enabled ([bool]$State.TaskEnabled)
+        if (Test-SystemRunning -ProgramRoot $programRoot) {
+            Wait-ServiceHealth -ProgramRoot $programRoot -ExpectedInstallId $actualInstallId -ExpectedMode 'normal'
+        }
+    }
+    Remove-VersionTemporaryFile -ProgramRoot $programRoot -TransactionId ([string]$State.TransactionId)
+    Remove-SuccessfulTransactionSnapshot -ProgramRoot $programRoot -State $State
+    if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
+    Write-Log '已提交事务的残留状态和完整回滚副本已清除；现有程序和 data 均未回滚。'
+}
+
+function Recover-LegacyV101CommittedTransaction {
+    param([string]$InstallRoot, $State, [string]$StatePath)
+    $programRoot = Join-Path $InstallRoot '_程序文件'
+    $installed = Read-InstalledVersion -ProgramRoot $programRoot
+    if (-not $installed.Existed -or
+        -not [string]::Equals($installed.Text, '1.0.1', [StringComparison]::Ordinal)) {
+        throw 'V1.0.1 遗留状态显示版本已提交，但安装目录版本不一致。'
+    }
+    if (-not (Test-NormalInstallRoot -Root $InstallRoot)) {
+        throw 'V1.0.1 已提交目录不完整，拒绝清除恢复标记。'
+    }
+
+    # V1.0.1 的已提交语义是：提交后只观察当前运行状态，不再强行恢复
+    # 升级前状态。这里保持该语义，也不要求当时尚不存在的 install_id。
+    Write-Log "发现 V1.0.1 已提交遗留事务，正在兼容收尾，原阶段=$($State.Stage)" 'WARN'
+    if (Test-SystemRunning -ProgramRoot $programRoot) {
+        Write-Log 'V1.0.1 已提交版本当前正在运行；保持当前状态。'
+    }
+    else {
+        Write-Log 'V1.0.1 已提交版本当前处于停止状态；保持当前状态。'
     }
     Remove-VersionTemporaryFile -ProgramRoot $programRoot -TransactionId ([string]$State.TransactionId)
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
-    Write-Log '已提交事务的残留状态已清除；现有程序和 data 均未回滚。'
+    Write-Log "V1.0.1 已提交遗留事务已清理；程序、data 和当前运行状态均未改变。旧完整快照继续保留：$($State.SnapshotPath)"
+}
+
+function Assert-RollbackRestoredState {
+    param($State)
+    Assert-CurrentTransactionStateEnvelope -State $State -Context '回滚完成状态'
+    if ([string]$State.Stage -ne 'rollback_restored') {
+        throw '回滚完成状态内容非法。'
+    }
+}
+
+function Recover-RollbackRestoredTransaction {
+    param([string]$InstallRoot, $State, [string]$StatePath)
+    Assert-RollbackRestoredState -State $State
+    Write-Log '发现已经恢复完成但尚未收尾的回滚；不会再次覆盖 data。' 'WARN'
+    Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) `
+        -TaskExists ([bool]$State.TaskExists) -TaskEnabled ([bool]$State.TaskEnabled) `
+        -TaskWasRunning ([bool]$State.TaskWasRunning)
+    Remove-VersionTemporaryFile -ProgramRoot (Join-Path $InstallRoot '_程序文件') `
+        -TransactionId ([string]$State.TransactionId)
+    if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
+    Write-Log '回滚收尾完成；失败现场快照已保留供维护人员核查。'
 }
 
 function Invoke-Rollback {
     param([string]$InstallRoot, [string]$PayloadRoot, $State, [string]$StatePath)
+    Assert-CurrentTransactionStateEnvelope -State $State -Context '待回滚升级状态'
+    if (@('snapshot_ready', 'program_replaced', 'migration_complete', 'healthcheck_passed') `
+        -notcontains [string]$State.Stage) {
+        throw '待回滚升级状态的阶段非法。'
+    }
+    if ($State.SnapshotPath -isnot [string] -or
+        [string]::IsNullOrWhiteSpace([string]$State.SnapshotPath)) {
+        throw '待回滚升级状态缺少快照路径。'
+    }
     $programRoot = Join-Path $InstallRoot '_程序文件'
     Write-Log "开始统一回滚，阶段=$($State.Stage)" 'WARN'
     $snapshot = Get-ValidatedSnapshot -ProgramRoot $programRoot -State $State
+    Disable-OwnedTaskForTransaction -InstallRoot $InstallRoot -TaskState ([pscustomobject]@{
+        Exists = [bool]$State.TaskExists
+    })
     Stop-OwnedRuntimeProcesses -ProgramRoot $programRoot -TaskExists ([bool]$State.TaskExists)
     Remove-ManagedProgram -InstallRoot $InstallRoot
     Copy-FixedManagedFiles -SourceRoot (Join-Path $snapshot.Root 'program') -DestinationRoot $InstallRoot
@@ -858,21 +1621,37 @@ function Invoke-Rollback {
     Invoke-Robocopy -Source (Join-Path $snapshot.Root 'data') -Destination $dataRoot -Mirror
     Assert-ManifestMatches -Root $dataRoot -Records $snapshot.DataManifest.Files
     Test-Database -PayloadRoot $PayloadRoot -ProgramRoot $programRoot -DatabasePath (Join-Path $dataRoot 'reservation.db')
-    Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) -TaskExists ([bool]$State.TaskExists)
+    # 先把“数据已经恢复”作为耐久终态落盘，再允许旧服务重新对用户开放。
+    # 即使随后断电，恢复路径也只收尾，不会再次把 data 覆盖为更早的快照。
+    Update-TransactionStage -State $State -StatePath $StatePath -Stage 'rollback_restored'
+    Restore-ExpectedRunState -InstallRoot $InstallRoot -WasRunning ([bool]$State.WasRunning) `
+        -TaskExists ([bool]$State.TaskExists) -TaskEnabled ([bool]$State.TaskEnabled) `
+        -TaskWasRunning ([bool]$State.TaskWasRunning)
     Remove-VersionTemporaryFile -ProgramRoot $programRoot -TransactionId ([string]$State.TransactionId)
     if (Test-Path -LiteralPath $StatePath) { Remove-Item -LiteralPath $StatePath -Force }
     Write-Log '统一回滚完成，旧程序、旧数据和原运行状态均已恢复。'
 }
 
 function Update-TransactionStage {
-    param($State, [string]$StatePath, [string]$Stage, [string]$SnapshotPath = $null)
+    param(
+        $State,
+        [string]$StatePath,
+        [string]$Stage,
+        [string]$SnapshotPath = $null,
+        [string]$BackupPath = $null,
+        [string]$InstallId = $null
+    )
     # 先写副本，只有同卷原子替换成功后才更新内存；磁盘状态始终是恢复分支的真相。
     $nextState = (($State | ConvertTo-Json -Depth 8) | ConvertFrom-Json)
     $nextState.Stage = $Stage
     if ($PSBoundParameters.ContainsKey('SnapshotPath')) { $nextState.SnapshotPath = $SnapshotPath }
+    if ($PSBoundParameters.ContainsKey('BackupPath')) { $nextState.BackupPath = $BackupPath }
+    if ($PSBoundParameters.ContainsKey('InstallId')) { $nextState.InstallId = $InstallId }
     Write-JsonAtomic -Path $StatePath -Value $nextState
     $State.Stage = $nextState.Stage
     $State.SnapshotPath = $nextState.SnapshotPath
+    $State.BackupPath = $nextState.BackupPath
+    $State.InstallId = $nextState.InstallId
     Write-Log "事务阶段更新：$Stage"
 }
 
@@ -933,25 +1712,58 @@ function Invoke-Migration {
 }
 
 function Test-NewVersionByStartingService {
-    param([string]$InstallRoot, [bool]$WasRunning, [bool]$TaskExists)
+    param([string]$InstallRoot, [string]$OriginalInstallId = $null)
     $programRoot = Join-Path $InstallRoot '_程序文件'
-    if ($WasRunning) {
-        Start-PersistentSystem -InstallRoot $InstallRoot -TaskExists $TaskExists
-        return
-    }
-
     $python = Join-Path $programRoot 'runtime\python.exe'
     $server = Join-Path $programRoot 'server.py'
-    Write-Log '系统升级前未运行；临时启动新版服务进行真实健康检查。'
-    $temporaryProcess = Start-Process -FilePath $python -ArgumentList @(('"{0}"' -f $server)) -WorkingDirectory $programRoot -WindowStyle Hidden -PassThru
+    $temporaryProcess = $null
+    $installId = $null
+    Assert-ServicePortFree
+    Write-Log '仅在 127.0.0.1 临时启动新版服务进行维护态健康检查；此时局域网用户无法写入。'
+    $oldUpgradeCheck = [Environment]::GetEnvironmentVariable('MEETING_ROOM_UPGRADE_CHECK')
+    $oldOpenBrowser = [Environment]::GetEnvironmentVariable('MEETING_ROOM_OPEN_BROWSER')
     try {
-        Wait-SystemHealth -ProgramRoot $programRoot
+        $env:MEETING_ROOM_UPGRADE_CHECK = '1'
+        $env:MEETING_ROOM_OPEN_BROWSER = '0'
+        $temporaryProcess = Start-Process -FilePath $python -ArgumentList @(('"{0}"' -f $server)) `
+            -WorkingDirectory $programRoot -WindowStyle Hidden -PassThru
     }
     finally {
-        Stop-OwnedRuntimeProcesses -ProgramRoot $programRoot -TaskExists $false
+        if ($null -eq $oldUpgradeCheck) { Remove-Item Env:MEETING_ROOM_UPGRADE_CHECK -ErrorAction SilentlyContinue }
+        else { $env:MEETING_ROOM_UPGRADE_CHECK = $oldUpgradeCheck }
+        if ($null -eq $oldOpenBrowser) { Remove-Item Env:MEETING_ROOM_OPEN_BROWSER -ErrorAction SilentlyContinue }
+        else { $env:MEETING_ROOM_OPEN_BROWSER = $oldOpenBrowser }
     }
-    if (Test-SystemRunning -ProgramRoot $programRoot) { throw '临时健康检查后未能恢复原停止状态。' }
-    Write-Log "临时服务健康检查通过并已停止，启动进程 PID=$($temporaryProcess.Id)"
+    try {
+        $deadline = (Get-Date).AddSeconds(15)
+        $installId = $null
+        while ((Get-Date) -lt $deadline) {
+            if (-not (Get-Process -Id $temporaryProcess.Id -ErrorAction SilentlyContinue)) {
+                throw "新版健康检查进程提前退出（PID=$($temporaryProcess.Id)）。"
+            }
+            $installId = Get-InstallId -ProgramRoot $programRoot -AllowMissing
+            if ($installId) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $installId) { throw '新版服务没有生成安装标识。' }
+        if ($OriginalInstallId -and
+            -not [string]::Equals($installId, $OriginalInstallId, [StringComparison]::Ordinal)) {
+            throw '升级过程中安装标识发生变化，拒绝继续。'
+        }
+        Wait-ServiceHealth -ProgramRoot $programRoot -ExpectedInstallId $installId `
+            -ExpectedMode 'upgrade-check' -ExpectedProcessId $temporaryProcess.Id
+        Assert-LoopbackListenerOwnedByProcess -ProcessId $temporaryProcess.Id
+        Write-Log "回环维护态健康检查通过，安装标识=$installId，PID=$($temporaryProcess.Id)"
+    }
+    finally {
+        if ($null -ne $temporaryProcess -and -not $temporaryProcess.HasExited) {
+            Stop-Process -Id $temporaryProcess.Id -Force -ErrorAction SilentlyContinue
+            try { $temporaryProcess.WaitForExit(5000) | Out-Null } catch {}
+        }
+    }
+    Wait-ServicePortFree
+    if (Test-SystemRunning -ProgramRoot $programRoot) { throw '临时健康检查后仍有本安装目录服务进程。' }
+    return $installId
 }
 
 function Commit-VersionFile {
@@ -979,13 +1791,188 @@ function Remove-VersionTemporaryFile {
     }
 }
 
+function Test-LanHttpUrl {
+    param([string]$Value)
+    if (-not $Value -or $Value.Length -gt 128) { return $false }
+    # 不依赖 [Uri] 的宽松规范化：必须显式写出 IPv4 和端口，并且已经是
+    # 本系统保存的无尾斜杠 canonical 形式。
+    if ($Value -notmatch '^http://(?<address>(?:[0-9]{1,3}\.){3}[0-9]{1,3}):(?<port>[0-9]{1,5})$') {
+        return $false
+    }
+    $addressText = [string]$matches.address
+    $portText = [string]$matches.port
+    $address = $null
+    $port = 0
+    if (-not [Net.IPAddress]::TryParse($addressText, [ref]$address) -or
+        -not [int]::TryParse(
+            $portText,
+            [Globalization.NumberStyles]::None,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [ref]$port
+        ) -or
+        $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
+        return $false
+    }
+    if ($port -lt 1 -or $port -gt 65535) { return $false }
+    $canonical = 'http://{0}:{1}' -f $address.ToString(), $port
+    if (-not [string]::Equals($Value, $canonical, [StringComparison]::Ordinal)) {
+        return $false
+    }
+    $bytes = $address.GetAddressBytes()
+    $private = $bytes[0] -eq 10 -or
+               ($bytes[0] -eq 172 -and $bytes[1] -ge 16 -and $bytes[1] -le 31) -or
+               ($bytes[0] -eq 192 -and $bytes[1] -eq 168)
+    if (-not $private -or $bytes[0] -eq 127 -or
+        ($bytes[0] -eq 169 -and $bytes[1] -eq 254) -or
+        ($bytes[0] -eq 198 -and ($bytes[1] -eq 18 -or $bytes[1] -eq 19))) {
+        return $false
+    }
+    return $true
+}
+
+function Get-LanAddressUpgradeNotice {
+    param([string]$ProgramRoot)
+    $path = Join-Path $ProgramRoot 'data\局域网访问地址状态.json'
+    try {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            return [pscustomobject]@{ Kind = 'unknown'; OldUrl = $null; NewUrl = $null; CurrentUrl = $null }
+        }
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -gt 65536) {
+            throw '地址状态文件大小或属性异常。'
+        }
+        $state = (Read-Utf8NoBom -Path $path) | ConvertFrom-Json
+        $topNames = @($state.PSObject.Properties.Name | Sort-Object)
+        if (($topNames -join ',') -ne 'last_acknowledged_url,last_observed_url,pending,schema' -or
+            (($state.schema -isnot [int]) -and ($state.schema -isnot [long])) -or
+            [int64]$state.schema -ne 1) {
+            throw '地址状态文件结构不符合 V1。'
+        }
+        $acknowledged = [string]$state.last_acknowledged_url
+        $current = [string]$state.last_observed_url
+        if (-not (Test-LanHttpUrl -Value $acknowledged) -or
+            -not (Test-LanHttpUrl -Value $current)) {
+            throw '已确认或当前局域网 URL 非法。'
+        }
+        if ($null -eq $state.pending) {
+            if (-not [string]::Equals($acknowledged, $current, [StringComparison]::Ordinal)) {
+                throw '地址状态没有 pending，但已确认地址与当前地址不一致。'
+            }
+            return [pscustomobject]@{ Kind = 'same'; OldUrl = $null; NewUrl = $null; CurrentUrl = $current }
+        }
+        $pendingKind = [string]$state.pending.kind
+        $pendingNames = @($state.pending.PSObject.Properties.Name | Sort-Object)
+        if ($pendingKind -eq 'changed') {
+            if (($pendingNames -join ',') -ne 'detected_at,kind,new_url,old_url') {
+                throw '地址变更提醒结构非法。'
+            }
+        }
+        elseif ($pendingKind -eq 'verify') {
+            if (($pendingNames -join ',') -ne 'detected_at,kind,new_url') {
+                throw '地址核对提醒结构非法。'
+            }
+        }
+        else {
+            throw '地址提醒类型非法。'
+        }
+        $oldUrl = if ($pendingKind -eq 'changed') { [string]$state.pending.old_url } else { $null }
+        $newUrl = [string]$state.pending.new_url
+        $detectedAt = [string]$state.pending.detected_at
+        $parsedDetectedAt = [DateTimeOffset]::MinValue
+        $isoOffsetShape = '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-][0-9]{2}:[0-9]{2})$'
+        if (-not (Test-LanHttpUrl -Value $newUrl) -or
+            -not [string]::Equals($newUrl, [string]$state.last_observed_url, [StringComparison]::Ordinal) -or
+            -not $detectedAt -or $detectedAt.Length -gt 64 -or
+            $detectedAt -notmatch $isoOffsetShape -or
+            -not [DateTimeOffset]::TryParse(
+                $detectedAt,
+                [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None,
+                [ref]$parsedDetectedAt
+            )) {
+            throw '地址提醒内容非法。'
+        }
+        if ($pendingKind -eq 'changed' -and
+            (-not (Test-LanHttpUrl -Value $oldUrl) -or
+                [string]::Equals($oldUrl, $newUrl, [StringComparison]::Ordinal) -or
+                -not [string]::Equals($oldUrl, [string]$state.last_acknowledged_url, [StringComparison]::Ordinal))) {
+            throw '地址变更提醒内容非法。'
+        }
+        if ($pendingKind -eq 'verify' -and
+            -not [string]::Equals([string]$state.last_acknowledged_url, [string]$state.last_observed_url, [StringComparison]::Ordinal)) {
+            throw '地址核对提醒内容非法。'
+        }
+        return [pscustomobject]@{ Kind = $pendingKind; OldUrl = $oldUrl; NewUrl = $newUrl; CurrentUrl = $newUrl }
+    }
+    catch {
+        Write-Log "读取局域网地址提醒失败，不影响升级结果：$($_.Exception.Message)" 'WARN'
+        return [pscustomobject]@{ Kind = 'unknown'; OldUrl = $null; NewUrl = $null; CurrentUrl = $null }
+    }
+}
+
+function Show-LanAddressUpgradeNotice {
+    param([string]$ProgramRoot, [bool]$WasRunning)
+    if (-not $WasRunning) {
+        Write-User ''
+        Write-User '系统在升级前就是停止状态，现已继续保持停止；下次启动时会自动检查同事访问地址。' Green
+        return
+    }
+    $health = $null
+    try {
+        $installId = Get-InstallId -ProgramRoot $ProgramRoot
+        $health = Get-ValidatedServiceHealth `
+            -ExpectedInstallId $installId -ExpectedMode 'normal'
+    }
+    catch {
+        Write-Log "无法验证升级后服务报告的局域网地址：$($_.Exception.Message)" 'WARN'
+    }
+    $notice = Get-LanAddressUpgradeNotice -ProgramRoot $ProgramRoot
+    Write-User ''
+    if ($null -eq $health -or -not $health.LanUrl -or
+        [string]$notice.Kind -eq 'unknown' -or
+        -not [string]::Equals(
+            [string]$health.LanUrl,
+            [string]$notice.CurrentUrl,
+            [StringComparison]::Ordinal
+        )) {
+        Write-User '本次升级不对同事访问地址作结论。' Yellow
+        Write-User '请查看服务器启动窗口提示，并用同事电脑实际打开核对；如果仍无法确认，请联系维护人员。' Yellow
+        return
+    }
+    if ([string]$notice.Kind -eq 'changed') {
+        Write-User '注意：同事访问地址和上一个版本相比已经变化。' Yellow
+        Write-User ("旧地址：{0}" -f $notice.OldUrl) Yellow
+        Write-User ("新地址：{0}" -f $notice.NewUrl) Green
+        Write-User '预约数据没有变化。请把新地址复制发给同事；管理员页面也会持续提醒，直到您确认。' Yellow
+    }
+    elseif ([string]$notice.Kind -eq 'verify') {
+        Write-User '局域网地址记录已自动修复，请核对当前网址并通知同事。' Yellow
+        Write-User ("当前待核对地址：{0}" -f $notice.NewUrl) Green
+        Write-User '预约数据没有变化；管理员页面会持续提醒，直到您确认。' Yellow
+    }
+    elseif ([string]$notice.Kind -eq 'same') {
+        if ($notice.CurrentUrl) {
+            Write-User ("同事访问地址未发现变化：{0}" -f $notice.CurrentUrl) Green
+        }
+        else {
+            Write-User '本次未发现同事访问地址变化。' Green
+        }
+    }
+    else {
+        Write-User '本次升级不对同事访问地址作结论。' Yellow
+        Write-User '请查看服务器启动窗口提示，并用同事电脑实际打开核对；如果仍无法确认，请联系维护人员。' Yellow
+    }
+}
+
 function Invoke-Upgrade {
     Write-User ''
-    Write-User '正在校验升级文件，请稍候……' Cyan
+    Show-Stage '正在校验升级文件完整性'
     $payload = Initialize-Payload
     $targetVersion = [version]$script:PackageVersionText
+    Show-Stage '正在定位本机安装目录'
     $installRoot = Find-InstallRoot
     Assert-PackageLocationSafe -InstallRoot $installRoot
+    Assert-InstallLocationSafe -InstallRoot $installRoot
     $programRoot = Join-Path $installRoot '_程序文件'
     Initialize-Log -ProgramRoot $programRoot
     Write-Log "定位安装目录：$installRoot"
@@ -993,17 +1980,48 @@ function Invoke-Upgrade {
         Write-Log '当前 .NET 不提供 ZIP ExternalAttributes；已退化为路径白名单/黑名单校验，并保留解包后重解析点检查。' 'WARN'
     }
     Open-UpgradeLock -ProgramRoot $programRoot
+    Show-Stage '正在验证冻结运行环境'
+    # 在执行安装目录内任何 python.exe/pythonw.exe 之前，先用纯 PowerShell
+    # 对冻结 runtime 做全树哈希校验，且只清理已知可丢弃的 Python 缓存。
+    Assert-TrustedRuntime -ProgramRoot $programRoot
     $statePath = Join-Path $programRoot '_升级状态.json'
+    $recoveredCommitted = $false
 
     if (Test-Path -LiteralPath $statePath) {
         Write-User '发现上次升级状态，正在安全处理……' Yellow
         try {
             $oldState = (Read-Utf8NoBom -Path $statePath) | ConvertFrom-Json
-            if ([string]$oldState.Stage -eq 'preparing') {
+            $legacyCommittedHandoff = Test-CommittedTransactionState `
+                -ProgramRoot $programRoot -State $oldState
+            $legacyV101State = Convert-LegacyV101TransactionState `
+                -InstallRoot $installRoot -State $oldState `
+                -CommittedHandoff:$legacyCommittedHandoff
+            if ($null -ne $legacyV101State) {
+                if ($legacyCommittedHandoff) {
+                    Recover-LegacyV101CommittedTransaction -InstallRoot $installRoot `
+                        -State $legacyV101State -StatePath $statePath
+                    $recoveredCommitted = $true
+                }
+                else {
+                    # 必须在停止任务/进程前把推导出的旧语义原子固化。若随后断电，
+                    # 下次会直接按 Schema=2 恢复，不会从已被禁用的任务反推错误状态。
+                    Write-JsonAtomic -Path $statePath -Value $legacyV101State
+                    $oldState = $legacyV101State
+                    Write-Log 'V1.0.1 遗留事务已原子规范化为 Schema=2。'
+                }
+            }
+            if ($null -ne $legacyV101State -and $recoveredCommitted) {
+                # 上方已按 V1.0.1 已提交语义完成收尾。
+            }
+            elseif (@('preparing', 'service_stopped', 'backup_ready') -contains [string]$oldState.Stage) {
                 Recover-PreparingTransaction -InstallRoot $installRoot -State $oldState -StatePath $statePath
+            }
+            elseif ([string]$oldState.Stage -eq 'rollback_restored') {
+                Recover-RollbackRestoredTransaction -InstallRoot $installRoot -State $oldState -StatePath $statePath
             }
             elseif (Test-CommittedTransactionState -ProgramRoot $programRoot -State $oldState) {
                 Recover-CommittedTransaction -InstallRoot $installRoot -State $oldState -StatePath $statePath
+                $recoveredCommitted = $true
             }
             else {
                 Invoke-Rollback -InstallRoot $installRoot -PayloadRoot $payload.Root -State $oldState -StatePath $statePath
@@ -1025,38 +2043,81 @@ function Invoke-Upgrade {
     $installed = Read-InstalledVersion -ProgramRoot $programRoot
     Write-Log "当前版本=$($installed.Text)，目标版本=$($script:PackageVersionText)"
     if ($installed.Version -ge $targetVersion) {
-        Write-User "当前已经是 V$($installed.Text)，无需升级。" Green
+        $currentlyRunning = Test-SystemRunning -ProgramRoot $programRoot
+        if ($recoveredCommitted) {
+            Write-User "V$($installed.Text) 的中断收尾已经安全完成，程序和数据没有回滚。" Green
+        }
+        else {
+            Write-User "当前已经是 V$($installed.Text)，无需升级。" Green
+        }
+        if ($currentlyRunning) {
+            Write-User '系统当前正在运行，可继续使用。' Green
+        }
+        else {
+            Write-User '系统当前保持停止；需要使用时再双击“① 启动系统.bat”。' Green
+        }
+        Show-LanAddressUpgradeNotice -ProgramRoot $programRoot -WasRunning $currentlyRunning
         return 0
     }
     Assert-FreeSpace -InstallRoot $installRoot -Payload $payload
 
-    $wasRunning = Test-SystemRunning -ProgramRoot $programRoot
-    $taskExists = Test-TaskExists
-    Write-Log "升级前状态：WasRunning=$wasRunning，TaskExists=$taskExists"
+    $originalInstallId = Get-InstallId -ProgramRoot $programRoot -AllowMissing
+    $processWasRunning = Test-SystemRunning -ProgramRoot $programRoot
+    $taskState = Get-OwnedTaskState -InstallRoot $installRoot -AllowMissing
+    Assert-CurrentPortOwnership -ProgramRoot $programRoot
+    $latestTaskState = Get-OwnedTaskState -InstallRoot $installRoot -AllowMissing
+    if ([bool]$taskState.Exists -ne [bool]$latestTaskState.Exists -or
+        [bool]$taskState.Enabled -ne [bool]$latestTaskState.Enabled) {
+        Throw-UpgradeFailure -Message '检测期间开机自动启动设置发生变化。升级尚未修改任何内容，请稍后重新双击升级包。' -ExitCode 4
+    }
+    $taskExists = [bool]$taskState.Exists
+    $taskEnabled = [bool]$taskState.Enabled
+    $taskWasRunning = [bool]$taskState.WasRunning -or [bool]$latestTaskState.WasRunning
+    $wasRunning = $processWasRunning -or $taskWasRunning -or `
+                  (Test-SystemRunning -ProgramRoot $programRoot)
+    Assert-RunStateInvariants -WasRunning $wasRunning -TaskExists $taskExists `
+        -TaskEnabled $taskEnabled -TaskWasRunning $taskWasRunning -Context '升级前状态'
+    Write-Log "升级前状态：WasRunning=$wasRunning，TaskExists=$taskExists，TaskEnabled=$taskEnabled，TaskWasRunning=$taskWasRunning，InstallId=$originalInstallId"
     $systemStopped = $false
     $transactionId = [Guid]::NewGuid().ToString('N')
     $state = [pscustomobject][ordered]@{
+        Schema = $script:TransactionStateSchema
         TransactionId = $transactionId
         PackageVersion = $script:PackageVersionText
         SnapshotPath = $null
+        BackupPath = $null
+        InstallId = $null
         Stage = 'preparing'
         OriginalVersion = $installed.Text
         OriginalVersionExisted = [bool]$installed.Existed
+        OriginalInstallId = $originalInstallId
         WasRunning = [bool]$wasRunning
         TaskExists = [bool]$taskExists
+        TaskEnabled = [bool]$taskEnabled
+        TaskWasRunning = $taskWasRunning
     }
     Write-JsonAtomic -Path $statePath -Value $state
     Write-Log '已在停机前持久化 preparing 状态。'
     $transactionCommitted = $false
     try {
         # 从开始停机起就必须按原状态恢复；停止函数可能在已结束部分进程后才报错。
+        Show-Stage '正在暂停服务并保护自动启动状态'
         $systemStopped = $true
+        Disable-OwnedTaskForTransaction -InstallRoot $installRoot -TaskState $taskState
         Stop-OwnedRuntimeProcesses -ProgramRoot $programRoot -TaskExists $taskExists
+        Wait-ServicePortFree
+        Update-TransactionStage -State $state -StatePath $statePath -Stage 'service_stopped'
+
+        Show-Stage '正在检查数据库并创建升级前备份'
         Test-Database -PayloadRoot $payload.Root -ProgramRoot $programRoot -DatabasePath (Join-Path $programRoot 'data\reservation.db')
+        $backupPath = New-StandardPreUpgradeBackup -PayloadRoot $payload.Root -ProgramRoot $programRoot
+        Update-TransactionStage -State $state -StatePath $statePath -Stage 'backup_ready' -BackupPath $backupPath
+
         $snapshotRoot = New-RollbackSnapshot -InstallRoot $installRoot -PayloadRoot $payload.Root -TransactionId $transactionId
         Update-TransactionStage -State $state -StatePath $statePath -Stage 'snapshot_ready' -SnapshotPath $snapshotRoot
         Write-Log '回滚快照已验证；从此处开始的失败将进入统一回滚。'
 
+        Show-Stage '正在更新程序文件'
         Assert-ManifestMatches -Root $payload.Root -Records $payload.Manifest
         Install-PayloadProgram -PayloadRoot $payload.Root -InstallRoot $installRoot
         Assert-InstalledMatchesPayload -InstallRoot $installRoot -PayloadManifest $payload.Manifest
@@ -1064,32 +2125,52 @@ function Invoke-Upgrade {
         Update-TransactionStage -State $state -StatePath $statePath -Stage 'program_replaced'
         Invoke-Migration -ProgramRoot $programRoot
         Update-TransactionStage -State $state -StatePath $statePath -Stage 'migration_complete'
-        Test-NewVersionByStartingService -InstallRoot $installRoot -WasRunning $wasRunning -TaskExists $taskExists
-        Update-TransactionStage -State $state -StatePath $statePath -Stage 'healthcheck_passed'
+
+        Show-Stage '正在本机维护模式验证新版'
+        $verifiedInstallId = Test-NewVersionByStartingService -InstallRoot $installRoot -OriginalInstallId $originalInstallId
+        Update-TransactionStage -State $state -StatePath $statePath -Stage 'healthcheck_passed' -InstallId $verifiedInstallId
         Commit-VersionFile -PayloadRoot $payload.Root -ProgramRoot $programRoot -TransactionId $transactionId
         # 版本.txt 是事务提交点。提交后即使状态清理失败，也绝不能回滚程序或 data。
         $transactionCommitted = $true
+        # 在任何真实 LAN 服务恢复之前，必须先把已提交状态耐久落盘。
+        Update-TransactionStage -State $state -StatePath $statePath -Stage 'version_committed'
+
+        Show-Stage '正在恢复升级前的运行状态'
+        Restore-ExpectedRunState -InstallRoot $installRoot -WasRunning $wasRunning `
+            -TaskExists $taskExists -TaskEnabled $taskEnabled -TaskWasRunning $taskWasRunning `
+            -ExpectedInstallId $verifiedInstallId -RequireHealth
+        Update-TransactionStage -State $state -StatePath $statePath -Stage 'service_restored'
+
         try {
-            Update-TransactionStage -State $state -StatePath $statePath -Stage 'version_committed'
+            Remove-SuccessfulTransactionSnapshot -ProgramRoot $programRoot -State $state
             Remove-Item -LiteralPath $statePath -Force
-            Write-Log '升级事务成功完成，version_committed 状态文件已删除。'
+            Write-Log '升级事务成功完成；标准数据库备份已保留，完整事务副本和状态文件已清理。'
         }
         catch {
-            # 状态文件可能仍是 healthcheck_passed，也可能已经是 version_committed。
-            # 下次运行会先核对正式版本文件并按已提交事务安全收尾，绝不回滚数据。
-            Write-Log "版本已提交，但事务状态清理未完成；下次运行将自动安全收尾：$($_.Exception.Message)" 'WARN'
+            # 此时 service_restored 已耐久落盘，用户可能开始写入；只允许下次安全
+            # 清理成功快照，绝不能再回滚程序或 data。
+            Write-Log "版本和运行状态已提交，但成功快照清理未完成；下次运行将自动安全收尾：$($_.Exception.Message)" 'WARN'
         }
         Write-User ''
         Write-User "升级成功！当前版本 V$($script:PackageVersionText)" Green
+        Write-User '账号、会议室和预约数据均已保留；升级前数据库备份也已保存。' Green
+        if ($wasRunning) {
+            Write-User '系统已按升级前状态恢复运行，可继续使用。' Green
+        }
+        else {
+            Write-User '系统已按升级前状态保持停止；需要使用时再双击“① 启动系统.bat”。' Green
+        }
+        Show-LanAddressUpgradeNotice -ProgramRoot $programRoot -WasRunning $wasRunning
         return 0
     }
     catch {
         $failure = $_
         if ($transactionCommitted) {
-            Write-Log "事务已提交，提交后的显示或日志步骤异常：$($failure.Exception.Message)" 'WARN'
+            Write-Log "事务已提交，提交后恢复服务或收尾失败；不会回滚新版数据：$($failure.Exception.ToString())" 'ERROR'
             Write-User ''
-            Write-User "升级成功！当前版本 V$($script:PackageVersionText)；收尾状态将在下次运行时自动清理。" Yellow
-            return 0
+            Write-User "新版 V$($script:PackageVersionText) 已安全写入，数据不会回滚；但原运行状态没有完全恢复。" Yellow
+            Write-User '请再次双击本升级包让它自动收尾；如果仍失败，请把最新升级日志交给维护人员。' Red
+            return 5
         }
         Write-Log "升级失败：$($failure.Exception.ToString())" 'ERROR'
         if ($state -ne $null) {
@@ -1098,8 +2179,11 @@ function Invoke-Upgrade {
                 if (Test-Path -LiteralPath $statePath) {
                     $durableState = (Read-Utf8NoBom -Path $statePath) | ConvertFrom-Json
                 }
-                if ([string]$durableState.Stage -eq 'preparing') {
+                if (@('preparing', 'service_stopped', 'backup_ready') -contains [string]$durableState.Stage) {
                     Recover-PreparingTransaction -InstallRoot $installRoot -State $durableState -StatePath $statePath
+                }
+                elseif ([string]$durableState.Stage -eq 'rollback_restored') {
+                    Recover-RollbackRestoredTransaction -InstallRoot $installRoot -State $durableState -StatePath $statePath
                 }
                 elseif (Test-CommittedTransactionState -ProgramRoot $programRoot -State $durableState) {
                     Recover-CommittedTransaction -InstallRoot $installRoot -State $durableState -StatePath $statePath
@@ -1124,7 +2208,11 @@ function Invoke-Upgrade {
             }
         }
         if ($systemStopped) {
-            try { Restore-ExpectedRunState -InstallRoot $installRoot -WasRunning $wasRunning -TaskExists $taskExists }
+            try {
+                Restore-ExpectedRunState -InstallRoot $installRoot -WasRunning $wasRunning `
+                    -TaskExists $taskExists -TaskEnabled $taskEnabled `
+                    -TaskWasRunning $taskWasRunning
+            }
             catch {
                 Write-Log "尚未修改程序，但恢复原运行状态失败：$($_.Exception.ToString())" 'ERROR'
                 Write-User '升级未修改程序或数据，但原系统未能重新启动，请联系维护人员。' Red
@@ -1155,695 +2243,888 @@ finally {
 }
 exit $finalExitCode
 __UPGRADE_PAYLOAD_BELOW__
-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
-GQAZAIEHAABSkgAAAAA=
+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
+AAAZABkAgQcAAE29AAAAAA==
