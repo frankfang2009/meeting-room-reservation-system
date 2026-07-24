@@ -3,11 +3,19 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $toolRoot = Join-Path $repoRoot '02_开发工作区\升级包工具'
-$payloadRoot = Join-Path $toolRoot '负载示例'
-$candidatePackage = Join-Path $toolRoot '输出-待实机验收\升级到V1.0.1.bat'
-$expectedCandidateSha256 = 'cd0d52b9ffb5d2864e7ad98d8969b86376d8577391399c30295d0722d34848cd'
+$sourceRoot = Join-Path $repoRoot '02_开发工作区\源代码工作区'
+$targetVersion = (Get-Content -LiteralPath (Join-Path $sourceRoot '版本.txt') -Raw).Trim()
+if ($targetVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+    throw "源码版本号无效：$targetVersion"
+}
+$targetPackageName = "升级到V$targetVersion.bat"
+$candidatePackage = Join-Path $toolRoot "输出-待实机验收\$targetPackageName"
+$candidateManifest = Join-Path $toolRoot "输出-待实机验收\V$targetVersion-发布清单.json"
+$frozenV101Package = Join-Path $toolRoot '输出-待实机验收\升级到V1.0.1.bat'
+$expectedV101Sha256 = 'cd0d52b9ffb5d2864e7ad98d8969b86376d8577391399c30295d0722d34848cd'
 $oldReference = Join-Path $repoRoot '02_开发工作区\Windows部署目录-V1.0.0'
 $workRoot = Join-Path $env:RUNNER_TEMP 'meeting-room-upgrade-ci'
+$releaseRoot = Join-Path $workRoot 'release'
 $packageRoot = Join-Path $workRoot 'packages'
 $installRoot = Join-Path $workRoot 'installs'
 $hostPython = (Get-Command python.exe -ErrorAction Stop).Source
@@ -204,6 +212,19 @@ function Invoke-UpgradeBat {
     return [int]$exitCode
 }
 
+function New-V101TestInstall {
+    param([string]$Name)
+    $install = New-TestInstall -Name $Name
+    $upgradeBat = Join-Path $install.Root '升级到V1.0.1.bat'
+    Copy-Item -LiteralPath $frozenV101Package -Destination $upgradeBat
+    $exitCode = Invoke-UpgradeBat -BatPath $upgradeBat
+    Assert-True ($exitCode -eq 0) "准备 V1.0.1 测试起点失败，退出码 $exitCode"
+    Assert-True (
+        (Get-Content -LiteralPath (Join-Path $install.ProgramRoot '版本.txt') -Raw).Trim() -eq '1.0.1'
+    ) 'V1.0.1 测试起点版本不正确'
+    return $install
+}
+
 function Assert-NoOpenTransaction {
     param($Install)
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $Install.ProgramRoot '_升级状态.json'))) '升级状态文件不应残留'
@@ -219,39 +240,125 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 Assert-True ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) 'GitHub Windows runner 不是管理员，无法验证真实 BAT 主路径'
 
-$goodPackage = Join-Path $packageRoot '升级到V1.0.1.bat'
-Assert-True (Test-Path -LiteralPath $candidatePackage -PathType Leaf) '仓库缺少待验收的 V1.0.1 BAT'
+$v101Sha256 = (Get-FileHash -LiteralPath $frozenV101Package -Algorithm SHA256).Hash.ToLowerInvariant()
+Assert-True ($v101Sha256 -eq $expectedV101Sha256) "V1.0.1 冻结 BAT SHA-256 不匹配：$v101Sha256"
+
+Invoke-NativeChecked -FilePath $hostPython -Arguments @(
+    (Join-Path $toolRoot '准备发布.py'),
+    '--release-root',
+    $releaseRoot,
+    '--package-only'
+) | Out-Null
+
+$preparedRelease = Join-Path $releaseRoot "V$targetVersion"
+$payloadRoot = Join-Path $preparedRelease '完整累计负载'
+$preparedManifestPath = Join-Path $preparedRelease '发布清单.json'
+Assert-True (Test-Path -LiteralPath $candidatePackage -PathType Leaf) "仓库缺少待验收的 $targetPackageName"
+Assert-True (Test-Path -LiteralPath $candidateManifest -PathType Leaf) "仓库缺少 V$targetVersion 发布清单"
+$candidateManifestData = Get-Content -LiteralPath $candidateManifest -Raw | ConvertFrom-Json
+$preparedManifestData = Get-Content -LiteralPath $preparedManifestPath -Raw | ConvertFrom-Json
+Assert-True ([string]$candidateManifestData.version -eq $targetVersion) '发布清单版本与源码不一致'
+Assert-True (
+    [string]$candidateManifestData.source_tree_sha256 -eq [string]$preparedManifestData.source_tree_sha256
+) '发布清单对应的源码树与当前源码不一致'
 $candidateSha256 = (Get-FileHash -LiteralPath $candidatePackage -Algorithm SHA256).Hash.ToLowerInvariant()
-Assert-True ($candidateSha256 -eq $expectedCandidateSha256) "候选 BAT SHA-256 不匹配：$candidateSha256"
+Assert-True (
+    $candidateSha256 -eq [string]$candidateManifestData.package_sha256
+) "V$targetVersion 候选 BAT SHA-256 与发布清单不一致：$candidateSha256"
+$targetSchemaVersion = [string]$candidateManifestData.database_schema_version
+
+$verifyCandidateCode = @'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import 制作升级包 as builder
+payload = pathlib.Path(sys.argv[2])
+version = sys.argv[3]
+package = pathlib.Path(sys.argv[4])
+manifest = json.loads(pathlib.Path(sys.argv[5]).read_text(encoding="utf-8"))
+files = builder.collect_payload(payload, version)
+package_bytes = package.read_bytes()
+zip_bytes = builder.verify_package_bytes(
+    package_bytes,
+    files,
+    manifest["payload_zip_sha256"],
+)
+records = {item["path"]: item for item in manifest["payload_files"]}
+if manifest["payload_file_count"] != len(files) or set(records) != set(files):
+    raise SystemExit("manifest payload file set mismatch")
+for path, content in files.items():
+    record = records[path]
+    if record["size"] != len(content):
+        raise SystemExit(f"manifest payload size mismatch: {path}")
+    if record["sha256"] != hashlib.sha256(content).hexdigest():
+        raise SystemExit(f"manifest payload hash mismatch: {path}")
+if manifest["payload_zip_size"] != len(zip_bytes):
+    raise SystemExit("manifest ZIP size mismatch")
+if manifest["package_size"] != len(package_bytes):
+    raise SystemExit("manifest package size mismatch")
+stub_text = builder._load_template(
+    pathlib.Path(sys.argv[1]) / "bat头部模板.bat",
+    "BAT 头部模板",
+)
+powershell_text = builder._load_template(
+    pathlib.Path(sys.argv[1]) / "升级主逻辑.ps1",
+    "PowerShell 主逻辑模板",
+)
+rendered, rendered_zip_sha256, expected_stub, expected_powershell = (
+    builder.render_package(stub_text, powershell_text, version, zip_bytes)
+)
+if rendered_zip_sha256 != manifest["payload_zip_sha256"]:
+    raise SystemExit("rendered ZIP hash mismatch")
+builder.verify_package_bytes(
+    package_bytes,
+    files,
+    manifest["payload_zip_sha256"],
+    expected_stub,
+    expected_powershell,
+)
+if rendered != package_bytes:
+    raise SystemExit("candidate package does not match current upgrade templates")
+print("candidate-payload-match")
+'@
+Invoke-PythonCodeChecked -Python $hostPython -Code $verifyCandidateCode -Arguments @(
+    $toolRoot,
+    $payloadRoot,
+    $targetVersion,
+    $candidatePackage,
+    $candidateManifest
+) | Out-Null
+
+$goodPackage = Join-Path $packageRoot $targetPackageName
 Copy-Item -LiteralPath $candidatePackage -Destination $goodPackage
 
 $brokenPayload = Join-Path $workRoot 'broken-payload'
 Copy-TreeWithRobocopy -Source $payloadRoot -Destination $brokenPayload
 $brokenApp = Join-Path $brokenPayload '_程序文件\app.py'
 [IO.File]::AppendAllText($brokenApp, "`nthis is deliberately invalid python !!!`n", (New-Object Text.UTF8Encoding($false)))
-$brokenPackage = Join-Path $packageRoot '升级到V1.0.1-故障回滚测试.bat'
+$brokenPackage = Join-Path $packageRoot "升级到V$targetVersion-故障回滚测试.bat"
 Invoke-NativeChecked -FilePath $hostPython -Arguments @(
     (Join-Path $toolRoot '制作升级包.py'),
     $brokenPayload,
-    '1.0.1',
+    $targetVersion,
     '--out',
     $brokenPackage
 ) | Out-Null
 
-Write-Host '=== Windows success and idempotency path ==='
+Write-Host "=== Windows V1.0.0 -> V$targetVersion success and idempotency path ==="
 $successInstall = New-TestInstall -Name 'success\会议室预约系统'
 $successStateBefore = Get-LogicalDataState -Install $successInstall
 $successSecretBefore = (Get-FileHash -LiteralPath (Join-Path $successInstall.ProgramRoot 'data\.secret_key') -Algorithm SHA256).Hash
-$successBat = Join-Path $successInstall.Root '升级到V1.0.1.bat'
+$successBat = Join-Path $successInstall.Root $targetPackageName
 Copy-Item -LiteralPath $goodPackage -Destination $successBat
 
 $successExit = Invoke-UpgradeBat -BatPath $successBat
 Assert-True ($successExit -eq 0) "成功升级返回了退出码 $successExit"
-Assert-True ((Get-Content -LiteralPath (Join-Path $successInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq '1.0.1') '版本.txt 未提交为 1.0.1'
+Assert-True (
+    (Get-Content -LiteralPath (Join-Path $successInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq $targetVersion
+) "版本.txt 未提交为 $targetVersion"
 Assert-NoOpenTransaction -Install $successInstall
 $successStateAfter = Get-LogicalDataState -Install $successInstall
 $successStateExpected = ($successStateBefore | ConvertFrom-Json)
-$successStateExpected.schema_version = '1'
+$successStateExpected.schema_version = $targetSchemaVersion
 $successExpectedJson = $successStateExpected | ConvertTo-Json -Compress
 $successActualJson = ($successStateAfter | ConvertFrom-Json) | ConvertTo-Json -Compress
 Assert-True ($successActualJson -eq $successExpectedJson) '成功升级后逻辑数据发生变化'
@@ -263,6 +370,29 @@ Assert-True ($secondExit -eq 0) "重复运行返回了退出码 $secondExit"
 Assert-NoOpenTransaction -Install $successInstall
 Assert-True ((Get-LogicalDataState -Install $successInstall) -eq $successStateAfter) '重复运行改变了数据'
 
+Write-Host "=== Windows V1.0.1 -> V$targetVersion success and idempotency path ==="
+$v101SuccessInstall = New-V101TestInstall -Name 'success-from-v101\会议室预约系统'
+$v101SuccessStateBefore = Get-LogicalDataState -Install $v101SuccessInstall
+$v101SuccessSecretBefore = (Get-FileHash -LiteralPath (Join-Path $v101SuccessInstall.ProgramRoot 'data\.secret_key') -Algorithm SHA256).Hash
+$v101SuccessBat = Join-Path $v101SuccessInstall.Root $targetPackageName
+Copy-Item -LiteralPath $goodPackage -Destination $v101SuccessBat
+
+$v101SuccessExit = Invoke-UpgradeBat -BatPath $v101SuccessBat
+Assert-True ($v101SuccessExit -eq 0) "V1.0.1 起点升级返回了退出码 $v101SuccessExit"
+Assert-True (
+    (Get-Content -LiteralPath (Join-Path $v101SuccessInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq $targetVersion
+) "V1.0.1 起点升级后版本不是 $targetVersion"
+Assert-NoOpenTransaction -Install $v101SuccessInstall
+$v101SuccessStateAfter = Get-LogicalDataState -Install $v101SuccessInstall
+Assert-True ($v101SuccessStateAfter -eq $v101SuccessStateBefore) 'V1.0.1 起点升级后逻辑数据发生变化'
+$v101SuccessSecretAfter = (Get-FileHash -LiteralPath (Join-Path $v101SuccessInstall.ProgramRoot 'data\.secret_key') -Algorithm SHA256).Hash
+Assert-True ($v101SuccessSecretAfter -eq $v101SuccessSecretBefore) 'V1.0.1 起点升级后会话密钥发生变化'
+
+$v101SecondExit = Invoke-UpgradeBat -BatPath $v101SuccessBat
+Assert-True ($v101SecondExit -eq 0) "V1.0.1 起点升级后重复运行返回了退出码 $v101SecondExit"
+Assert-NoOpenTransaction -Install $v101SuccessInstall
+Assert-True ((Get-LogicalDataState -Install $v101SuccessInstall) -eq $v101SuccessStateAfter) 'V1.0.1 起点升级后重复运行改变了数据'
+
 Write-Host '=== Windows committed-state cleanup must preserve newer data ==='
 $postCommitKey = 'ci_after_version_commit'
 $postCommitValue = 'must-survive-committed-cleanup'
@@ -273,7 +403,7 @@ Assert-True ($snapshot.Count -eq 1) '成功升级后没有找到用于中断恢�
 $committedStatePath = Join-Path $successInstall.ProgramRoot '_升级状态.json'
 $committedState = [ordered]@{
     TransactionId = $snapshot[0].Name
-    PackageVersion = '1.0.1'
+    PackageVersion = $targetVersion
     SnapshotPath = $snapshot[0].FullName
     Stage = 'version_committed'
     OriginalVersion = '1.0.0'
@@ -291,7 +421,9 @@ $committedCleanupExit = Invoke-UpgradeBat -BatPath $successBat
 Assert-True ($committedCleanupExit -eq 0) "version_committed 安全收尾返回了退出码 $committedCleanupExit"
 Assert-NoOpenTransaction -Install $successInstall
 Assert-True ((Get-AppMetaValue -Install $successInstall -Key $postCommitKey) -eq $postCommitValue) 'version_committed 安全收尾错误回滚了升级后新增数据'
-Assert-True ((Get-Content -LiteralPath (Join-Path $successInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq '1.0.1') 'version_committed 安全收尾改变了已提交版本'
+Assert-True (
+    (Get-Content -LiteralPath (Join-Path $successInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq $targetVersion
+) 'version_committed 安全收尾改变了已提交版本'
 
 Write-Host '=== Windows failure and rollback path ==='
 $failureInstall = New-TestInstall -Name 'rollback\会议室预约系统'
@@ -301,7 +433,7 @@ $oldAppHash = (Get-FileHash -LiteralPath (Join-Path $failureInstall.ProgramRoot 
 $precheck = Join-Path $payloadRoot '_程序文件\migrate_check.py'
 Invoke-NativeChecked -FilePath $failureInstall.RuntimePython -Arguments @($precheck, '--precheck', $failureInstall.Database) | Out-Null
 $databaseHashBefore = (Get-FileHash -LiteralPath $failureInstall.Database -Algorithm SHA256).Hash
-$failureBat = Join-Path $failureInstall.Root '升级到V1.0.1-故障回滚测试.bat'
+$failureBat = Join-Path $failureInstall.Root "升级到V$targetVersion-故障回滚测试.bat"
 Copy-Item -LiteralPath $brokenPackage -Destination $failureBat
 
 $failureExit = Invoke-UpgradeBat -BatPath $failureBat
@@ -317,9 +449,42 @@ Invoke-NativeChecked -FilePath $failureInstall.RuntimePython -Arguments @($prech
 $databaseHashAfter = (Get-FileHash -LiteralPath $failureInstall.Database -Algorithm SHA256).Hash
 Assert-True ($databaseHashAfter -eq $databaseHashBefore) '回滚后的数据库文件哈希与升级前不一致'
 
+Write-Host "=== Windows V1.0.1 -> V$targetVersion failure and rollback path ==="
+$v101FailureInstall = New-V101TestInstall -Name 'rollback-from-v101\会议室预约系统'
+$v101FailureStateBefore = Get-LogicalDataState -Install $v101FailureInstall
+$v101FailureSecretBefore = (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'data\.secret_key') -Algorithm SHA256).Hash
+Invoke-NativeChecked -FilePath $v101FailureInstall.RuntimePython -Arguments @($precheck, '--precheck', $v101FailureInstall.Database) | Out-Null
+$v101FailureDatabaseHashBefore = (Get-FileHash -LiteralPath $v101FailureInstall.Database -Algorithm SHA256).Hash
+$v101OldAppHash = (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'app.py') -Algorithm SHA256).Hash
+$v101OldMigrateHash = (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'migrate_check.py') -Algorithm SHA256).Hash
+$v101FailureBat = Join-Path $v101FailureInstall.Root "升级到V$targetVersion-故障回滚测试.bat"
+Copy-Item -LiteralPath $brokenPackage -Destination $v101FailureBat
+
+$v101FailureExit = Invoke-UpgradeBat -BatPath $v101FailureBat
+Assert-True ($v101FailureExit -eq 1) "V1.0.1 起点故障升级应返回 1，实际为 $v101FailureExit"
+Assert-NoOpenTransaction -Install $v101FailureInstall
+Assert-True (
+    (Get-Content -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot '版本.txt') -Raw).Trim() -eq '1.0.1'
+) 'V1.0.1 起点故障回滚后版本.txt 未恢复'
+Assert-True (
+    (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'app.py') -Algorithm SHA256).Hash -eq $v101OldAppHash
+) 'V1.0.1 起点故障回滚后 app.py 未恢复'
+Assert-True (
+    (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'migrate_check.py') -Algorithm SHA256).Hash -eq $v101OldMigrateHash
+) 'V1.0.1 起点故障回滚后 migrate_check.py 未恢复'
+Assert-True ((Get-LogicalDataState -Install $v101FailureInstall) -eq $v101FailureStateBefore) 'V1.0.1 起点故障回滚后逻辑数据未恢复'
+$v101FailureSecretAfter = (Get-FileHash -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'data\.secret_key') -Algorithm SHA256).Hash
+Assert-True ($v101FailureSecretAfter -eq $v101FailureSecretBefore) 'V1.0.1 起点故障回滚后会话密钥未恢复'
+$v101FailureDatabaseHashAfter = (Get-FileHash -LiteralPath $v101FailureInstall.Database -Algorithm SHA256).Hash
+Assert-True ($v101FailureDatabaseHashAfter -eq $v101FailureDatabaseHashBefore) 'V1.0.1 起点故障回滚后数据库文件哈希不一致'
+
 $successLogs = @(Get-ChildItem -LiteralPath (Join-Path $successInstall.ProgramRoot 'logs') -Filter 'upgrade-*.log')
 $failureLogs = @(Get-ChildItem -LiteralPath (Join-Path $failureInstall.ProgramRoot 'logs') -Filter 'upgrade-*.log')
+$v101SuccessLogs = @(Get-ChildItem -LiteralPath (Join-Path $v101SuccessInstall.ProgramRoot 'logs') -Filter 'upgrade-*.log')
+$v101FailureLogs = @(Get-ChildItem -LiteralPath (Join-Path $v101FailureInstall.ProgramRoot 'logs') -Filter 'upgrade-*.log')
 Assert-True ($successLogs.Count -ge 2) '成功与重复运行应各生成升级日志'
 Assert-True ($failureLogs.Count -ge 1) '故障回滚应生成升级日志'
+Assert-True ($v101SuccessLogs.Count -ge 3) 'V1.0.1 起点准备、成功与重复运行应各生成升级日志'
+Assert-True ($v101FailureLogs.Count -ge 2) 'V1.0.1 起点准备与故障回滚应各生成升级日志'
 
 Write-Host 'Windows PowerShell 5.1 BAT integration tests passed.' -ForegroundColor Green

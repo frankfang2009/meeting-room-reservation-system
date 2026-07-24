@@ -8,6 +8,10 @@
 *.svg text eol=lf
 *.css text eol=lf
 *.js text eol=lf
+*.html text eol=lf
+**/requirements.txt text eol=lf
 **/版本.txt text eol=lf
+02_开发工作区/升级包工具/发布骨架/使用说明.txt text eol=crlf
+02_开发工作区/升级包工具/发布骨架/_程序文件/*.txt text eol=crlf
 *.zip binary
 *.pdf binary

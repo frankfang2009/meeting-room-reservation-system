@@ -63,7 +63,8 @@ button, summary, a { -webkit-tap-highlight-color: transparent; }
 
 .page-shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 56px; }
 .flash-area { position: fixed; top: 82px; right: 20px; z-index: 80; width: min(420px, calc(100% - 40px)); display: grid; gap: 10px; }
-.flash { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 15px; border: 1px solid; border-radius: 10px; box-shadow: var(--shadow); background: var(--surface); font-weight: 650; }
+.flash { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 13px 15px; border: 1px solid; border-radius: 10px; box-shadow: var(--shadow); background: var(--surface); font-weight: 650; transition: opacity .18s ease, transform .18s ease; }
+.flash-leaving { opacity: 0; transform: translateY(-6px); }
 .flash-success { border-color: #a7d7b5; color: var(--green); background: var(--green-bg); }
 .flash-danger { border-color: #f0b7b2; color: var(--red); background: var(--red-bg); }
 .flash-warning { border-color: #f0ce8c; color: var(--amber); background: var(--amber-bg); }
@@ -72,6 +73,7 @@ button, summary, a { -webkit-tap-highlight-color: transparent; }
 
 .page-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; margin-bottom: 22px; }
 .page-heading h1 { margin: 2px 0 0; font-size: clamp(1.65rem, 3vw, 2.2rem); line-height: 1.18; letter-spacing: -0.02em; }
+.weekday-label { margin-left: 9px; color: var(--muted); font-size: .46em; font-weight: 700; letter-spacing: 0; white-space: nowrap; }
 .eyebrow { margin: 0; color: var(--blue-600); font-size: 0.82rem; font-weight: 800; letter-spacing: 0.1em; }
 .muted { color: var(--muted); }
 .secondary-text { color: var(--muted); }
@@ -80,6 +82,7 @@ button, summary, a { -webkit-tap-highlight-color: transparent; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
 .button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 16px; border: 1px solid transparent; border-radius: 9px; font-weight: 750; line-height: 1.1; text-decoration: none; cursor: pointer; transition: background .15s, border-color .15s, transform .15s; }
 .button:hover { transform: translateY(-1px); }
+.button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .button-primary { color: #fff; background: var(--blue-600); border-color: var(--blue-600); }
 .button-primary:hover { background: var(--blue-700); border-color: var(--blue-700); }
 .button-secondary { color: #334155; background: #fff; border-color: #cbd5e1; }
@@ -96,6 +99,7 @@ label > span { display: block; margin-bottom: 7px; font-size: 0.9rem; font-weigh
 label small { display: block; margin-top: 5px; color: var(--muted); }
 .required { color: var(--red); }
 .form-help { margin: -5px 0 0; color: var(--muted); font-size: .84rem; line-height: 1.5; }
+.time-help:empty { display: none; }
 .stack-form { display: grid; gap: 17px; }
 .check-label { display: flex; align-items: center; gap: 9px; min-height: 40px; }
 .check-label input { width: 18px; min-height: 18px; margin: 0; }
@@ -120,7 +124,9 @@ label small { display: block; margin-top: 5px; color: var(--muted); }
 .calendar-table tbody tr:last-child th, .calendar-table tbody tr:last-child td { border-bottom: 0; }
 .calendar-table .sticky-time { position: sticky; left: 0; z-index: 4; width: 78px; }
 .calendar-table thead .sticky-time { z-index: 7; }
-.time-cell { padding: 8px; text-align: center; color: #475569; background: #f8fafc; font-weight: 750; }
+.time-cell { padding: 6px 8px; text-align: center; color: #475569; background: #f8fafc; font-weight: 750; }
+.time-cell > span, .time-state { display: block; }
+.time-state { margin-top: 2px; color: var(--blue-700); font-size: .67rem; font-weight: 850; }
 .calendar-slot { height: 49px; padding: 4px; text-align: center; vertical-align: middle; }
 .calendar-slot strong, .calendar-slot span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-slot strong { font-size: 0.86rem; }
@@ -129,6 +135,9 @@ label small { display: block; margin-top: 5px; color: var(--muted); }
 .free-slot a { min-height: 39px; display: flex; align-items: center; justify-content: center; color: var(--green); border: 1px solid transparent; border-radius: 7px; font-size: 0.84rem; font-weight: 800; text-decoration: none; }
 .free-slot a:hover, .free-slot a:focus { background: #d8f7e4; border-color: #8bc9a0; outline: none; }
 .busy-slot { color: var(--red); background: var(--red-bg); }
+.expired-slot { color: #94a3b8; background: #f1f5f9; }
+.expired-slot span { font-size: .8rem; font-weight: 750; }
+.current-time-row > * { box-shadow: inset 0 2px 0 var(--blue-600); }
 .calendar-legend { display: flex; align-items: center; gap: 22px; padding: 15px 4px; color: var(--muted); font-size: 0.88rem; }
 .calendar-legend span { display: flex; align-items: center; gap: 7px; }
 .legend-dot { width: 13px; height: 13px; border-radius: 4px; }
@@ -190,6 +199,7 @@ label small { display: block; margin-top: 5px; color: var(--muted); }
     .admin-grid { grid-template-columns: 1fr; }
     .side-form-card { max-width: 600px; }
     .calendar-scroll { max-height: none; }
+    .flash-area { top: auto; right: 12px; bottom: 12px; width: calc(100% - 24px); }
 }
 
 @media (max-width: 640px) {

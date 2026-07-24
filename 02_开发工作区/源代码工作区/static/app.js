@@ -7,6 +7,16 @@
         });
     });
 
+    document.querySelectorAll(".flash[data-auto-dismiss]").forEach(function (flash) {
+        var delay = Number(flash.dataset.autoDismiss) || 4500;
+        window.setTimeout(function () {
+            flash.classList.add("flash-leaving");
+            window.setTimeout(function () {
+                flash.remove();
+            }, 180);
+        }, delay);
+    });
+
     document.querySelectorAll("form[data-confirm]").forEach(function (form) {
         form.addEventListener("submit", function (event) {
             if (!window.confirm(form.dataset.confirm)) {
@@ -44,15 +54,96 @@
     var startSelect = document.getElementById("start-time");
     var endSelect = document.getElementById("end-time");
     if (startSelect && endSelect) {
-        startSelect.addEventListener("change", function () {
-            var parts = startSelect.value.split(":");
-            var minutes = Number(parts[0]) * 60 + Number(parts[1]) + 30;
-            var value = String(Math.floor(minutes / 60)).padStart(2, "0") + ":" + String(minutes % 60).padStart(2, "0");
-            var matching = Array.from(endSelect.options).find(function (option) {
-                return option.value === value;
+        var reservationForm = startSelect.closest("form");
+        var dateInput = reservationForm.querySelector('input[name="reserve_date"]');
+        var submitButton = document.getElementById("reserve-submit");
+        var timeHelp = document.getElementById("time-help");
+        var today = reservationForm.dataset.today;
+        var nowMinutes = Number(reservationForm.dataset.nowMinutes);
+
+        function toMinutes(value) {
+            var parts = value.split(":");
+            return Number(parts[0]) * 60 + Number(parts[1]);
+        }
+
+        function firstEnabledOption(select) {
+            return Array.from(select.options).find(function (option) {
+                return !option.disabled;
             });
+        }
+
+        function refreshEndTimes(preferredDuration) {
+            var startMinutes = toMinutes(startSelect.value);
+            Array.from(endSelect.options).forEach(function (option) {
+                option.disabled = toMinutes(option.value) <= startMinutes;
+            });
+
+            var desiredEnd = startMinutes + Math.max(30, preferredDuration || 30);
+            var matching = Array.from(endSelect.options).find(function (option) {
+                return !option.disabled && toMinutes(option.value) === desiredEnd;
+            });
+            if (!matching || endSelect.selectedOptions[0].disabled) {
+                matching = firstEnabledOption(endSelect);
+            }
             if (matching) {
-                endSelect.value = value;
+                endSelect.value = matching.value;
+            }
+        }
+
+        function refreshStartTimes() {
+            var selectedDate = dateInput.value;
+            var currentDuration = Math.max(
+                30,
+                toMinutes(endSelect.value) - toMinutes(startSelect.value)
+            );
+            Array.from(startSelect.options).forEach(function (option) {
+                var optionMinutes = toMinutes(option.value);
+                option.disabled = (
+                    selectedDate < today ||
+                    (selectedDate === today && optionMinutes <= nowMinutes)
+                );
+            });
+
+            if (startSelect.selectedOptions[0].disabled) {
+                var availableStart = firstEnabledOption(startSelect);
+                if (availableStart) {
+                    startSelect.value = availableStart.value;
+                }
+            }
+
+            var hasAvailableStart = Boolean(firstEnabledOption(startSelect));
+            submitButton.disabled =
+                !selectedDate || !hasAvailableStart || selectedDate < today;
+            if (!selectedDate) {
+                timeHelp.textContent = "请选择预约日期。";
+            } else if (!hasAvailableStart && selectedDate === today) {
+                timeHelp.textContent = "今天已没有可预约时段，请选择其他日期。";
+            } else if (selectedDate < today) {
+                timeHelp.textContent = "不能预约过去的日期，请重新选择。";
+            } else {
+                timeHelp.textContent = "";
+            }
+            refreshEndTimes(currentDuration);
+        }
+
+        startSelect.addEventListener("change", function () {
+            refreshEndTimes(30);
+        });
+        dateInput.addEventListener("change", refreshStartTimes);
+        refreshStartTimes();
+    }
+
+    var calendarFocus = document.querySelector("[data-calendar-focus]");
+    if (calendarFocus) {
+        window.requestAnimationFrame(function () {
+            var scrollArea = calendarFocus.closest(".calendar-scroll");
+            if (scrollArea && scrollArea.scrollHeight > scrollArea.clientHeight + 8) {
+                scrollArea.scrollTop = Math.max(
+                    0,
+                    calendarFocus.offsetTop - scrollArea.clientHeight / 3
+                );
+            } else if (window.innerWidth <= 900) {
+                calendarFocus.scrollIntoView({ block: "center" });
             }
         });
     }

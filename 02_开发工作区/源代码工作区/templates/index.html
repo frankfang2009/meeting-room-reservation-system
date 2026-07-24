@@ -4,7 +4,10 @@
 <section class="page-heading calendar-heading">
     <div>
         <p class="eyebrow">预约日历</p>
-        <h1>{{ current_date.strftime('%Y年%m月%d日') }}</h1>
+        <h1>
+            {{ current_date.strftime('%Y年%m月%d日') }}
+            <small class="weekday-label">{{ weekday_label }}</small>
+        </h1>
     </div>
     <div class="date-controls" aria-label="日期切换">
         <a class="button button-secondary" href="{{ url_for('index', date=prev_date) }}">前一天</a>
@@ -25,14 +28,24 @@
             </thead>
             <tbody>
                 {% for slot in time_slots %}
-                <tr>
-                    <th class="sticky-time time-cell">{{ slot }}</th>
+                <tr
+                    class="{% if slot == current_slot %}current-time-row{% endif %}"
+                    {% if slot == focus_slot %}data-calendar-focus{% endif %}
+                >
+                    <th class="sticky-time time-cell">
+                        <span>{{ slot }}</span>
+                        {% if slot == current_slot %}<small class="time-state">现在</small>{% endif %}
+                    </th>
                     {% for room in rooms %}
                         {% set reservation = room.slot_map.get(slot) %}
                         {% if reservation %}
                         <td class="calendar-slot busy-slot" title="{{ reservation.party_name or '' }} {{ reservation.case_number or '' }}（{{ reservation.start_time }}–{{ reservation.end_time }}，预约人：{{ reservation.display_name }}）">
                             <strong>{{ reservation.display_name }}</strong>
                             {% if reservation.party_name %}<span>{{ reservation.party_name }}</span>{% endif %}
+                        </td>
+                        {% elif slot in past_slots %}
+                        <td class="calendar-slot expired-slot">
+                            <span>{% if slot == current_slot %}已开始{% else %}已过期{% endif %}</span>
                         </td>
                         {% else %}
                         <td class="calendar-slot free-slot">

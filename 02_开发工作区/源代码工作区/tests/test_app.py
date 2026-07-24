@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import closing
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -72,6 +72,53 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 """,
                 (username, generate_password_hash(password), username, is_admin),
             )
+
+    def insert_reservation(
+        self,
+        reserve_date,
+        start_time="09:00",
+        end_time="09:30",
+        user_id=1,
+        room_id=1,
+    ):
+        with self.app.app_context():
+            db = get_db()
+            room_name = db.execute(
+                "SELECT name FROM rooms WHERE id = ?", (room_id,)
+            ).fetchone()[0]
+            cursor = db.execute(
+                """
+                INSERT INTO reservations (
+                    room_id, room_name_snapshot, reserve_date, start_time,
+                    end_time, user_id, party_name, case_number, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    room_id,
+                    room_name,
+                    reserve_date,
+                    start_time,
+                    end_time,
+                    user_id,
+                    "测试单位",
+                    "测试案号",
+                    "测试备注",
+                ),
+            )
+            db.executemany(
+                """
+                INSERT INTO reservation_slots
+                    (reservation_id, room_id, reserve_date, slot_time)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (cursor.lastrowid, room_id, reserve_date, slot)
+                    for slot in app_module._reservation_slot_times(
+                        start_time, end_time
+                    )
+                ],
+            )
+            return cursor.lastrowid
 
     def reservation_payload(
         self,
@@ -165,11 +212,138 @@ class MeetingRoomSystemTests(unittest.TestCase):
 
     def test_default_end_time_includes_0930(self):
         self.login()
+        target = (date.today() + timedelta(days=1)).isoformat()
         response = self.client.get(
-            f"/reserve?room_id=1&date={date.today().isoformat()}&start_time=09:00"
+            f"/reserve?room_id=1&date={target}&start_time=09:00"
         )
         html = response.get_data(as_text=True)
         self.assertIn('<option value="09:30" selected>09:30</option>', html)
+
+    def test_past_and_started_reservations_are_rejected(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+
+        past_response = self.post(
+            "/reserve",
+            self.reservation_payload(reserve_date="2026-07-23"),
+        )
+        self.assertIn(
+            "不能预约已经开始或过去的时段",
+            past_response.get_data(as_text=True),
+        )
+        started_response = self.post(
+            "/reserve",
+            self.reservation_payload(reserve_date="2026-07-24"),
+        )
+        self.assertIn(
+            "不能预约已经开始或过去的时段",
+            started_response.get_data(as_text=True),
+        )
+        future_response = self.post(
+            "/reserve",
+            self.reservation_payload(
+                reserve_date="2026-07-24",
+                start_time="09:30",
+                end_time="10:00",
+            ),
+        )
+        self.assertIn("预约成功", future_response.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertEqual(
+                get_db().execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
+                1,
+            )
+
+    def test_booking_rechecks_start_time_inside_write_lock(self):
+        clock = {"now": datetime(2026, 7, 24, 9, 29)}
+        self.app.config["NOW_PROVIDER"] = lambda: clock["now"]
+        self.app.config["BEFORE_RESERVATION_WRITE"] = lambda: clock.update(
+            now=datetime(2026, 7, 24, 9, 30)
+        )
+        self.login()
+        response = self.post(
+            "/reserve",
+            self.reservation_payload(
+                reserve_date="2026-07-24",
+                start_time="09:30",
+                end_time="10:00",
+            ),
+        )
+        self.assertIn("该时段已经开始，请重新选择", response.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertEqual(
+                get_db().execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
+                0,
+            )
+            self.assertFalse(get_db().in_transaction)
+
+    def test_calendar_marks_elapsed_slots_and_current_time(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+        html = self.client.get("/?date=2026-07-24").get_data(as_text=True)
+
+        self.assertIn("星期五", html)
+        self.assertIn("current-time-row", html)
+        self.assertIn("data-calendar-focus", html)
+        self.assertIn(">现在</small>", html)
+        self.assertEqual(html.count("expired-slot"), 6)
+        self.assertEqual(html.count(">已开始</span>"), 3)
+        self.assertEqual(html.count(">已过期</span>"), 3)
+        self.assertNotIn(
+            "/reserve?room_id=1&amp;date=2026-07-24&amp;start_time=09:00",
+            html,
+        )
+        self.assertIn(
+            "/reserve?room_id=1&amp;date=2026-07-24&amp;start_time=09:30",
+            html,
+        )
+
+        past_html = self.client.get(
+            "/?date=2026-07-23"
+        ).get_data(as_text=True)
+        self.assertNotIn("/reserve?", past_html)
+        self.assertNotIn("data-calendar-focus", past_html)
+
+        future_html = self.client.get(
+            "/?date=2026-07-25"
+        ).get_data(as_text=True)
+        self.assertIn("/reserve?", future_html)
+        self.assertNotIn("data-calendar-focus", future_html)
+
+    def test_calendar_focuses_business_boundaries_without_false_now_label(self):
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 7, 45)
+        self.login()
+        before_open = self.client.get("/").get_data(as_text=True)
+        self.assertEqual(before_open.count("data-calendar-focus"), 1)
+        self.assertNotIn(">现在</small>", before_open)
+
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 18, 0)
+        after_close = self.client.get("/").get_data(as_text=True)
+        self.assertEqual(after_close.count("data-calendar-focus"), 1)
+        self.assertNotIn(">现在</small>", after_close)
+        self.assertNotIn("/reserve?", after_close)
+
+    def test_reservation_form_and_flash_include_comfort_guards(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        login_html = self.login().get_data(as_text=True)
+        self.assertIn('data-auto-dismiss="4500"', login_html)
+
+        form_html = self.client.get(
+            "/reserve?room_id=1&date=2026-07-24&start_time=09:30"
+        ).get_data(as_text=True)
+        self.assertIn('min="2026-07-24"', form_html)
+        self.assertIn('data-today="2026-07-24"', form_html)
+        self.assertIn('data-now-minutes="567"', form_html)
+
+        other_client = self.app.test_client()
+        danger_html = self.login(
+            password="wrong", client=other_client
+        ).get_data(as_text=True)
+        self.assertIn("flash-danger", danger_html)
+        self.assertNotIn("data-auto-dismiss", danger_html)
 
     def test_cancel_is_post_only_and_releases_slot(self):
         self.login()
@@ -587,7 +761,7 @@ class MeetingRoomSystemTests(unittest.TestCase):
     def test_admin_and_user_pages_agree_on_completed_status(self):
         self.login()
         past = (date.today() - timedelta(days=1)).isoformat()
-        self.post("/reserve", self.reservation_payload(reserve_date=past))
+        self.insert_reservation(past)
         self.assertIn("已完成", self.client.get("/my").get_data(as_text=True))
         admin_html = self.client.get(
             f"/admin/reservations?start_date={past}&end_date={past}"
@@ -605,6 +779,26 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 "SELECT status FROM reservations WHERE id = ?", (reservation_id,)
             ).fetchone()[0]
         self.assertEqual(status, "pending")
+
+    def test_reservation_is_completed_at_exact_end_time(self):
+        fixed_now = datetime(2026, 7, 24, 9, 30)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+        reservation_id = self.insert_reservation(
+            "2026-07-24", start_time="09:00", end_time="09:30"
+        )
+
+        self.assertIn("已完成", self.client.get("/my").get_data(as_text=True))
+        admin_html = self.client.get(
+            "/admin/reservations?start_date=2026-07-24&end_date=2026-07-24"
+        ).get_data(as_text=True)
+        self.assertIn("已完成", admin_html)
+        self.assertNotIn(">取消</button>", admin_html)
+        response = self.post(f"/admin/cancel/{reservation_id}")
+        self.assertIn(
+            "预约已结束、已取消或不存在",
+            response.get_data(as_text=True),
+        )
 
     def test_extreme_calendar_dates_do_not_crash(self):
         self.login()
@@ -673,6 +867,12 @@ class MeetingRoomSystemTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertNotIn("cdn.jsdelivr", html)
         self.assertNotIn("https://", html)
+        self.assertIn(
+            f"/static/app.css?v={app_module.STATIC_REVISION}", html
+        )
+        self.assertIn(
+            f"/static/app.js?v={app_module.STATIC_REVISION}", html
+        )
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
@@ -918,9 +1118,9 @@ class MigrateCheckCommandTests(unittest.TestCase):
                 "数据库文件不存在", log_path.read_text(encoding="utf-8")
             )
 
-    def test_version_file_is_v101(self):
+    def test_version_file_is_v102(self):
         version_file = self.SCRIPT.parent / "版本.txt"
-        self.assertEqual(version_file.read_bytes(), b"1.0.1\n")
+        self.assertEqual(version_file.read_bytes(), b"1.0.2\n")
 
 
 if __name__ == "__main__":

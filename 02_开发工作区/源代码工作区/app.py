@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
 import logging
 import os
@@ -28,6 +29,19 @@ from werkzeug.security import check_password_hash, generate_password_hash
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = PROJECT_DIR / "data"
 
+
+def _static_revision() -> str:
+    digest = hashlib.sha256()
+    try:
+        for name in ("app.css", "app.js"):
+            digest.update((PROJECT_DIR / "static" / name).read_bytes())
+    except OSError:
+        return "dev"
+    return digest.hexdigest()[:12]
+
+
+STATIC_REVISION = _static_revision()
+
 SCHEMA_VERSION = 1
 # 迁移函数内部禁止调用 commit() 或 executescript()；它们会提前结束框架事务，
 # 使单次迁移无法在失败时完整回滚，只能依赖升级器的整库快照恢复。
@@ -41,6 +55,15 @@ END_TIMES = tuple(
     f"{minutes // 60:02d}:{minutes % 60:02d}"
     for minutes in range(9 * 60, 17 * 60 + 31, 30)
 )
+WEEKDAY_LABELS = (
+    "星期一",
+    "星期二",
+    "星期三",
+    "星期四",
+    "星期五",
+    "星期六",
+    "星期日",
+)
 
 
 class ReservationConflict(Exception):
@@ -49,6 +72,10 @@ class ReservationConflict(Exception):
 
 class ReservationUnavailable(Exception):
     """Raised when the selected room or current account changes during booking."""
+
+
+class ReservationStarted(Exception):
+    """Raised when a requested reservation reaches its start time before commit."""
 
 
 def _load_or_create_secret(path: Path) -> str:
@@ -481,6 +508,7 @@ def _register_template_helpers(app: Flask) -> None:
         return {
             "current_user": _current_user(),
             "csrf_token": csrf_token,
+            "static_revision": STATIC_REVISION,
         }
 
 
@@ -503,6 +531,14 @@ def _parse_date(value: str) -> Optional[str]:
         return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
     except (TypeError, ValueError):
         return None
+
+
+def _local_now() -> datetime:
+    provider = current_app.config.get("NOW_PROVIDER")
+    value = provider() if provider else datetime.now()
+    if not isinstance(value, datetime):
+        raise RuntimeError("NOW_PROVIDER 必须返回 datetime")
+    return value
 
 
 def _parse_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -541,7 +577,7 @@ def _build_slot_map(reservations: list[dict[str, Any]]) -> dict[str, dict[str, A
 
 
 def _active_reservation_filter() -> tuple[str, tuple[str, str, str]]:
-    now = datetime.now()
+    now = _local_now()
     return (
         "(reserve_date > ? OR (reserve_date = ? AND end_time > ?))",
         (now.date().isoformat(), now.date().isoformat(), now.strftime("%H:%M")),
@@ -555,7 +591,7 @@ def _reservation_display_status(reservation: dict[str, Any], now: datetime) -> s
         f"{reservation['reserve_date']} {reservation['end_time']}",
         "%Y-%m-%d %H:%M",
     )
-    return "已完成" if end_at < now else "待使用"
+    return "已完成" if end_at <= now else "待使用"
 
 
 def _register_routes(app: Flask) -> None:
@@ -587,9 +623,32 @@ def _register_routes(app: Flask) -> None:
     @app.route("/")
     @login_required
     def index() -> Any:
+        now = _local_now()
         requested_date = request.args.get("date", "")
-        current_date = _parse_date(requested_date) or date.today().isoformat()
+        current_date = _parse_date(requested_date) or now.date().isoformat()
         current_date_obj = datetime.strptime(current_date, "%Y-%m-%d").date()
+
+        past_slots: set[str] = set()
+        current_slot: Optional[str] = None
+        focus_slot: Optional[str] = None
+        if current_date_obj < now.date():
+            past_slots.update(START_TIMES)
+        elif current_date_obj == now.date():
+            for slot in START_TIMES:
+                slot_start = datetime.strptime(
+                    f"{current_date} {slot}", "%Y-%m-%d %H:%M"
+                )
+                if slot_start <= now:
+                    past_slots.add(slot)
+                if slot_start <= now < slot_start + timedelta(minutes=30):
+                    current_slot = slot
+
+            if current_slot:
+                focus_slot = current_slot
+            elif now.time() < datetime.strptime(START_TIMES[0], "%H:%M").time():
+                focus_slot = START_TIMES[0]
+            else:
+                focus_slot = START_TIMES[-1]
 
         rooms = [
             dict(row)
@@ -616,15 +675,22 @@ def _register_routes(app: Flask) -> None:
                 if current_date_obj < date.max
                 else current_date_obj
             ),
-            today=date.today(),
+            today=now.date(),
             rooms=rooms,
             time_slots=START_TIMES,
+            past_slots=past_slots,
+            current_slot=current_slot,
+            focus_slot=focus_slot,
+            weekday_label=WEEKDAY_LABELS[current_date_obj.weekday()],
         )
 
     @app.route("/reserve", methods=["GET", "POST"])
     @login_required
     def reserve() -> Any:
         db = get_db()
+        now = _local_now()
+        minimum_date = now.date().isoformat()
+        now_minutes = now.hour * 60 + now.minute
         rooms = [
             dict(row)
             for row in db.execute(
@@ -655,6 +721,9 @@ def _register_routes(app: Flask) -> None:
                     party_name=party_name,
                     case_number=case_number,
                     notes=notes,
+                    minimum_date=minimum_date,
+                    today_date=minimum_date,
+                    now_minutes=now_minutes,
                 )
 
             room = None
@@ -671,6 +740,11 @@ def _register_routes(app: Flask) -> None:
                 return render_error("请选择正确的预约时间")
             if _time_to_minutes(start_time) >= _time_to_minutes(end_time):
                 return render_error("结束时间必须晚于开始时间")
+            reservation_start = datetime.strptime(
+                f"{reserve_date} {start_time}", "%Y-%m-%d %H:%M"
+            )
+            if reservation_start <= _local_now():
+                return render_error("不能预约已经开始或过去的时段")
 
             slots = _reservation_slot_times(start_time, end_time)
             current_user = _current_user()
@@ -692,6 +766,8 @@ def _register_routes(app: Flask) -> None:
                 ).fetchone()
                 if locked_user is None or locked_room is None:
                     raise ReservationUnavailable
+                if reservation_start <= _local_now():
+                    raise ReservationStarted
 
                 placeholders = ",".join("?" for _ in slots)
                 conflict = db.execute(
@@ -745,6 +821,10 @@ def _register_routes(app: Flask) -> None:
                     flash("账号状态已改变，请重新登录", "warning")
                     return redirect(url_for("login"))
                 return render_error("会议室状态已改变，请重新选择")
+            except ReservationStarted:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                return render_error("该时段已经开始，请重新选择")
             except (ReservationConflict, sqlite3.IntegrityError):
                 if db.in_transaction:
                     db.execute("ROLLBACK")
@@ -760,7 +840,9 @@ def _register_routes(app: Flask) -> None:
         selected_room_id = _parse_int(
             request.args.get("room_id"), rooms[0]["id"] if rooms else 1
         )
-        selected_date = _parse_date(request.args.get("date", "")) or date.today().isoformat()
+        selected_date = (
+            _parse_date(request.args.get("date", "")) or minimum_date
+        )
         start_time = request.args.get("start_time", "09:00")
         if start_time not in START_TIMES:
             start_time = "09:00"
@@ -782,6 +864,9 @@ def _register_routes(app: Flask) -> None:
             party_name=request.args.get("party_name", "")[:120],
             case_number=request.args.get("case_number", "")[:120],
             notes=request.args.get("notes", "")[:500],
+            minimum_date=minimum_date,
+            today_date=minimum_date,
+            now_minutes=now_minutes,
         )
 
     @app.post("/cancel/<int:res_id>")
@@ -820,7 +905,7 @@ def _register_routes(app: Flask) -> None:
                 f"{reservation['reserve_date']} {reservation['end_time']}",
                 "%Y-%m-%d %H:%M",
             )
-            if end_at < datetime.now() and not user["is_admin"]:
+            if end_at <= _local_now() and not user["is_admin"]:
                 db.execute("ROLLBACK")
                 flash("已过期的预约无法取消", "warning")
                 return redirect(url_for("my_reservations"))
@@ -854,7 +939,7 @@ def _register_routes(app: Flask) -> None:
             """,
             (_current_user()["id"],),
         ).fetchall()
-        now = datetime.now()
+        now = _local_now()
         reservations = []
         for row in rows:
             item = dict(row)
@@ -870,8 +955,9 @@ def _register_routes(app: Flask) -> None:
     @app.route("/admin/reservations")
     @admin_required
     def admin_reservations() -> Any:
-        default_start = (date.today() - timedelta(days=7)).isoformat()
-        default_end = (date.today() + timedelta(days=30)).isoformat()
+        today = _local_now().date()
+        default_start = (today - timedelta(days=7)).isoformat()
+        default_end = (today + timedelta(days=30)).isoformat()
         start_date = _parse_date(request.args.get("start_date", "")) or default_start
         end_date = _parse_date(request.args.get("end_date", "")) or default_end
         rows = get_db().execute(
@@ -887,7 +973,7 @@ def _register_routes(app: Flask) -> None:
             (start_date, end_date),
         ).fetchall()
         reservations = [dict(row) for row in rows]
-        now = datetime.now()
+        now = _local_now()
         for reservation in reservations:
             reservation["display_status"] = _reservation_display_status(
                 reservation, now

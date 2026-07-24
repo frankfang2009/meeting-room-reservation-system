@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}会议室预约系统{% endblock %}</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
-    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css', v=static_revision) }}">
+    <script src="{{ url_for('static', filename='app.js', v=static_revision) }}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}">
     {% if current_user %}
@@ -32,7 +32,7 @@
     <div class="flash-area" aria-live="polite">
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
-            <div class="flash flash-{{ category }}">
+            <div class="flash flash-{{ category }}"{% if category in ('success', 'info') %} data-auto-dismiss="4500"{% endif %}>
                 <span>{{ message }}</span>
                 <button type="button" class="flash-close" aria-label="关闭提示">×</button>
             </div>
