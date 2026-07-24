@@ -10,6 +10,11 @@ from unittest import mock
 import 准备发布 as release
 
 
+def write_utf8_lf(path: Path, content: str) -> None:
+    """Write deterministic UTF-8/LF fixtures on every host platform."""
+    path.write_bytes(content.encode("utf-8"))
+
+
 class ReleasePreparationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -39,30 +44,36 @@ class ReleasePreparationTests(unittest.TestCase):
             "版本.txt": "1.0.2\n",
         }
         for name, content in source_files.items():
-            (self.source / name).write_text(content, encoding="utf-8")
-        (self.source / "static" / "app.css").write_text(
-            "body { color: black; }\n", encoding="utf-8"
+            write_utf8_lf(self.source / name, content)
+        write_utf8_lf(
+            self.source / "static" / "app.css",
+            "body { color: black; }\n",
         )
-        (self.source / "templates" / "index.html").write_text(
-            "<h1>会议室</h1>\n", encoding="utf-8"
+        write_utf8_lf(
+            self.source / "templates" / "index.html",
+            "<h1>会议室</h1>\n",
         )
-        (self.source / "tests" / "test_private.py").write_text(
-            "SECRET = True\n", encoding="utf-8"
+        write_utf8_lf(
+            self.source / "tests" / "test_private.py",
+            "SECRET = True\n",
         )
         (self.source / "data" / "secret.db").write_bytes(b"private")
 
         for name in release.TOP_LEVEL_FILES:
-            (self.skeleton / name).write_text(
-                f"release skeleton: {name}\n", encoding="utf-8"
+            write_utf8_lf(
+                self.skeleton / name,
+                f"release skeleton: {name}\n",
             )
-        (
+        write_utf8_lf(
             self.skeleton
             / "_程序文件"
-            / release.CHECKLIST_TEMPLATE
-        ).write_text("候选 V{version}\n", encoding="utf-8")
-        (
-            self.skeleton / "_程序文件" / "版本与校验信息.txt"
-        ).write_text("runtime metadata\n", encoding="utf-8")
+            / release.CHECKLIST_TEMPLATE,
+            "候选 V{version}\n",
+        )
+        write_utf8_lf(
+            self.skeleton / "_程序文件" / "版本与校验信息.txt",
+            "runtime metadata\n",
+        )
         (self.runtime / "python.exe").write_bytes(b"runtime")
 
         self.frozen_package.write_bytes(b"frozen-v101")
@@ -228,13 +239,13 @@ class ReleasePreparationTests(unittest.TestCase):
         )
 
     def test_rejects_historical_or_mismatched_release_version(self):
-        (self.source / "版本.txt").write_text("1.0.1\n", encoding="utf-8")
+        write_utf8_lf(self.source / "版本.txt", "1.0.1\n")
         with self.assertRaisesRegex(
             release.ReleasePreparationError, "高于 V1.0.1"
         ):
             self.prepare()
 
-        (self.source / "版本.txt").write_text("1.0.2\n", encoding="utf-8")
+        write_utf8_lf(self.source / "版本.txt", "1.0.2\n")
         with self.assertRaisesRegex(
             release.ReleasePreparationError, "必须命名"
         ):
@@ -266,7 +277,7 @@ class ReleasePreparationTests(unittest.TestCase):
         for path in attempts:
             with self.subTest(path=path):
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("must not ship\n", encoding="utf-8")
+                write_utf8_lf(path, "must not ship\n")
                 try:
                     with self.assertRaisesRegex(
                         release.ReleasePreparationError,
