@@ -506,7 +506,7 @@ function Start-TestUpgradeBroker {
                 $launched = $null
                 $launchedId = 0
                 try {
-                    $jobRequest = (Get-Content -LiteralPath $RequestPath -Raw) | ConvertFrom-Json
+                    $jobRequest = [IO.File]::ReadAllText($RequestPath,(New-Object Text.UTF8Encoding($false,$true))) | ConvertFrom-Json
                     if (-not [string]::Equals([string]$jobRequest.token, $Token, [StringComparison]::Ordinal)) {
                         throw 'CI broker token mismatch'
                     }

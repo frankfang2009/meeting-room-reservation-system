@@ -701,6 +701,15 @@ class PackageBuilderTests(unittest.TestCase):
         ]
         self.assertIn("Set-StrictMode -Version Latest", ci_broker)
         self.assertIn("$ErrorActionPreference = 'Stop'", ci_broker)
+        self.assertIn(
+            "[IO.File]::ReadAllText($RequestPath,"
+            "(New-Object Text.UTF8Encoding($false,$true)))",
+            ci_broker,
+        )
+        self.assertNotIn(
+            "Get-Content -LiteralPath $RequestPath -Raw",
+            ci_broker,
+        )
         self.assertIn("New-Object Diagnostics.ProcessStartInfo", ci_broker)
         self.assertIn("$info.UseShellExecute = $true", ci_broker)
         self.assertIn(
