@@ -7,8 +7,8 @@
     "1.0.1"
   ],
   "candidate_status": "待 Windows 10/11 实机人工验收",
-  "generated_at_utc": "2026-07-24T05:26:47.689275+00:00",
-  "source_tree_sha256": "f5812e46f5f3b2201c17a61fb7d95aa840bcd02a9b97454460420ab149c5e40d",
+  "generated_at_utc": "2026-07-24T13:11:06.132453+00:00",
+  "source_tree_sha256": "56d2b9211dfbf8c8f9a96c60962c28a2697114124fac99136ce1562817ae9e2d",
   "payload_file_count": 25,
   "payload_files": [
     {
@@ -133,15 +133,15 @@
     },
     {
       "path": "使用说明.txt",
-      "size": 5052,
-      "sha256": "69bb0444a11fe92c39af78a8a71eff636a2377a342b4265c8af8f2273899e54c"
+      "size": 5240,
+      "sha256": "cbe9c118e77a7bede721db649e839753d66c0d720644fdbc2f63f6f4a710752f"
     }
   ],
-  "payload_zip_sha256": "6faf103d3896ddd36c43b72dd2586a617059e1b7664889b44b11559047863fea",
-  "payload_zip_size": 50404,
+  "payload_zip_sha256": "f393562a9d9534fd12a06c2d94094306f8b10dce051a877035335b3e5d37f034",
+  "payload_zip_size": 50499,
   "package_file": "升级到V1.0.2.bat",
-  "package_sha256": "b87ae7b722fff00be14449c4c4617f0e9e1c5b2626fcdea8c1ba8eedb5316e9d",
-  "package_size": 188923,
+  "package_sha256": "2e7e78a61de9a403f3facd37b47c1580c35bce38b91465f4919326fa72d77730",
+  "package_size": 196141,
   "windows_candidate_included": true,
   "runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",
   "frozen_runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",

@@ -8,6 +8,7 @@ set "MEETING_ROOM_UPGRADE_DIRECT_ADMIN="
 set "MEETING_ROOM_UPGRADE_BROKER_REQUEST="
 set "MEETING_ROOM_UPGRADE_BROKER_RESPONSE="
 set "MEETING_ROOM_UPGRADE_BROKER_TOKEN="
+set "MEETING_ROOM_UPGRADE_LAUNCH_LOG=%TEMP%\meetingroom_upgrade_launcher.log"
 
 if /i "%~1"=="--upgrade-broker" (
     if "%~2"=="" exit /b 6
@@ -19,17 +20,29 @@ if /i "%~1"=="--upgrade-broker" (
     set "MEETING_ROOM_UPGRADE_BROKER_TOKEN=%~4"
 )
 
+where powershell.exe >nul 2>&1
+if not "%errorlevel%"=="0" goto :powershell_unavailable
+
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$identity=[Security.Principal.WindowsIdentity]::GetCurrent(); $principal=New-Object Security.Principal.WindowsPrincipal($identity); if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){exit 0}else{exit 1}" >nul 2>&1
 if not "%errorlevel%"=="0" goto :need_elevation
 if not defined MEETING_ROOM_UPGRADE_BROKER_REQUEST set "MEETING_ROOM_UPGRADE_DIRECT_ADMIN=1"
 goto :run_upgrade
 
 :need_elevation
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$brokerRoot=$null; $child=$null; $elevationStarted=$false; try{$ErrorActionPreference='Stop'; $brokerRoot=Join-Path $env:TEMP ('meetingroom_upgrade_broker_'+[Guid]::NewGuid().ToString('N')); [IO.Directory]::CreateDirectory($brokerRoot)|Out-Null; $request=Join-Path $brokerRoot 'request.json'; $response=Join-Path $brokerRoot 'response.json'; $token=[Guid]::NewGuid().ToString('N'); $brokerArguments='--upgrade-broker '+[char]34+$request+[char]34+' '+[char]34+$response+[char]34+' '+[char]34+$token+[char]34; $child=Start-Process -FilePath $env:MEETING_ROOM_UPGRADE_BAT -ArgumentList $brokerArguments -Verb RunAs -PassThru -ErrorAction Stop; if($null -eq $child -or [int]$child.Id -le 0){throw '管理员升级进程启动后没有有效进程 ID'}; $elevationStarted=$true; while(-not $child.HasExited){if(Test-Path -LiteralPath $request -PathType Leaf){$launched=$null; $launchedId=0; try{$requestItem=Get-Item -LiteralPath $request -Force; if(($requestItem.Attributes-band[IO.FileAttributes]::ReparsePoint)-ne 0 -or $requestItem.Length-gt 4096 -or (Test-Path -LiteralPath $response)){throw '启动请求文件异常'}; $raw=[IO.File]::ReadAllText($request,(New-Object Text.UTF8Encoding($false,$true))); $job=$raw|ConvertFrom-Json; $names=@($job.PSObject.Properties.Name|Sort-Object); if(($names-join ',') -ne 'python_path,schema,server_path,token,working_directory' -or [int]$job.schema -ne 1 -or -not [string]::Equals([string]$job.token,$token,[StringComparison]::Ordinal)){throw '启动请求校验失败'}; $work=[IO.Path]::GetFullPath([string]$job.working_directory).TrimEnd('\'); $python=[IO.Path]::GetFullPath([string]$job.python_path); $server=[IO.Path]::GetFullPath([string]$job.server_path); if(-not [string]::Equals($python,(Join-Path $work 'runtime\python.exe'),[StringComparison]::OrdinalIgnoreCase)-or -not [string]::Equals($server,(Join-Path $work 'server.py'),[StringComparison]::OrdinalIgnoreCase)-or -not(Test-Path -LiteralPath $python -PathType Leaf)-or -not(Test-Path -LiteralPath $server -PathType Leaf)){throw '启动路径校验失败'}; $info=New-Object Diagnostics.ProcessStartInfo; $info.FileName=$python; $info.Arguments=[char]34+$server+[char]34; $info.WorkingDirectory=(Split-Path -Parent $python); $info.UseShellExecute=$true; $info.WindowStyle=[Diagnostics.ProcessWindowStyle]::Minimized; $launched=New-Object Diagnostics.Process; $launched.StartInfo=$info; if(-not $launched.Start()){throw '普通用户服务进程未能启动'}; $launchedId=[int]$launched.Id; if($launchedId -le 0){throw '普通用户服务进程启动后没有有效进程 ID'}; $reply=[ordered]@{schema=1;token=$token;ok=$true;process_id=$launchedId;error=$null}}catch{$launchError=[string]$_.Exception.Message; if($launchedId -gt 0){Stop-Process -Id $launchedId -Force -ErrorAction SilentlyContinue; $launchedId=0}; $reply=[ordered]@{schema=1;token=$token;ok=$false;process_id=0;error=$launchError}}; $responseTemp=$response+'.tmp.'+$PID; try{[IO.File]::WriteAllText($responseTemp,($reply|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false))); [IO.File]::Move($responseTemp,$response)}catch{if($launchedId -gt 0){Stop-Process -Id $launchedId -Force -ErrorAction SilentlyContinue}; throw}finally{if($null -ne $launched){$launched.Dispose()}}; Remove-Item -LiteralPath $request -Force -ErrorAction SilentlyContinue}; Start-Sleep -Milliseconds 200; $child.Refresh()}; $child.WaitForExit(); exit([int]$child.ExitCode)}catch{$exception=$_.Exception; $nativeCode=$null; while($null -ne $exception){if($exception -is [System.ComponentModel.Win32Exception]){$nativeCode=$exception.NativeErrorCode; break}; $exception=$exception.InnerException}; if(-not $elevationStarted -and $nativeCode -eq 1223){exit 3}else{exit 6}}finally{if($null -ne $child){$child.Dispose()}; if($brokerRoot -and (Test-Path -LiteralPath $brokerRoot)){Remove-Item -LiteralPath $brokerRoot -Recurse -Force -ErrorAction SilentlyContinue}}"
+echo.
+echo 正在请求 Windows 管理员授权，请在弹出的窗口中选择“是”。
+echo.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$bat=$env:MEETING_ROOM_UPGRADE_BAT; $tmp=$null; $rc=6; try{$all=[IO.File]::ReadAllText($bat,[Text.Encoding]::UTF8); $broker=[regex]::Matches($all,'(?m)^__UPGRADE_BROKER_PS1_BELOW__\r?$'); $main=[regex]::Matches($all,'(?m)^__UPGRADE_PS1_BELOW__\r?$'); if($broker.Count -ne 1 -or $main.Count -ne 1 -or $broker[0].Index -ge $main[0].Index){throw '升级入口结构损坏'}; $start=$broker[0].Index+$broker[0].Length; if($start -lt $all.Length -and $all[$start] -eq [char]10){$start++}; $length=$main[0].Index-$start; if($length -le 0){throw '升级入口代理为空'}; $tmp=Join-Path $env:TEMP ('meetingroom_upgrade_launcher_{0}.ps1' -f [Guid]::NewGuid().ToString('N')); [IO.File]::WriteAllText($tmp,$all.Substring($start,$length),(New-Object Text.UTF8Encoding($true))); & ([IO.Path]::Combine($PSHOME,'powershell.exe')) -NoProfile -ExecutionPolicy Bypass -File $tmp -PackagePath $bat; $rc=$LASTEXITCODE}catch{Write-Host ''; Write-Host ('升级入口无法启动：'+$_.Exception.Message) -ForegroundColor Red; $rc=6}finally{if($tmp -and (Test-Path -LiteralPath $tmp)){Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue}}; exit $rc"
 set "UPGRADE_RC=%errorlevel%"
+>>"%MEETING_ROOM_UPGRADE_LAUNCH_LOG%" echo %DATE% %TIME% [BAT] 入口代理退出码=%UPGRADE_RC%
 if "%UPGRADE_RC%"=="3" goto :uac_cancelled
 if "%UPGRADE_RC%"=="6" goto :elevation_failed
-exit /b %UPGRADE_RC%
+if "%UPGRADE_RC%"=="0" exit /b 0
+if "%UPGRADE_RC%"=="1" goto :upgrade_not_completed
+if "%UPGRADE_RC%"=="2" goto :upgrade_not_completed
+if "%UPGRADE_RC%"=="4" goto :upgrade_not_completed
+if "%UPGRADE_RC%"=="5" goto :upgrade_not_completed
+goto :unexpected_launcher_failure
 
 :uac_cancelled
 echo.
@@ -41,6 +54,36 @@ exit /b 3
 :elevation_failed
 echo.
 echo 无法打开管理员升级窗口，请联系维护人员。
+echo 错误详情保存在：
+echo "%MEETING_ROOM_UPGRADE_LAUNCH_LOG%"
+echo.
+pause
+exit /b 1
+
+:upgrade_not_completed
+echo.
+echo 升级没有正常完成，返回代码：%UPGRADE_RC%
+echo 如果管理员窗口已经显示具体原因，请按其中提示处理。
+echo 入口记录保存在：
+echo "%MEETING_ROOM_UPGRADE_LAUNCH_LOG%"
+echo.
+pause
+exit /b %UPGRADE_RC%
+
+:unexpected_launcher_failure
+echo.
+echo 升级入口异常退出，升级没有正常完成。
+echo 错误代码：%UPGRADE_RC%
+echo 错误详情保存在：
+echo "%MEETING_ROOM_UPGRADE_LAUNCH_LOG%"
+echo.
+pause
+exit /b 1
+
+:powershell_unavailable
+echo.
+echo 这台电脑无法启动 Windows PowerShell，升级尚未开始。
+echo 请联系网管检查 PowerShell、AppLocker 或单位安全策略。
 echo.
 pause
 exit /b 1
@@ -54,6 +97,231 @@ if not "%UPGRADE_RC%"=="0" echo 如需帮助，请把“_程序文件\logs”中
 echo.
 pause
 exit /b %UPGRADE_RC%
+__UPGRADE_BROKER_PS1_BELOW__
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$PackagePath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$script:LauncherLogPath = Join-Path $env:TEMP 'meetingroom_upgrade_launcher.log'
+$script:Utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+function Write-LauncherLog {
+    param(
+        [string]$Message,
+        [string]$Level = 'INFO'
+    )
+    $line = '{0} [{1}] {2}' -f @(
+        (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'),
+        $Level,
+        $Message
+    )
+    try {
+        Add-Content -LiteralPath $script:LauncherLogPath -Value $line `
+            -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+        Write-Debug "升级入口日志写入失败：$($_.Exception.Message)"
+    }
+}
+
+function Get-Win32NativeErrorCode {
+    param($Exception)
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [System.ComponentModel.Win32Exception]) {
+            return [int]$current.NativeErrorCode
+        }
+        $current = $current.InnerException
+    }
+    return $null
+}
+
+$brokerRoot = $null
+$child = $null
+$elevationStarted = $false
+
+try {
+    $packageFullPath = [IO.Path]::GetFullPath($PackagePath)
+    if (-not (Test-Path -LiteralPath $packageFullPath -PathType Leaf)) {
+        throw '升级包文件不存在。'
+    }
+    if (-not [string]::Equals(
+        [IO.Path]::GetExtension($packageFullPath),
+        '.bat',
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw '升级包文件扩展名不是 .bat。'
+    }
+
+    Write-LauncherLog "普通用户升级入口已启动：$packageFullPath"
+    $brokerRoot = Join-Path $env:TEMP (
+        'meetingroom_upgrade_broker_' + [Guid]::NewGuid().ToString('N')
+    )
+    [IO.Directory]::CreateDirectory($brokerRoot) | Out-Null
+    $request = Join-Path $brokerRoot 'request.json'
+    $response = Join-Path $brokerRoot 'response.json'
+    $token = [Guid]::NewGuid().ToString('N')
+    $brokerArguments = '--upgrade-broker ' +
+        [char]34 + $request + [char]34 + ' ' +
+        [char]34 + $response + [char]34 + ' ' +
+        [char]34 + $token + [char]34
+
+    Write-LauncherLog '正在请求 Windows 管理员授权。'
+    $child = Start-Process -FilePath $packageFullPath `
+        -ArgumentList $brokerArguments -Verb RunAs -PassThru -ErrorAction Stop
+    if ($null -eq $child -or [int]$child.Id -le 0) {
+        throw '管理员升级进程启动后没有有效进程 ID。'
+    }
+    $elevationStarted = $true
+    Write-LauncherLog "管理员升级进程已启动，PID=$([int]$child.Id)"
+
+    while (-not $child.HasExited) {
+        if (Test-Path -LiteralPath $request -PathType Leaf) {
+            $launched = $null
+            $launchedId = 0
+            try {
+                $requestItem = Get-Item -LiteralPath $request -Force
+                if (($requestItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                    $requestItem.Length -gt 4096 -or
+                    (Test-Path -LiteralPath $response)) {
+                    throw '启动请求文件异常。'
+                }
+                $raw = [IO.File]::ReadAllText($request, $script:Utf8Strict)
+                $job = $raw | ConvertFrom-Json
+                $names = @($job.PSObject.Properties.Name | Sort-Object)
+                if (($names -join ',') -ne
+                        'python_path,schema,server_path,token,working_directory' -or
+                    [int]$job.schema -ne 1 -or
+                    -not [string]::Equals(
+                        [string]$job.token,
+                        $token,
+                        [StringComparison]::Ordinal
+                    )) {
+                    throw '启动请求校验失败。'
+                }
+
+                $work = [IO.Path]::GetFullPath(
+                    [string]$job.working_directory
+                ).TrimEnd('\')
+                $python = [IO.Path]::GetFullPath([string]$job.python_path)
+                $server = [IO.Path]::GetFullPath([string]$job.server_path)
+                if (-not [string]::Equals(
+                        $python,
+                        (Join-Path $work 'runtime\python.exe'),
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    -not [string]::Equals(
+                        $server,
+                        (Join-Path $work 'server.py'),
+                        [StringComparison]::OrdinalIgnoreCase
+                    ) -or
+                    -not (Test-Path -LiteralPath $python -PathType Leaf) -or
+                    -not (Test-Path -LiteralPath $server -PathType Leaf)) {
+                    throw '启动路径校验失败。'
+                }
+
+                $info = New-Object Diagnostics.ProcessStartInfo
+                $info.FileName = $python
+                $info.Arguments = [char]34 + $server + [char]34
+                $info.WorkingDirectory = Split-Path -Parent $python
+                $info.UseShellExecute = $true
+                $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized
+                $launched = New-Object Diagnostics.Process
+                $launched.StartInfo = $info
+                if (-not $launched.Start()) {
+                    throw '普通用户服务进程未能启动。'
+                }
+                $launchedId = [int]$launched.Id
+                if ($launchedId -le 0) {
+                    throw '普通用户服务进程启动后没有有效进程 ID。'
+                }
+                Write-LauncherLog "已按普通用户身份恢复服务，PID=$launchedId"
+                $reply = [ordered]@{
+                    schema = 1
+                    token = $token
+                    ok = $true
+                    process_id = $launchedId
+                    error = $null
+                }
+            }
+            catch {
+                $launchError = [string]$_.Exception.Message
+                Write-LauncherLog "普通用户服务恢复失败：$launchError" 'ERROR'
+                if ($launchedId -gt 0) {
+                    Stop-Process -Id $launchedId -Force `
+                        -ErrorAction SilentlyContinue
+                    $launchedId = 0
+                }
+                $reply = [ordered]@{
+                    schema = 1
+                    token = $token
+                    ok = $false
+                    process_id = 0
+                    error = $launchError
+                }
+            }
+
+            $responseTemp = $response + '.tmp.' + $PID
+            try {
+                [IO.File]::WriteAllText(
+                    $responseTemp,
+                    ($reply | ConvertTo-Json -Compress),
+                    $script:Utf8NoBom
+                )
+                [IO.File]::Move($responseTemp, $response)
+            }
+            catch {
+                if ($launchedId -gt 0) {
+                    Stop-Process -Id $launchedId -Force `
+                        -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+            finally {
+                if ($null -ne $launched) {
+                    $launched.Dispose()
+                }
+            }
+            Remove-Item -LiteralPath $request -Force `
+                -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Milliseconds 200
+        $child.Refresh()
+    }
+
+    $child.WaitForExit()
+    $childExitCode = [int]$child.ExitCode
+    Write-LauncherLog "管理员升级进程已退出，退出码=$childExitCode"
+    exit $childExitCode
+}
+catch {
+    $nativeCode = Get-Win32NativeErrorCode -Exception $_.Exception
+    Write-LauncherLog (
+        '升级入口失败：{0}；Win32={1}' -f @(
+            $_.Exception.ToString(),
+            $(if ($null -eq $nativeCode) { '无' } else { $nativeCode })
+        )
+    ) 'ERROR'
+    if (-not $elevationStarted -and $nativeCode -eq 1223) {
+        exit 3
+    }
+    exit 6
+}
+finally {
+    if ($null -ne $child) {
+        $child.Dispose()
+    }
+    if ($brokerRoot -and (Test-Path -LiteralPath $brokerRoot)) {
+        Remove-Item -LiteralPath $brokerRoot -Recurse -Force `
+            -ErrorAction SilentlyContinue
+    }
+}
 __UPGRADE_PS1_BELOW__
 param(
     [Parameter(Mandatory = $true)]
@@ -64,7 +332,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:PackageVersionText = '1.0.2'
-$script:ExpectedPayloadSha256 = '6faf103d3896ddd36c43b72dd2586a617059e1b7664889b44b11559047863fea'
+$script:ExpectedPayloadSha256 = 'f393562a9d9534fd12a06c2d94094306f8b10dce051a877035335b3e5d37f034'
 $script:ExpectedRuntimeTreeSha256 = 'b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14'
 $script:TransactionStateSchema = 2
 $script:TaskName = '会议室预约系统'
@@ -3083,81 +3351,82 @@ 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
-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
-AAAZABkAgQcAAE29AAAAAA==
+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

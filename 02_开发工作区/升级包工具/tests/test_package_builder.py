@@ -70,9 +70,15 @@ class PackageBuilderTests(unittest.TestCase):
         (self.templates / "bat头部模板.bat").write_text(
             "@echo off\n"
             "chcp 65001 >nul\n"
+            "set BROKER_NAME=__UPGRADE_BROKER_PS1_BELOW__\n"
             "set PS_NAME=__UPGRADE_PS1_BELOW__\n"
             "set PAYLOAD_NAME=__UPGRADE_PAYLOAD_BELOW__\n"
             "exit /b %RC%\n",
+            encoding="utf-8",
+        )
+        (self.templates / "升级入口代理.ps1").write_text(
+            "Set-StrictMode -Version Latest\n"
+            "Write-Output 'broker'\n",
             encoding="utf-8",
         )
         (self.templates / "升级主逻辑.ps1").write_text(
@@ -107,20 +113,35 @@ class PackageBuilderTests(unittest.TestCase):
     @staticmethod
     def split_package(raw: bytes):
         text = raw.decode("utf-8").replace("\r\n", "\n")
+        broker_matches = list(
+            re.finditer(r"(?m)^%s$" % re.escape(builder.BROKER_MARKER), text)
+        )
         ps_matches = list(
             re.finditer(r"(?m)^%s$" % re.escape(builder.PS_MARKER), text)
         )
         payload_matches = list(
             re.finditer(r"(?m)^%s$" % re.escape(builder.PAYLOAD_MARKER), text)
         )
-        if len(ps_matches) != 1 or len(payload_matches) != 1:
+        if (
+            len(broker_matches) != 1
+            or len(ps_matches) != 1
+            or len(payload_matches) != 1
+        ):
             raise AssertionError("成品标记数量错误")
+        broker_match = broker_matches[0]
         ps_match = ps_matches[0]
         payload_match = payload_matches[0]
+        broker = text[broker_match.end() + 1 : ps_match.start()]
         powershell = text[ps_match.end() + 1 : payload_match.start()]
         payload_text = text[payload_match.end() + 1 :]
         lines = payload_text.rstrip("\n").split("\n")
-        return text, powershell, lines, base64.b64decode("".join(lines), validate=True)
+        return (
+            text,
+            broker,
+            powershell,
+            lines,
+            base64.b64decode("".join(lines), validate=True),
+        )
 
     def test_build_has_unique_ordered_markers_crlf_and_round_trips(self):
         result = self.build()
@@ -131,7 +152,15 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertNotIn(b"\n", without_crlf)
         self.assertNotIn(b"\r", without_crlf)
 
-        text, powershell, payload_lines, zip_bytes = self.split_package(raw)
+        text, broker, powershell, payload_lines, zip_bytes = self.split_package(raw)
+        self.assertEqual(
+            len(
+                re.findall(
+                    r"(?m)^%s$" % re.escape(builder.BROKER_MARKER), text
+                )
+            ),
+            1,
+        )
         self.assertEqual(
             len(re.findall(r"(?m)^%s$" % re.escape(builder.PS_MARKER), text)), 1
         )
@@ -143,7 +172,15 @@ class PackageBuilderTests(unittest.TestCase):
             ),
             1,
         )
-        self.assertLess(text.index(builder.PS_MARKER + "\n"), text.index(builder.PAYLOAD_MARKER + "\n"))
+        self.assertLess(
+            text.index(builder.BROKER_MARKER + "\n"),
+            text.index(builder.PS_MARKER + "\n"),
+        )
+        self.assertLess(
+            text.index(builder.PS_MARKER + "\n"),
+            text.index(builder.PAYLOAD_MARKER + "\n"),
+        )
+        self.assertIn("Write-Output 'broker'", broker)
         self.assertNotRegex(
             powershell,
             r"(?m)^%s$" % re.escape(builder.PAYLOAD_MARKER),
@@ -277,7 +314,7 @@ class PackageBuilderTests(unittest.TestCase):
     def test_inline_payload_marker_is_allowed_but_second_marker_line_is_rejected(self):
         # 实际 PS1 必须以内联字符串找到 BAT 中第二个标记。
         result = self.build()
-        _, powershell, _, _ = self.split_package(self.output.read_bytes())
+        _, _, powershell, _, _ = self.split_package(self.output.read_bytes())
         self.assertIn("$PayloadMarker = '__UPGRADE_PAYLOAD_BELOW__'", powershell)
         self.assertEqual(len(result.file_paths), len(self.expected_files()))
 
@@ -289,15 +326,27 @@ class PackageBuilderTests(unittest.TestCase):
             + builder.PAYLOAD_MARKER
             + "\n"
         )
-        package, sha256, stub, rendered_powershell = builder.render_package(
+        (
+            package,
+            sha256,
+            stub,
+            rendered_broker,
+            rendered_powershell,
+        ) = builder.render_package(
             "@echo off\nexit /b %RC%\n",
+            "Write-Output 'broker'\n",
             invalid_powershell,
             VERSION,
             zip_bytes,
         )
         with self.assertRaisesRegex(builder.PackageBuildError, "恰好出现一次"):
             builder.verify_package_bytes(
-                package, expected, sha256, stub, rendered_powershell
+                package,
+                expected,
+                sha256,
+                stub,
+                rendered_broker,
+                rendered_powershell,
             )
 
     def test_symbolic_link_is_rejected(self):
@@ -369,7 +418,13 @@ class PackageBuilderTests(unittest.TestCase):
         for template in invalid_templates:
             with self.subTest(template=template):
                 with self.assertRaisesRegex(builder.PackageBuildError, "恰好出现一次"):
-                    builder.render_package(valid_stub, template, VERSION, zip_bytes)
+                    builder.render_package(
+                        valid_stub,
+                        "Write-Output 'broker'\n",
+                        template,
+                        VERSION,
+                        zip_bytes,
+                    )
 
     def test_stub_must_end_with_exit_b_before_embedded_sections(self):
         zip_bytes = builder.build_deterministic_zip(self.expected_files())
@@ -380,6 +435,7 @@ class PackageBuilderTests(unittest.TestCase):
         with self.assertRaisesRegex(builder.PackageBuildError, "exit /b"):
             builder.render_package(
                 "@echo off\necho missing final exit\n",
+                "Write-Output 'broker'\n",
                 powershell,
                 VERSION,
                 zip_bytes,
@@ -510,6 +566,7 @@ class PackageBuilderTests(unittest.TestCase):
 
     def test_real_windows_templates_cover_cold_review_regressions(self):
         stub = (TOOL_DIR / "bat头部模板.bat").read_text(encoding="utf-8")
+        broker = (TOOL_DIR / "升级入口代理.ps1").read_text(encoding="utf-8")
         powershell = (TOOL_DIR / "升级主逻辑.ps1").read_text(encoding="utf-8")
         windows_ci = (
             TOOL_DIR.parents[1]
@@ -520,26 +577,41 @@ class PackageBuilderTests(unittest.TestCase):
 
         # UAC 子进程与普通用户服务都必须取得严格的正进程 ID。
         self.assertIn(
-            "-Verb RunAs -PassThru -ErrorAction Stop", stub
+            "-Verb RunAs -PassThru -ErrorAction Stop", broker
         )
-        self.assertIn("$null -eq $child -or [int]$child.Id -le 0", stub)
-        self.assertIn("$elevationStarted=$false", stub)
+        self.assertIn("$null -eq $child -or [int]$child.Id -le 0", broker)
+        self.assertIn("$elevationStarted = $false", broker)
         self.assertIn(
-            "$elevationStarted=$true; while(-not $child.HasExited)", stub
+            "$elevationStarted = $true", broker
         )
+        self.assertIn("while (-not $child.HasExited)", broker)
         self.assertIn(
-            "if(-not $elevationStarted -and $nativeCode -eq 1223)",
-            stub,
+            "if (-not $elevationStarted -and $nativeCode -eq 1223)",
+            broker,
         )
         self.assertNotIn(
             "if($nativeCode -eq 1223){exit 3}",
-            stub,
+            broker,
         )
-        self.assertIn("$child.Dispose()", stub)
-        self.assertIn("[System.ComponentModel.Win32Exception]", stub)
-        self.assertIn("$nativeCode -eq 1223", stub)
+        self.assertIn("$child.Dispose()", broker)
+        self.assertIn("[System.ComponentModel.Win32Exception]", broker)
+        self.assertIn("$nativeCode -eq 1223", broker)
+        self.assertIn("meetingroom_upgrade_launcher.log", broker)
+        self.assertIn("Write-LauncherLog", broker)
         self.assertIn("goto :elevation_failed", stub)
         self.assertIn(":elevation_failed", stub)
+        self.assertIn(":unexpected_launcher_failure", stub)
+        self.assertIn(":upgrade_not_completed", stub)
+        self.assertIn("错误代码：%UPGRADE_RC%", stub)
+        self.assertIn("升级没有正常完成，返回代码：%UPGRADE_RC%", stub)
+        for exit_code in ("1", "2", "4", "5"):
+            self.assertNotIn(
+                f'if "%UPGRADE_RC%"=="{exit_code}" exit /b',
+                stub,
+            )
+        self.assertIn("MEETING_ROOM_UPGRADE_LAUNCH_LOG", stub)
+        self.assertIn("where powershell.exe", stub)
+        self.assertIn(":powershell_unavailable", stub)
         self.assertIn("exit /b 1", stub)
 
         # 旧 .NET 缺少 ExternalAttributes 时必须能力探测并安全退化。
@@ -641,27 +713,43 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn("MEETING_ROOM_UPGRADE_BROKER_REQUEST", stub)
         self.assertIn("MEETING_ROOM_UPGRADE_DIRECT_ADMIN", stub)
         self.assertIn('if /i "%~1"=="--upgrade-broker"', stub)
-        self.assertIn("-ArgumentList $brokerArguments -Verb RunAs", stub)
-        self.assertIn("$responseTemp=$response+'.tmp.'+$PID", stub)
-        self.assertIn("[IO.File]::Move($responseTemp,$response)", stub)
-        self.assertIn("Remove-Item -LiteralPath $request", stub)
-        self.assertIn("$info=New-Object Diagnostics.ProcessStartInfo", stub)
-        self.assertIn("$info.UseShellExecute=$true", stub)
+        self.assertIn(builder.BROKER_MARKER, stub)
+        self.assertIn("升级入口代理为空", stub)
         self.assertIn(
-            "$info.WorkingDirectory=(Split-Path -Parent $python)",
+            "meetingroom_upgrade_launcher_{0}.ps1' -f "
+            "[Guid]::NewGuid().ToString('N')",
             stub,
         )
-        self.assertNotIn("$info.WorkingDirectory=$work", stub)
+        self.assertIn("-File $tmp -PackagePath $bat", stub)
+        self.assertIn("-ArgumentList $brokerArguments -Verb RunAs", broker)
+        self.assertIn("$responseTemp = $response + '.tmp.' + $PID", broker)
+        self.assertIn("[IO.File]::Move($responseTemp, $response)", broker)
+        self.assertIn("Remove-Item -LiteralPath $request", broker)
+        self.assertIn("$info = New-Object Diagnostics.ProcessStartInfo", broker)
+        self.assertIn("$info.UseShellExecute = $true", broker)
         self.assertIn(
-            "$info.WindowStyle=[Diagnostics.ProcessWindowStyle]::Minimized",
-            stub,
+            "$info.WorkingDirectory = Split-Path -Parent $python",
+            broker,
         )
-        self.assertIn("$launched=New-Object Diagnostics.Process", stub)
-        self.assertIn("if(-not $launched.Start())", stub)
-        self.assertIn("$launchedId=[int]$launched.Id", stub)
-        self.assertIn("if($launchedId -le 0)", stub)
-        self.assertIn("Stop-Process -Id $launchedId", stub)
-        self.assertIn("$launched.Dispose()", stub)
+        self.assertNotIn("$info.WorkingDirectory = $work", broker)
+        self.assertIn(
+            "$info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Minimized",
+            broker,
+        )
+        self.assertIn("$launched = New-Object Diagnostics.Process", broker)
+        self.assertIn("if (-not $launched.Start())", broker)
+        self.assertIn("$launchedId = [int]$launched.Id", broker)
+        self.assertIn("if ($launchedId -le 0)", broker)
+        self.assertIn("Stop-Process -Id $launchedId", broker)
+        self.assertIn("$launched.Dispose()", broker)
+        self.assertIn(
+            "[Management.Automation.Language.Parser]::ParseInput",
+            windows_ci,
+        )
+        self.assertIn(
+            "入口代理不能被 Windows PowerShell 5.1 解析",
+            windows_ci,
+        )
         self.assertIn("Request-UnelevatedServiceStart", powershell)
         self.assertIn("function Start-ServiceWithCurrentAdministratorToken", powershell)
         self.assertIn(

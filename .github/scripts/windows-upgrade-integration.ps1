@@ -627,6 +627,46 @@ Assert-True (
 ) "V$targetVersion 候选 BAT SHA-256 与发布清单不一致：$candidateSha256"
 $targetSchemaVersion = [string]$candidateManifestData.database_schema_version
 
+$candidateText = [IO.File]::ReadAllText(
+    $candidatePackage,
+    (New-Object Text.UTF8Encoding($false, $true))
+)
+$brokerMarker = [regex]::Matches(
+    $candidateText,
+    '(?m)^__UPGRADE_BROKER_PS1_BELOW__\r?$'
+)
+$mainMarker = [regex]::Matches(
+    $candidateText,
+    '(?m)^__UPGRADE_PS1_BELOW__\r?$'
+)
+Assert-True (
+    $brokerMarker.Count -eq 1 -and
+    $mainMarker.Count -eq 1 -and
+    $brokerMarker[0].Index -lt $mainMarker[0].Index
+) '候选 BAT 的入口代理边界无效'
+$brokerStart = $brokerMarker[0].Index + $brokerMarker[0].Length
+if ($brokerStart -lt $candidateText.Length -and
+    $candidateText[$brokerStart] -eq [char]10) {
+    $brokerStart++
+}
+$brokerSource = $candidateText.Substring(
+    $brokerStart,
+    $mainMarker[0].Index - $brokerStart
+)
+$brokerTokens = $null
+$brokerParseErrors = $null
+[void][Management.Automation.Language.Parser]::ParseInput(
+    $brokerSource,
+    [ref]$brokerTokens,
+    [ref]$brokerParseErrors
+)
+Assert-True (
+    @($brokerParseErrors).Count -eq 0
+) "入口代理不能被 Windows PowerShell 5.1 解析：$($brokerParseErrors -join '; ')"
+Assert-True (
+    $brokerSource.Contains('meetingroom_upgrade_launcher.log')
+) '入口代理缺少早期诊断日志'
+
 $verifyCandidateCode = @'
 import hashlib, json, pathlib, sys
 sys.path.insert(0, sys.argv[1])

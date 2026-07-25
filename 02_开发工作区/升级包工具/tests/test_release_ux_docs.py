@@ -65,6 +65,8 @@ class ReleaseUxDocumentationTests(unittest.TestCase):
                 "EDR",
                 "AppLocker",
                 "真实 Windows",
+                "正在请求管理员授权",
+                "meetingroom_upgrade_launcher.log",
             ),
         )
 
@@ -94,6 +96,8 @@ class ReleaseUxDocumentationTests(unittest.TestCase):
                 "VPN",
                 "DHCP",
                 "真实同事电脑访问",
+                "窗口均不会静默关闭",
+                "meetingroom_upgrade_launcher.log",
             ),
         )
 
@@ -129,6 +133,7 @@ class ReleaseUxDocumentationTests(unittest.TestCase):
                 "DHCP",
                 "物理断电",
                 "另一台同事电脑",
+                "入口日志",
             ),
         )
         self.assertIn(
