@@ -614,6 +614,37 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertIn(":powershell_unavailable", stub)
         self.assertIn("exit /b 1", stub)
 
+        # Windows 候选复核必须跟随打包接口，同时加载并校验入口代理。
+        verify_candidate = windows_ci[
+            windows_ci.index("$verifyCandidateCode = @'") :
+            windows_ci.index(
+                "Invoke-PythonCodeChecked -Python $hostPython "
+                "-Code $verifyCandidateCode"
+            )
+        ]
+        self.assertIn(
+            'pathlib.Path(sys.argv[1]) / "升级入口代理.ps1"',
+            verify_candidate,
+        )
+        self.assertIn("broker_text,", verify_candidate)
+        self.assertIn("expected_broker,", verify_candidate)
+        self.assertIn(
+            "builder.render_package(\n"
+            "        stub_text,\n"
+            "        broker_text,\n"
+            "        powershell_text,\n"
+            "        version,\n"
+            "        zip_bytes,\n"
+            "    )",
+            verify_candidate,
+        )
+        self.assertIn(
+            "expected_stub,\n"
+            "    expected_broker,\n"
+            "    expected_powershell,\n",
+            verify_candidate,
+        )
+
         # 旧 .NET 缺少 ExternalAttributes 时必须能力探测并安全退化。
         self.assertIn(
             "$entry.PSObject.Properties['ExternalAttributes']", powershell

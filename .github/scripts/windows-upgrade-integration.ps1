@@ -699,12 +699,28 @@ stub_text = builder._load_template(
     pathlib.Path(sys.argv[1]) / "bat头部模板.bat",
     "BAT 头部模板",
 )
+broker_text = builder._load_template(
+    pathlib.Path(sys.argv[1]) / "升级入口代理.ps1",
+    "PowerShell 入口代理模板",
+)
 powershell_text = builder._load_template(
     pathlib.Path(sys.argv[1]) / "升级主逻辑.ps1",
     "PowerShell 主逻辑模板",
 )
-rendered, rendered_zip_sha256, expected_stub, expected_powershell = (
-    builder.render_package(stub_text, powershell_text, version, zip_bytes)
+(
+    rendered,
+    rendered_zip_sha256,
+    expected_stub,
+    expected_broker,
+    expected_powershell,
+) = (
+    builder.render_package(
+        stub_text,
+        broker_text,
+        powershell_text,
+        version,
+        zip_bytes,
+    )
 )
 if rendered_zip_sha256 != manifest["payload_zip_sha256"]:
     raise SystemExit("rendered ZIP hash mismatch")
@@ -713,6 +729,7 @@ builder.verify_package_bytes(
     files,
     manifest["payload_zip_sha256"],
     expected_stub,
+    expected_broker,
     expected_powershell,
 )
 if rendered != package_bytes:
