@@ -12,7 +12,7 @@ permissions:
 jobs:
   windows-upgrade:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PYTHONUTF8: "1"
 
@@ -49,6 +49,40 @@ jobs:
         shell: powershell
         run: .\.github\scripts\windows-upgrade-integration.ps1
 
+      - name: Parse overlay integration script with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = (Resolve-Path ".github\scripts\windows-overlay-update-integration.ps1").Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "PowerShell parser reported $($errors.Count) error(s)."
+          }
+
+      - name: Run zero-argument overlay repair integration on elevated runner
+        shell: powershell
+        run: .\.github\scripts\windows-overlay-update-integration.ps1
+
+      - name: Record standard-user UAC as a separate manual gate
+        if: always()
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP "meeting-room-overlay-ci\evidence"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          @"
+          GitHub's hosted Windows runner is already elevated.
+          This workflow validates the real zero-argument BAT and updater after launch,
+          but it does not validate an ordinary user double-clicking in Explorer,
+          the UAC secure desktop/consent interaction, SmartScreen, antivirus, or group policy.
+          Those remain a separate manual Windows 10/11 acceptance gate before release.
+          "@ | Set-Content -LiteralPath (Join-Path $evidence "uac-manual-gate.txt") -Encoding utf8
+
       - name: Upload generated packages and upgrade logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -60,3 +94,7 @@ jobs:
             ${{ runner.temp }}\meeting-room-upgrade-ci\packages\*.bat
             ${{ runner.temp }}\meeting-room-upgrade-ci\release\**\发布清单.json
             ${{ runner.temp }}\meeting-room-upgrade-ci\installs\**\upgrade-*.log
+            ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.zip
+            ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.json
+            ${{ runner.temp }}\meeting-room-overlay-ci\installs\**\repair-update-*.log
+            ${{ runner.temp }}\meeting-room-overlay-ci\evidence\**
