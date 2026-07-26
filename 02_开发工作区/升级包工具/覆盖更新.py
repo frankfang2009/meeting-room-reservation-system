@@ -605,6 +605,7 @@ class ExclusiveLock:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.handle: Optional[Any] = None
+        self.original_bytes: Optional[bytes] = None
 
     def __enter__(self) -> "ExclusiveLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -613,7 +614,8 @@ class ExclusiveLock:
         handle = self.path.open("a+b")
         try:
             handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
+            original_size = handle.tell()
+            if original_size == 0:
                 handle.write(b"\0")
                 handle.flush()
             handle.seek(0)
@@ -625,8 +627,11 @@ class ExclusiveLock:
                 import fcntl
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handle.seek(0)
+            self.original_bytes = handle.read(original_size)
         except (OSError, BlockingIOError) as error:
             handle.close()
+            self.original_bytes = None
             raise UpdateBusy("另一个修复更新正在运行") from error
         self.handle = handle
         return self
@@ -1566,6 +1571,7 @@ def _archive_legacy_residue(
     log: EventLog,
     *,
     include_locked_legacy_lock: bool = False,
+    locked_legacy_lock_bytes: Optional[bytes] = None,
 ) -> None:
     legacy_items: list[Path] = []
     for name in (LEGACY_STATE_NAME,):
@@ -1573,9 +1579,10 @@ def _archive_legacy_residue(
         if path.exists():
             legacy_items.append(path)
     if include_locked_legacy_lock:
+        if locked_legacy_lock_bytes is None:
+            raise UpdateError("旧升级锁证据没有从已持有的锁句柄中捕获")
         legacy_lock = program_root / LEGACY_LOCK_NAME
-        if legacy_lock.exists():
-            legacy_items.append(legacy_lock)
+        legacy_items.append(legacy_lock)
     legacy_items.extend(
         path
         for path in program_root.glob(".版本.txt.upgrade-*.tmp")
@@ -1597,7 +1604,9 @@ def _archive_legacy_residue(
         if destination.exists():
             raise UpdateError(f"旧升级残留归档目标已经存在：{destination}")
         if path.name == LEGACY_LOCK_NAME:
-            shutil.copy2(path, destination)
+            if locked_legacy_lock_bytes is None:
+                raise UpdateError("旧升级锁归档内容缺失")
+            _atomic_write(destination, locked_legacy_lock_bytes)
         else:
             os.replace(str(path), str(destination))
         log.write(f"旧升级残留已保留到：{destination}", "WARN")
@@ -1823,6 +1832,7 @@ class RepairUpdater:
             if path.exists():
                 _assert_plain_path(path, description, directory=False)
         self.legacy_lock_preexisted = self.legacy_lock_path.exists()
+        self.legacy_lock_evidence: Optional[bytes] = None
         if _is_reparse_or_link(self.rollback_root):
             raise UpdateError("修复事务回滚目录不能是链接或重解析点")
         if self.rollback_root.exists():
@@ -1879,10 +1889,12 @@ class RepairUpdater:
             self.program_root, snapshot / "legacy-evidence"
         )
         if self.legacy_lock_preexisted:
+            if self.legacy_lock_evidence is None:
+                raise UpdateError("旧升级锁证据没有从已持有的锁句柄中捕获")
             (snapshot / "legacy-evidence").mkdir(parents=True, exist_ok=True)
-            shutil.copy2(
-                self.legacy_lock_path,
+            _atomic_write(
                 snapshot / "legacy-evidence" / LEGACY_LOCK_NAME,
+                self.legacy_lock_evidence,
             )
         _atomic_write(
             snapshot / "snapshot-metadata.json",
@@ -1967,6 +1979,7 @@ class RepairUpdater:
             self.program_root,
             self.log,
             include_locked_legacy_lock=self.legacy_lock_preexisted,
+            locked_legacy_lock_bytes=self.legacy_lock_evidence,
         )
         _cleanup_repair_staging(self.program_root, self.log)
 
@@ -2195,13 +2208,22 @@ class RepairUpdater:
         own_lock_acquired = False
         legacy_lock_acquired = False
         stop_attempted = False
+        self.legacy_lock_evidence = None
         try:
             with contextlib.ExitStack() as locks:
                 locks.enter_context(ExclusiveLock(self.lock_path))
                 own_lock_acquired = True
                 try:
-                    locks.enter_context(ExclusiveLock(self.legacy_lock_path))
+                    legacy_lock = locks.enter_context(
+                        ExclusiveLock(self.legacy_lock_path)
+                    )
                     legacy_lock_acquired = True
+                    if self.legacy_lock_preexisted:
+                        if legacy_lock.original_bytes is None:
+                            raise UpdateError(
+                                "旧升级锁证据没有从已持有的锁句柄中捕获"
+                            )
+                        self.legacy_lock_evidence = legacy_lock.original_bytes
                 except UpdateBusy as error:
                     raise UpdateBusy(
                         "旧 V1.0.2 升级器仍在运行，拒绝并发修复"
@@ -2241,6 +2263,7 @@ class RepairUpdater:
                                 self.program_root,
                                 self.log,
                                 include_locked_legacy_lock=self.legacy_lock_preexisted,
+                                locked_legacy_lock_bytes=self.legacy_lock_evidence,
                             )
                         self._finish_success(previous_state)
                         return
@@ -2284,6 +2307,7 @@ class RepairUpdater:
                                 self.program_root,
                                 self.log,
                                 include_locked_legacy_lock=self.legacy_lock_preexisted,
+                                locked_legacy_lock_bytes=self.legacy_lock_evidence,
                             )
                         self._finish_success(previous_state)
                         return
@@ -2393,6 +2417,7 @@ class RepairUpdater:
                             self.program_root,
                             self.log,
                             include_locked_legacy_lock=self.legacy_lock_preexisted,
+                            locked_legacy_lock_bytes=self.legacy_lock_evidence,
                         )
                         self._finish_success(committed_state)
                         self.log.write(

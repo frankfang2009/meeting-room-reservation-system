@@ -65,13 +65,13 @@ V1.0.2-r1 不改变业务版本、数据库结构或 V1.0.2 功能内容，只�
   发布暂存\V1.0.2-r1\V1.0.2-r1-发布清单.json
 
 最终 ZIP SHA-256：
-  9cf7aeec8d1b61da4d954610e8e8877627f89a85c1f2d49fcb55bb4d576da6d2
+  bca0802d4776dfa213abcb748f402db61cd87f1a71d7fb5672c4c566fb4dcb08
 
 最终清单 SHA-256：
-  0fd05d1c9e225c1ccee87ceccf09dd8382d520cc204053d31bc8188e364c71dc
+  9a5cc36e78d8a542eb20fb1e5c750f390689133a782adbf7e096b2e442589778
 
 最终 ZIP 大小：
-  11832286 字节
+  11832515 字节
 
 
 验证状态

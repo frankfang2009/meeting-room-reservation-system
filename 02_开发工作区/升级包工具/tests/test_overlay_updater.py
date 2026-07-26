@@ -274,7 +274,26 @@ class OverlayUpdaterTests(unittest.TestCase):
         legacy_rollback.parent.mkdir(parents=True)
         legacy_rollback.write_bytes(b"legacy-evidence-must-survive")
 
-        self._run(install_root)
+        original_copy2 = updater.shutil.copy2
+
+        def reject_reopening_locked_legacy_file(
+            source: object,
+            destination: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            if Path(source) == program_root / updater.LEGACY_LOCK_NAME:
+                raise PermissionError(
+                    "simulated Windows denial for a separately opened locked file"
+                )
+            return original_copy2(source, destination, *args, **kwargs)
+
+        with mock.patch.object(
+            updater.shutil,
+            "copy2",
+            side_effect=reject_reopening_locked_legacy_file,
+        ):
+            self._run(install_root)
 
         self._assert_target_installed(install_root)
         self.assertEqual(_tree_bytes(data_root), data_before)
@@ -292,7 +311,10 @@ class OverlayUpdaterTests(unittest.TestCase):
         )
         self.assertEqual(len(archives), 1)
         self.assertTrue((archives[0] / updater.LEGACY_STATE_NAME).is_file())
-        self.assertTrue((archives[0] / updater.LEGACY_LOCK_NAME).is_file())
+        self.assertEqual(
+            (archives[0] / updater.LEGACY_LOCK_NAME).read_bytes(),
+            b"legacy-lock",
+        )
 
     def test_partial_target_write_failure_strictly_stops_at_v101(
         self,

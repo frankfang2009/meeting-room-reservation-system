@@ -29,6 +29,14 @@ class OverlayPackageTests(unittest.TestCase):
         cls.temporary_directory.cleanup()
 
     def test_release_contains_loadable_frozen_bundle(self) -> None:
+        attributes = (
+            TOOL_DIR.parents[1] / ".gitattributes"
+        ).read_text(encoding="utf-8").splitlines()
+        self.assertIn(
+            "02_开发工作区/升级包工具/输出-待实机验收/"
+            "V1.0.2-发布清单.json text eol=lf",
+            attributes,
+        )
         manifest = json.loads(
             self.first.manifest_path.read_text(encoding="utf-8")
         )
