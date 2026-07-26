@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import hmac
+import ipaddress
+import json
 import logging
 import os
+import re
 import secrets
 import sqlite3
+import threading
+import time
+import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from flask import (
     Flask,
@@ -16,9 +24,11 @@ from flask import (
     current_app,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
+    Response,
     session,
     url_for,
 )
@@ -27,8 +37,30 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = PROJECT_DIR / "data"
+NETWORK_STATE_FILENAME = "局域网访问地址状态.json"
+INSTALL_ID_FILENAME = "install_id"
+NETWORK_STATE_SCHEMA = 1
+NETWORK_STATE_MAX_BYTES = 64 * 1024
+IDENTITY_RACE_RETRY_COUNT = 20
+IDENTITY_RACE_RETRY_SECONDS = 0.025
+_NETWORK_STATE_LOCK = threading.RLock()
+
+
+def _static_revision() -> str:
+    digest = hashlib.sha256()
+    try:
+        for name in ("app.css", "app.js"):
+            digest.update((PROJECT_DIR / "static" / name).read_bytes())
+    except OSError:
+        return "dev"
+    return digest.hexdigest()[:12]
+
+
+STATIC_REVISION = _static_revision()
 
 SCHEMA_VERSION = 1
+# 迁移函数内部禁止调用 commit() 或 executescript()；它们会提前结束框架事务，
+# 使单次迁移无法在失败时完整回滚，只能依赖升级器的整库快照恢复。
 MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
 
 START_TIMES = tuple(
@@ -38,6 +70,15 @@ START_TIMES = tuple(
 END_TIMES = tuple(
     f"{minutes // 60:02d}:{minutes % 60:02d}"
     for minutes in range(9 * 60, 17 * 60 + 31, 30)
+)
+WEEKDAY_LABELS = (
+    "星期一",
+    "星期二",
+    "星期三",
+    "星期四",
+    "星期五",
+    "星期六",
+    "星期日",
 )
 
 
@@ -49,18 +90,59 @@ class ReservationUnavailable(Exception):
     """Raised when the selected room or current account changes during booking."""
 
 
-def _load_or_create_secret(path: Path) -> str:
+class ReservationStarted(Exception):
+    """Raised when a requested reservation reaches its start time before commit."""
+
+
+def _write_text_exclusive(path: Path, value: str) -> None:
+    """Create a complete first-run identity without ever replacing a winner."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-        if value:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(value)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _load_or_create_secret(path: Path, _wait_for_writer: bool = False) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    attempts = IDENTITY_RACE_RETRY_COUNT if _wait_for_writer else 1
+    for attempt in range(attempts):
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            value = None
+        except OSError as error:
+            raise RuntimeError("无法读取系统会话密钥") from error
+
+        if value is not None and re.fullmatch(r"[0-9a-f]{64}", value):
             return value
-    except FileNotFoundError:
-        pass
+        if _wait_for_writer and attempt + 1 < attempts:
+            time.sleep(IDENTITY_RACE_RETRY_SECONDS)
+            continue
+        if value is not None:
+            problem = "为空" if not value else "已损坏"
+            raise RuntimeError(
+                f"系统会话密钥{problem}，已停止启动以避免登录失效"
+            )
+        if _wait_for_writer:
+            raise RuntimeError("等待并发创建系统会话密钥超时")
+        break
 
     value = secrets.token_hex(32)
-    _atomic_write_text(path, value)
-    persisted = path.read_text(encoding="utf-8").strip()
+    try:
+        _write_text_exclusive(path, value)
+    except FileExistsError:
+        return _load_or_create_secret(path, _wait_for_writer=True)
+    try:
+        persisted = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise RuntimeError("无法校验系统会话密钥") from error
     if not persisted:
         raise RuntimeError("无法创建系统会话密钥")
     return persisted
@@ -68,7 +150,9 @@ def _load_or_create_secret(path: Path) -> str:
 
 def _atomic_write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
     try:
         descriptor = os.open(
             temporary,
@@ -87,6 +171,468 @@ def _atomic_write_text(path: Path, value: str) -> None:
             pass
 
 
+def _canonical_uuid4(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or len(value) != 36:
+        return None
+    try:
+        parsed = uuid.UUID(value)
+    except (AttributeError, ValueError):
+        return None
+    canonical = str(parsed)
+    if (
+        value != canonical
+        or parsed.version != 4
+        or parsed.variant != uuid.RFC_4122
+    ):
+        return None
+    return canonical
+
+
+def _load_or_create_install_id(
+    path: Path,
+    _wait_for_writer: bool = False,
+) -> str:
+    """Return one durable installation identity without silently replacing it."""
+
+    attempts = IDENTITY_RACE_RETRY_COUNT if _wait_for_writer else 1
+    for attempt in range(attempts):
+        try:
+            if path.stat().st_size > 128:
+                raise RuntimeError("安装标识文件过大")
+            value = path.read_text(encoding="utf-8").strip()
+            exists = True
+        except FileNotFoundError:
+            value = ""
+            exists = False
+        except OSError as error:
+            raise RuntimeError("无法读取安装标识") from error
+
+        if exists and value:
+            try:
+                parsed = uuid.UUID(value)
+            except (AttributeError, ValueError):
+                parsed = None
+            canonical = str(parsed) if parsed is not None else None
+            accepted = _canonical_uuid4(value)
+            if accepted is not None:
+                return accepted
+        if _wait_for_writer and attempt + 1 < attempts:
+            time.sleep(IDENTITY_RACE_RETRY_SECONDS)
+            continue
+        if exists:
+            if not value:
+                raise RuntimeError("安装标识为空，已停止启动以避免识别错误")
+            problem = "已损坏" if canonical is None else "格式无效"
+            raise RuntimeError(
+                f"安装标识{problem}，已停止启动以避免识别错误"
+            )
+        if _wait_for_writer:
+            raise RuntimeError("等待并发创建安装标识超时")
+        break
+
+    value = str(uuid.uuid4())
+    try:
+        _write_text_exclusive(path, value + "\n")
+        persisted = path.read_text(encoding="utf-8").strip()
+    except FileExistsError:
+        return _load_or_create_install_id(path, _wait_for_writer=True)
+    except OSError as error:
+        raise RuntimeError("无法创建安装标识") from error
+    if persisted != value:
+        raise RuntimeError("安装标识写入后校验失败")
+    return value
+
+
+def _canonical_lan_url(value: Any) -> Optional[str]:
+    """Accept only an explicit HTTP URL for a usable private IPv4 address."""
+
+    if not isinstance(value, str) or len(value) > 128:
+        return None
+    try:
+        parsed = urlsplit(value)
+        address = ipaddress.ip_address(parsed.hostname or "")
+        port = parsed.port
+    except (ValueError, TypeError):
+        return None
+    if (
+        parsed.scheme != "http"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or address.version != 4
+        or not any(
+            address in network
+            for network in (
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+            )
+        )
+        or address.is_loopback
+        or address.is_link_local
+        or address in ipaddress.ip_network("198.18.0.0/15")
+        or port is None
+        or not (1 <= port <= 65535)
+    ):
+        return None
+    return f"http://{address}:{port}"
+
+
+def _validate_network_state(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {
+        "schema",
+        "last_acknowledged_url",
+        "last_observed_url",
+        "pending",
+    }:
+        raise ValueError("局域网地址状态结构无效")
+    if (
+        not isinstance(value["schema"], int)
+        or isinstance(value["schema"], bool)
+        or value["schema"] != NETWORK_STATE_SCHEMA
+    ):
+        raise ValueError("局域网地址状态版本无效")
+
+    acknowledged = _canonical_lan_url(value["last_acknowledged_url"])
+    observed = _canonical_lan_url(value["last_observed_url"])
+    if acknowledged is None or observed is None:
+        raise ValueError("局域网地址状态包含无效网址")
+
+    pending_value = value["pending"]
+    pending: Optional[dict[str, str]]
+    if pending_value is None:
+        if acknowledged != observed:
+            raise ValueError("局域网地址状态前后不一致")
+        pending = None
+    else:
+        if not isinstance(pending_value, dict):
+            raise ValueError("局域网地址待确认状态无效")
+        kind = pending_value.get("kind")
+        if kind == "changed":
+            if set(pending_value) != {
+                "kind",
+                "old_url",
+                "new_url",
+                "detected_at",
+            }:
+                raise ValueError("局域网地址变化状态无效")
+            old_url = _canonical_lan_url(pending_value["old_url"])
+            new_url = _canonical_lan_url(pending_value["new_url"])
+            if (
+                old_url is None
+                or new_url is None
+                or old_url == new_url
+                or old_url != acknowledged
+                or new_url != observed
+            ):
+                raise ValueError("局域网地址变化内容无效")
+        elif kind == "verify":
+            if set(pending_value) != {
+                "kind",
+                "new_url",
+                "detected_at",
+            }:
+                raise ValueError("局域网地址核对状态无效")
+            old_url = None
+            new_url = _canonical_lan_url(pending_value["new_url"])
+            if (
+                new_url is None
+                or new_url != observed
+                or acknowledged != observed
+            ):
+                raise ValueError("局域网地址核对内容无效")
+        else:
+            raise ValueError("局域网地址待确认类型无效")
+
+        detected_at = pending_value["detected_at"]
+        if not isinstance(detected_at, str) or len(detected_at) > 64:
+            raise ValueError("局域网地址变化时间无效")
+        try:
+            parsed_detected_at = datetime.fromisoformat(detected_at)
+        except ValueError as error:
+            raise ValueError("局域网地址变化时间无效") from error
+        if parsed_detected_at.utcoffset() is None:
+            raise ValueError("局域网地址变化时间缺少时区")
+        pending = {
+            "kind": kind,
+            "new_url": new_url,
+            "detected_at": detected_at,
+        }
+        if old_url is not None:
+            pending["old_url"] = old_url
+
+    return {
+        "schema": NETWORK_STATE_SCHEMA,
+        "last_acknowledged_url": acknowledged,
+        "last_observed_url": observed,
+        "pending": pending,
+    }
+
+
+def _read_network_state(path: Path) -> dict[str, Any]:
+    if path.stat().st_size > NETWORK_STATE_MAX_BYTES:
+        raise ValueError("局域网地址状态文件过大")
+    return _validate_network_state(json.loads(path.read_text(encoding="utf-8")))
+
+
+def _write_network_state(path: Path, state: dict[str, Any]) -> None:
+    validated = _validate_network_state(state)
+    _atomic_write_text(
+        path,
+        json.dumps(validated, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
+
+
+def _latest_logged_lan_url(
+    log_dir: Path,
+    different_from: Optional[str] = None,
+) -> Optional[str]:
+    """Return the newest valid historic address that is useful as a baseline."""
+
+    log_paths = [log_dir / f"server.log.{index}" for index in range(5, 0, -1)]
+    log_paths.append(log_dir / "server.log")
+    latest: Optional[str] = None
+    pattern = re.compile(r"局域网地址=(http://[^\s，]+)")
+    for path in log_paths:
+        try:
+            if path.stat().st_size > 4 * 1024 * 1024:
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+        except (FileNotFoundError, OSError):
+            continue
+        for candidate in pattern.findall(content):
+            canonical = _canonical_lan_url(candidate)
+            if canonical is not None and canonical != different_from:
+                latest = canonical
+    return latest
+
+
+def observe_network_url(
+    state_path: Path,
+    current_url: Any,
+    log_dir: Optional[Path] = None,
+    detected_at: Optional[str] = None,
+) -> dict[str, Any]:
+    with _NETWORK_STATE_LOCK:
+        return _observe_network_url_unlocked(
+            state_path,
+            current_url,
+            log_dir=log_dir,
+            detected_at=detected_at,
+        )
+
+
+def _observe_network_url_unlocked(
+    state_path: Path,
+    current_url: Any,
+    log_dir: Optional[Path] = None,
+    detected_at: Optional[str] = None,
+) -> dict[str, Any]:
+    """Persist a LAN URL observation; failures are warnings, never startup blockers."""
+
+    canonical = _canonical_lan_url(current_url)
+    if canonical is None:
+        logging.warning("未获得有效的局域网地址，不更新地址状态：%r", current_url)
+        return {"pending": None, "updated": False, "error": "invalid-current-url"}
+
+    try:
+        state = _read_network_state(state_path)
+    except FileNotFoundError:
+        state = None
+        recovery_mode = "missing"
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        logging.warning("局域网地址状态无效，将从可信历史重新建立：%s", error)
+        state = None
+        recovery_mode = "damaged"
+    else:
+        recovery_mode = "valid"
+
+    moment = detected_at or datetime.now().astimezone().isoformat(timespec="seconds")
+    if state is None:
+        if recovery_mode == "missing":
+            baseline = _latest_logged_lan_url(log_dir) if log_dir else None
+            baseline = baseline or canonical
+            pending = (
+                {
+                    "kind": "changed",
+                    "old_url": baseline,
+                    "new_url": canonical,
+                    "detected_at": moment,
+                }
+                if baseline != canonical
+                else None
+            )
+        else:
+            baseline = (
+                _latest_logged_lan_url(log_dir, different_from=canonical)
+                if log_dir
+                else None
+            )
+            if baseline is None:
+                baseline = canonical
+                pending = {
+                    "kind": "verify",
+                    "new_url": canonical,
+                    "detected_at": moment,
+                }
+            else:
+                pending = {
+                    "kind": "changed",
+                    "old_url": baseline,
+                    "new_url": canonical,
+                    "detected_at": moment,
+                }
+        state = {
+            "schema": NETWORK_STATE_SCHEMA,
+            "last_acknowledged_url": baseline,
+            "last_observed_url": canonical,
+            "pending": pending,
+        }
+    else:
+        acknowledged = state["last_acknowledged_url"]
+        previous_pending = state["pending"]
+        if previous_pending and previous_pending["kind"] == "verify":
+            previous_observed = state["last_observed_url"]
+            if canonical == previous_observed:
+                pending = previous_pending
+            else:
+                acknowledged = previous_observed
+                state["last_acknowledged_url"] = previous_observed
+                pending = {
+                    "kind": "changed",
+                    "old_url": previous_observed,
+                    "new_url": canonical,
+                    "detected_at": moment,
+                }
+        elif canonical == acknowledged:
+            pending = None
+        else:
+            pending = {
+                "kind": "changed",
+                "old_url": acknowledged,
+                "new_url": canonical,
+                "detected_at": (
+                    previous_pending["detected_at"]
+                    if (
+                        previous_pending
+                        and previous_pending["kind"] == "changed"
+                        and previous_pending["new_url"] == canonical
+                    )
+                    else moment
+                ),
+            }
+        state["last_observed_url"] = canonical
+        state["pending"] = pending
+
+    try:
+        _write_network_state(state_path, state)
+    except (OSError, ValueError) as error:
+        logging.warning("无法保存局域网地址状态，本次启动继续：%s", error)
+        return {"pending": state["pending"], "updated": False, "error": "write-failed"}
+    return {"pending": state["pending"], "updated": True, "error": None}
+
+
+def network_address_status(state_path: Path) -> Optional[dict[str, Any]]:
+    with _NETWORK_STATE_LOCK:
+        try:
+            state = _read_network_state(state_path)
+        except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+            return None
+        pending = state["pending"]
+        return {
+            "last_observed_url": state["last_observed_url"],
+            "pending": dict(pending) if pending else None,
+        }
+
+
+def _validated_pending_notice(value: Any) -> Optional[dict[str, str]]:
+    if not isinstance(value, dict):
+        return None
+    kind = value.get("kind")
+    new_url = value.get("new_url")
+    if kind == "changed":
+        acknowledged = value.get("old_url")
+    elif kind == "verify":
+        acknowledged = new_url
+    else:
+        return None
+    try:
+        state = _validate_network_state(
+            {
+                "schema": NETWORK_STATE_SCHEMA,
+                "last_acknowledged_url": acknowledged,
+                "last_observed_url": new_url,
+                "pending": value,
+            }
+        )
+    except ValueError:
+        return None
+    pending = state["pending"]
+    return dict(pending) if pending else None
+
+
+def pending_network_change(state_path: Path) -> Optional[dict[str, str]]:
+    status = network_address_status(state_path)
+    return status["pending"] if status else None
+
+
+def acknowledge_network_fallback(
+    state_path: Path,
+    pending_value: Any,
+    expected_url: str,
+) -> bool:
+    with _NETWORK_STATE_LOCK:
+        pending = _validated_pending_notice(pending_value)
+        expected = _canonical_lan_url(expected_url)
+        if (
+            pending is None
+            or expected is None
+            or expected != pending["new_url"]
+        ):
+            return False
+        final_state = {
+            "schema": NETWORK_STATE_SCHEMA,
+            "last_acknowledged_url": expected,
+            "last_observed_url": expected,
+            "pending": None,
+        }
+        try:
+            _write_network_state(state_path, final_state)
+        except (OSError, ValueError):
+            logging.exception("管理员确认内存中的局域网地址提醒时保存失败")
+            return False
+        return True
+
+
+def acknowledge_network_change(
+    state_path: Path,
+    expected_url: Optional[str] = None,
+) -> bool:
+    with _NETWORK_STATE_LOCK:
+        try:
+            state = _read_network_state(state_path)
+        except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+            return False
+        pending = state["pending"]
+        if pending is None:
+            return True
+        if expected_url is not None:
+            expected = _canonical_lan_url(expected_url)
+            if expected is None or expected != pending["new_url"]:
+                return False
+        state["last_acknowledged_url"] = pending["new_url"]
+        state["last_observed_url"] = pending["new_url"]
+        state["pending"] = None
+        try:
+            _write_network_state(state_path, state)
+        except (OSError, ValueError):
+            logging.exception("管理员确认局域网地址时保存失败")
+            return False
+        return True
+
+
 def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
     app = Flask(__name__)
 
@@ -97,12 +643,28 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
     )
     data_dir.mkdir(parents=True, exist_ok=True)
     database = supplied_config.get("DATABASE", str(data_dir / "reservation.db"))
+    persistent_data_dir = Path(database).parent
     secret_key = supplied_config.get("SECRET_KEY") or _load_or_create_secret(
         data_dir / ".secret_key"
+    )
+    install_id_file = persistent_data_dir / INSTALL_ID_FILENAME
+    install_id = supplied_config.get("INSTALL_ID") or _load_or_create_install_id(
+        install_id_file
     )
     app.config.from_mapping(
         DATABASE=database,
         SECRET_KEY=secret_key,
+        INSTALL_ID=install_id,
+        INSTALL_ID_FILE=str(install_id_file),
+        NETWORK_STATE_FILE=str(persistent_data_dir / NETWORK_STATE_FILENAME),
+        CURRENT_LAN_URL=None,
+        NETWORK_WARNING_FALLBACK=None,
+        NETWORK_WARNING_PERSIST_FAILED=False,
+        SERVER_MODE=(
+            "upgrade-check"
+            if os.environ.get("MEETING_ROOM_UPGRADE_CHECK") == "1"
+            else "normal"
+        ),
         INITIAL_ADMIN_PASSWORD=os.environ.get("MEETING_ROOM_INITIAL_ADMIN_PASSWORD"),
         INITIAL_CREDENTIAL_FILE=str(
             Path(database).parent / "首次登录账号密码.txt"
@@ -476,9 +1038,44 @@ def admin_write_required(view: Callable[..., Any]) -> Callable[..., Any]:
 def _register_template_helpers(app: Flask) -> None:
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
+        user = _current_user()
+        network_address = None
+        if (
+            user
+            and user["is_admin"]
+            and current_app.config["SERVER_MODE"] == "normal"
+        ):
+            stored_status = network_address_status(
+                Path(current_app.config["NETWORK_STATE_FILE"])
+            )
+            current_lan_url = _canonical_lan_url(
+                current_app.config.get("CURRENT_LAN_URL")
+            )
+            stored_pending = (
+                stored_status["pending"] if stored_status else None
+            )
+            fallback_pending = _validated_pending_notice(
+                current_app.config.get("NETWORK_WARNING_FALLBACK")
+            )
+            persistence_failed = bool(
+                current_app.config.get("NETWORK_WARNING_PERSIST_FAILED")
+                and fallback_pending
+            )
+            network_address = {
+                "current_url": current_lan_url,
+                "pending": (
+                    fallback_pending if persistence_failed else stored_pending
+                ),
+                "persistence_failed": persistence_failed,
+            }
         return {
-            "current_user": _current_user(),
+            "current_user": user,
+            "network_address": network_address,
+            "network_change": (
+                network_address["pending"] if network_address else None
+            ),
             "csrf_token": csrf_token,
+            "static_revision": STATIC_REVISION,
         }
 
 
@@ -501,6 +1098,14 @@ def _parse_date(value: str) -> Optional[str]:
         return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
     except (TypeError, ValueError):
         return None
+
+
+def _local_now() -> datetime:
+    provider = current_app.config.get("NOW_PROVIDER")
+    value = provider() if provider else datetime.now()
+    if not isinstance(value, datetime):
+        raise RuntimeError("NOW_PROVIDER 必须返回 datetime")
+    return value
 
 
 def _parse_int(value: Any, default: Optional[int] = None) -> Optional[int]:
@@ -539,7 +1144,7 @@ def _build_slot_map(reservations: list[dict[str, Any]]) -> dict[str, dict[str, A
 
 
 def _active_reservation_filter() -> tuple[str, tuple[str, str, str]]:
-    now = datetime.now()
+    now = _local_now()
     return (
         "(reserve_date > ? OR (reserve_date = ? AND end_time > ?))",
         (now.date().isoformat(), now.date().isoformat(), now.strftime("%H:%M")),
@@ -553,10 +1158,81 @@ def _reservation_display_status(reservation: dict[str, Any], now: datetime) -> s
         f"{reservation['reserve_date']} {reservation['end_time']}",
         "%Y-%m-%d %H:%M",
     )
-    return "已完成" if end_at < now else "待使用"
+    return "已完成" if end_at <= now else "待使用"
 
 
 def _register_routes(app: Flask) -> None:
+    @app.get("/healthz")
+    def healthz() -> Any:
+        return jsonify(
+            {
+                "ok": True,
+                "install_id": current_app.config["INSTALL_ID"],
+                "mode": current_app.config["SERVER_MODE"],
+                "lan_url": (
+                    _canonical_lan_url(
+                        current_app.config.get("CURRENT_LAN_URL")
+                    )
+                    if current_app.config["SERVER_MODE"] == "normal"
+                    else None
+                ),
+            }
+        )
+
+    @app.get("/network-address-notice.js")
+    def network_address_notice_script() -> Response:
+        script = r"""
+(function () {
+    "use strict";
+    document.querySelectorAll("[data-copy-network-url]").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var value = button.dataset.copyNetworkUrl || "";
+            var defaultLabel = button.dataset.copyLabel || button.textContent.trim();
+            function showCopied() {
+                button.textContent = "已复制";
+                window.setTimeout(function () {
+                    button.textContent = defaultLabel;
+                }, 1800);
+            }
+            function showCopyFailed() {
+                button.textContent = "复制失败，请手动复制";
+                window.setTimeout(function () {
+                    button.textContent = defaultLabel;
+                }, 3000);
+            }
+            function fallbackCopy() {
+                var input = document.createElement("textarea");
+                input.value = value;
+                input.setAttribute("readonly", "");
+                input.style.position = "fixed";
+                input.style.opacity = "0";
+                document.body.appendChild(input);
+                input.select();
+                try {
+                    if (document.execCommand("copy")) {
+                        showCopied();
+                    } else {
+                        showCopyFailed();
+                    }
+                } catch (_error) {
+                    showCopyFailed();
+                }
+                input.remove();
+            }
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(value).then(showCopied).catch(fallbackCopy);
+                return;
+            }
+            fallbackCopy();
+        });
+    });
+}());
+""".strip()
+        return current_app.response_class(
+            script,
+            mimetype="application/javascript",
+        )
+
     @app.route("/login", methods=["GET", "POST"])
     def login() -> Any:
         if request.method == "POST":
@@ -582,12 +1258,73 @@ def _register_routes(app: Flask) -> None:
         flash("已退出登录", "info")
         return redirect(url_for("login"))
 
+    @app.post("/admin/network-address/acknowledge")
+    @admin_required
+    def acknowledge_network_address() -> Any:
+        state_path = Path(current_app.config["NETWORK_STATE_FILE"])
+        expected_url = request.form.get("expected_url", "")
+        fallback_pending = _validated_pending_notice(
+            current_app.config.get("NETWORK_WARNING_FALLBACK")
+        )
+        if (
+            current_app.config.get("NETWORK_WARNING_PERSIST_FAILED")
+            and fallback_pending
+        ):
+            acknowledged = acknowledge_network_fallback(
+                state_path,
+                fallback_pending,
+                expected_url,
+            )
+        else:
+            acknowledged = acknowledge_network_change(
+                state_path,
+                expected_url=expected_url,
+            )
+        if acknowledged:
+            current_app.config["NETWORK_WARNING_FALLBACK"] = None
+            current_app.config["NETWORK_WARNING_PERSIST_FAILED"] = False
+            flash("新网址已确认，提醒已关闭", "success")
+        else:
+            pending = pending_network_change(state_path)
+            if (
+                pending
+                and expected_url
+                and pending["new_url"] != expected_url
+            ):
+                flash("网址刚刚再次变化，请核对最新网址后再确认", "warning")
+            else:
+                flash("暂时无法保存确认，请稍后重试", "warning")
+        return redirect(url_for("index"))
+
     @app.route("/")
     @login_required
     def index() -> Any:
+        now = _local_now()
         requested_date = request.args.get("date", "")
-        current_date = _parse_date(requested_date) or date.today().isoformat()
+        current_date = _parse_date(requested_date) or now.date().isoformat()
         current_date_obj = datetime.strptime(current_date, "%Y-%m-%d").date()
+
+        past_slots: set[str] = set()
+        current_slot: Optional[str] = None
+        focus_slot: Optional[str] = None
+        if current_date_obj < now.date():
+            past_slots.update(START_TIMES)
+        elif current_date_obj == now.date():
+            for slot in START_TIMES:
+                slot_start = datetime.strptime(
+                    f"{current_date} {slot}", "%Y-%m-%d %H:%M"
+                )
+                if slot_start <= now:
+                    past_slots.add(slot)
+                if slot_start <= now < slot_start + timedelta(minutes=30):
+                    current_slot = slot
+
+            if current_slot:
+                focus_slot = current_slot
+            elif now.time() < datetime.strptime(START_TIMES[0], "%H:%M").time():
+                focus_slot = START_TIMES[0]
+            else:
+                focus_slot = START_TIMES[-1]
 
         rooms = [
             dict(row)
@@ -614,15 +1351,22 @@ def _register_routes(app: Flask) -> None:
                 if current_date_obj < date.max
                 else current_date_obj
             ),
-            today=date.today(),
+            today=now.date(),
             rooms=rooms,
             time_slots=START_TIMES,
+            past_slots=past_slots,
+            current_slot=current_slot,
+            focus_slot=focus_slot,
+            weekday_label=WEEKDAY_LABELS[current_date_obj.weekday()],
         )
 
     @app.route("/reserve", methods=["GET", "POST"])
     @login_required
     def reserve() -> Any:
         db = get_db()
+        now = _local_now()
+        minimum_date = now.date().isoformat()
+        now_minutes = now.hour * 60 + now.minute
         rooms = [
             dict(row)
             for row in db.execute(
@@ -653,6 +1397,9 @@ def _register_routes(app: Flask) -> None:
                     party_name=party_name,
                     case_number=case_number,
                     notes=notes,
+                    minimum_date=minimum_date,
+                    today_date=minimum_date,
+                    now_minutes=now_minutes,
                 )
 
             room = None
@@ -669,6 +1416,11 @@ def _register_routes(app: Flask) -> None:
                 return render_error("请选择正确的预约时间")
             if _time_to_minutes(start_time) >= _time_to_minutes(end_time):
                 return render_error("结束时间必须晚于开始时间")
+            reservation_start = datetime.strptime(
+                f"{reserve_date} {start_time}", "%Y-%m-%d %H:%M"
+            )
+            if reservation_start <= _local_now():
+                return render_error("不能预约已经开始或过去的时段")
 
             slots = _reservation_slot_times(start_time, end_time)
             current_user = _current_user()
@@ -690,6 +1442,8 @@ def _register_routes(app: Flask) -> None:
                 ).fetchone()
                 if locked_user is None or locked_room is None:
                     raise ReservationUnavailable
+                if reservation_start <= _local_now():
+                    raise ReservationStarted
 
                 placeholders = ",".join("?" for _ in slots)
                 conflict = db.execute(
@@ -743,6 +1497,10 @@ def _register_routes(app: Flask) -> None:
                     flash("账号状态已改变，请重新登录", "warning")
                     return redirect(url_for("login"))
                 return render_error("会议室状态已改变，请重新选择")
+            except ReservationStarted:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                return render_error("该时段已经开始，请重新选择")
             except (ReservationConflict, sqlite3.IntegrityError):
                 if db.in_transaction:
                     db.execute("ROLLBACK")
@@ -758,7 +1516,9 @@ def _register_routes(app: Flask) -> None:
         selected_room_id = _parse_int(
             request.args.get("room_id"), rooms[0]["id"] if rooms else 1
         )
-        selected_date = _parse_date(request.args.get("date", "")) or date.today().isoformat()
+        selected_date = (
+            _parse_date(request.args.get("date", "")) or minimum_date
+        )
         start_time = request.args.get("start_time", "09:00")
         if start_time not in START_TIMES:
             start_time = "09:00"
@@ -780,6 +1540,9 @@ def _register_routes(app: Flask) -> None:
             party_name=request.args.get("party_name", "")[:120],
             case_number=request.args.get("case_number", "")[:120],
             notes=request.args.get("notes", "")[:500],
+            minimum_date=minimum_date,
+            today_date=minimum_date,
+            now_minutes=now_minutes,
         )
 
     @app.post("/cancel/<int:res_id>")
@@ -818,7 +1581,7 @@ def _register_routes(app: Flask) -> None:
                 f"{reservation['reserve_date']} {reservation['end_time']}",
                 "%Y-%m-%d %H:%M",
             )
-            if end_at < datetime.now() and not user["is_admin"]:
+            if end_at <= _local_now() and not user["is_admin"]:
                 db.execute("ROLLBACK")
                 flash("已过期的预约无法取消", "warning")
                 return redirect(url_for("my_reservations"))
@@ -852,7 +1615,7 @@ def _register_routes(app: Flask) -> None:
             """,
             (_current_user()["id"],),
         ).fetchall()
-        now = datetime.now()
+        now = _local_now()
         reservations = []
         for row in rows:
             item = dict(row)
@@ -868,8 +1631,9 @@ def _register_routes(app: Flask) -> None:
     @app.route("/admin/reservations")
     @admin_required
     def admin_reservations() -> Any:
-        default_start = (date.today() - timedelta(days=7)).isoformat()
-        default_end = (date.today() + timedelta(days=30)).isoformat()
+        today = _local_now().date()
+        default_start = (today - timedelta(days=7)).isoformat()
+        default_end = (today + timedelta(days=30)).isoformat()
         start_date = _parse_date(request.args.get("start_date", "")) or default_start
         end_date = _parse_date(request.args.get("end_date", "")) or default_end
         rows = get_db().execute(
@@ -885,7 +1649,7 @@ def _register_routes(app: Flask) -> None:
             (start_date, end_date),
         ).fetchall()
         reservations = [dict(row) for row in rows]
-        now = datetime.now()
+        now = _local_now()
         for reservation in reservations:
             reservation["display_status"] = _reservation_display_status(
                 reservation, now

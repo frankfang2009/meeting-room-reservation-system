@@ -1,0 +1,149 @@
+{
+  "version": "1.0.2",
+  "database_schema_version": 1,
+  "database_migration_required": false,
+  "supported_upgrade_sources": [
+    "1.0.0",
+    "1.0.1"
+  ],
+  "candidate_status": "待 Windows 10/11 实机人工验收",
+  "generated_at_utc": "2026-07-24T13:11:06.132453+00:00",
+  "source_tree_sha256": "56d2b9211dfbf8c8f9a96c60962c28a2697114124fac99136ce1562817ae9e2d",
+  "payload_file_count": 25,
+  "payload_files": [
+    {
+      "path": "_程序文件/app.py",
+      "size": 71861,
+      "sha256": "d3f0d506209e800049d3c115c81435101bbc7fd43a5061de49858603baf9ffe3"
+    },
+    {
+      "path": "_程序文件/backup.py",
+      "size": 3088,
+      "sha256": "6b63b4e29af9af386af4b0734467c12c8c0d5fcce615fecd2c5b2c6923cda1cf"
+    },
+    {
+      "path": "_程序文件/migrate_check.py",
+      "size": 5193,
+      "sha256": "81383dd20000e634bc67f28e671c8f7c38faabd24cff2418fe45c6909f18e5a8"
+    },
+    {
+      "path": "_程序文件/requirements.txt",
+      "size": 31,
+      "sha256": "78e4ee8695efcced1e24be4e81c37a4ccbdaaa549e2ebc45a3ab4e63c2b0c9ce"
+    },
+    {
+      "path": "_程序文件/server.py",
+      "size": 19843,
+      "sha256": "220084cd8f1334abe713925acca37b10efe5d154621a78fd5c5971c719b04bcb"
+    },
+    {
+      "path": "_程序文件/static/app.css",
+      "size": 17044,
+      "sha256": "805ba2c32a108123432b61f8efc864fcc935130189ca28806087e1c03c15211c"
+    },
+    {
+      "path": "_程序文件/static/app.js",
+      "size": 5772,
+      "sha256": "8121a6e1bbebba403c126016d3927fa89456ea22835d77015c7a9d38c6fabf0f"
+    },
+    {
+      "path": "_程序文件/static/favicon.svg",
+      "size": 431,
+      "sha256": "60322227a82f66e96375b1e372269e561ca54368f19ac0077c13b60ae0a54194"
+    },
+    {
+      "path": "_程序文件/templates/_admin_tabs.html",
+      "size": 459,
+      "sha256": "1d88d190a1a730a0379693b691c7935a6e2e2cf9289b84c42a6336e4d49be785"
+    },
+    {
+      "path": "_程序文件/templates/admin_reservations.html",
+      "size": 2873,
+      "sha256": "b704cba4438f6aa29d2a5594788ece06ea538d1f16232691a3aa903a6fddbd4a"
+    },
+    {
+      "path": "_程序文件/templates/admin_rooms.html",
+      "size": 4047,
+      "sha256": "eb89457f5dd0849c1c80812882f0bb4bea9980edb8161cc364d449adef3f80d4"
+    },
+    {
+      "path": "_程序文件/templates/admin_users.html",
+      "size": 4539,
+      "sha256": "b7f5a40e0108ee851481ad6e77c352ab6c80b3eff37fbd22ea0923e9c3710150"
+    },
+    {
+      "path": "_程序文件/templates/base.html",
+      "size": 6216,
+      "sha256": "2f945d1c1d30f22bbf1aa300334e0bc468d61a22cb63871d5fd2e1858f3f6dc7"
+    },
+    {
+      "path": "_程序文件/templates/error.html",
+      "size": 344,
+      "sha256": "8f2a52721d783b794cc436451257cb53833ec5a2f251a82cb364c85b98a9eeaa"
+    },
+    {
+      "path": "_程序文件/templates/index.html",
+      "size": 3429,
+      "sha256": "68e538a52ed2a65ff5a616c158d9d4e9bfd1ca9dc8cac6751d590c1c66839998"
+    },
+    {
+      "path": "_程序文件/templates/login.html",
+      "size": 1106,
+      "sha256": "efa437d333da8890734c1e322d94dac3a8a290718f80c9882ff0697dce2939b6"
+    },
+    {
+      "path": "_程序文件/templates/my_reservations.html",
+      "size": 2350,
+      "sha256": "bd0716edc06b37760d83a7c6471f556cab2a7e1238d32b8425910b90572c4cdb"
+    },
+    {
+      "path": "_程序文件/templates/reserve.html",
+      "size": 3102,
+      "sha256": "2414f405a32136be896e38410602dd596c3a727c60977535940908d3ff65f1fd"
+    },
+    {
+      "path": "_程序文件/版本.txt",
+      "size": 6,
+      "sha256": "9fd28642d3aca191e5c7fc2383cfd6fabb2aac8743f029dabb8989ac584e31bc"
+    },
+    {
+      "path": "① 启动系统.bat",
+      "size": 1103,
+      "sha256": "bbaafd6a656fc496ecae8a9540eef4b124897c98c4de179b1e575aacc54d6a5b"
+    },
+    {
+      "path": "② 立即备份.bat",
+      "size": 673,
+      "sha256": "01480fd2a5dd3cbc5893e2f7f518a6e95446e72b11b227b140445908fbcb2baf"
+    },
+    {
+      "path": "③ 设置开机自动启动.bat",
+      "size": 4073,
+      "sha256": "7c8f7f2ae099865c3833aee379230fd3e79fff909f6bc89b63fcca68da81f081"
+    },
+    {
+      "path": "④ 停止本次后台系统.bat",
+      "size": 1776,
+      "sha256": "69dc0df85b767eb80e0ebd1c2fa96af9464e682316283089628b1c838a9ffba2"
+    },
+    {
+      "path": "⑤ 取消开机自动启动.bat",
+      "size": 2047,
+      "sha256": "6a861769433ab62c82667a89d24f180869ea1c15d7efd4c7d629c1ee37b92090"
+    },
+    {
+      "path": "使用说明.txt",
+      "size": 5240,
+      "sha256": "cbe9c118e77a7bede721db649e839753d66c0d720644fdbc2f63f6f4a710752f"
+    }
+  ],
+  "payload_zip_sha256": "f393562a9d9534fd12a06c2d94094306f8b10dce051a877035335b3e5d37f034",
+  "payload_zip_size": 50499,
+  "package_file": "升级到V1.0.2.bat",
+  "package_sha256": "2e7e78a61de9a403f3facd37b47c1580c35bce38b91465f4919326fa72d77730",
+  "package_size": 196141,
+  "windows_candidate_included": true,
+  "runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",
+  "frozen_runtime_tree_sha256": "b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14",
+  "v1_0_1_frozen_package_sha256": "cd0d52b9ffb5d2864e7ad98d8969b86376d8577391399c30295d0722d34848cd"
+}

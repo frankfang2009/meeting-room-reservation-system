@@ -14,6 +14,16 @@ LOG_DIR = PROJECT_DIR / "logs"
 UPGRADE_LOG_ENV = "MEETING_ROOM_UPGRADE_LOG"
 
 
+def _configure_console_streams() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+
+
 def _open_existing_database(path: Path) -> sqlite3.Connection:
     if not path.is_file():
         raise RuntimeError(f"数据库文件不存在：{path}")
@@ -76,8 +86,13 @@ def _run_migration() -> tuple[Path, int]:
     from app import SCHEMA_VERSION, app, init_db
 
     with app.app_context():
-        init_db()
         database = Path(app.config["DATABASE"])
+        if not database.is_file():
+            raise RuntimeError(
+                "数据库文件不存在，疑似数据丢失；升级已停止。"
+                "请不要继续操作，并联系维护人员"
+            )
+        init_db()
     _check_database(database, expected_schema_version=SCHEMA_VERSION)
     return database, SCHEMA_VERSION
 
@@ -106,6 +121,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    _configure_console_streams()
     arguments = _parser().parse_args(argv)
     try:
         if arguments.precheck is not None:

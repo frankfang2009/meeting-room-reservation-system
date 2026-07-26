@@ -58,4 +58,5 @@ jobs:
           retention-days: 7
           path: |
             ${{ runner.temp }}\meeting-room-upgrade-ci\packages\*.bat
+            ${{ runner.temp }}\meeting-room-upgrade-ci\release\**\发布清单.json
             ${{ runner.temp }}\meeting-room-upgrade-ci\installs\**\upgrade-*.log

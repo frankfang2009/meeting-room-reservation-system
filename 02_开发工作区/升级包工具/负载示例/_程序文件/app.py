@@ -29,6 +29,8 @@ PROJECT_DIR = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = PROJECT_DIR / "data"
 
 SCHEMA_VERSION = 1
+# 迁移函数内部禁止调用 commit() 或 executescript()；它们会提前结束框架事务，
+# 使单次迁移无法在失败时完整回滚，只能依赖升级器的整库快照恢复。
 MIGRATIONS: list[tuple[int, Callable[[sqlite3.Connection], None]]] = []
 
 START_TIMES = tuple(

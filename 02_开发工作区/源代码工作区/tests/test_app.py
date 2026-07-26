@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import sqlite3
 import subprocess
@@ -7,12 +9,13 @@ import sys
 import tempfile
 import threading
 import unittest
-from contextlib import closing
-from datetime import date, timedelta
+from contextlib import closing, redirect_stdout
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
 import app as app_module
+import server as server_module
 from app import SCHEMA_VERSION, _migrate_schema, create_app, get_db, init_db
 from backup import main as backup_database
 from werkzeug.security import generate_password_hash
@@ -73,6 +76,53 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 (username, generate_password_hash(password), username, is_admin),
             )
 
+    def insert_reservation(
+        self,
+        reserve_date,
+        start_time="09:00",
+        end_time="09:30",
+        user_id=1,
+        room_id=1,
+    ):
+        with self.app.app_context():
+            db = get_db()
+            room_name = db.execute(
+                "SELECT name FROM rooms WHERE id = ?", (room_id,)
+            ).fetchone()[0]
+            cursor = db.execute(
+                """
+                INSERT INTO reservations (
+                    room_id, room_name_snapshot, reserve_date, start_time,
+                    end_time, user_id, party_name, case_number, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    room_id,
+                    room_name,
+                    reserve_date,
+                    start_time,
+                    end_time,
+                    user_id,
+                    "测试单位",
+                    "测试案号",
+                    "测试备注",
+                ),
+            )
+            db.executemany(
+                """
+                INSERT INTO reservation_slots
+                    (reservation_id, room_id, reserve_date, slot_time)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (cursor.lastrowid, room_id, reserve_date, slot)
+                    for slot in app_module._reservation_slot_times(
+                        start_time, end_time
+                    )
+                ],
+            )
+            return cursor.lastrowid
+
     def reservation_payload(
         self,
         room_id=1,
@@ -120,6 +170,272 @@ class MeetingRoomSystemTests(unittest.TestCase):
         response = ordinary.get("/admin/users", follow_redirects=True)
         self.assertIn("需要管理员权限", response.get_data(as_text=True))
 
+    def test_healthz_reports_stable_install_identity_and_mode(self):
+        first = self.client.get("/healthz")
+        second = self.client.get("/healthz")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.headers["X-Meeting-Room-System"], "1")
+        payload = first.get_json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "normal")
+        self.assertIsNone(payload["lan_url"])
+        self.assertEqual(payload["install_id"], second.get_json()["install_id"])
+        self.assertEqual(
+            payload["install_id"],
+            Path(self.app.config["INSTALL_ID_FILE"]).read_text(
+                encoding="utf-8"
+            ).strip(),
+        )
+        self.app.config["CURRENT_LAN_URL"] = "http://192.168.1.10:8080"
+        self.assertEqual(
+            self.client.get("/healthz").get_json()["lan_url"],
+            "http://192.168.1.10:8080",
+        )
+
+    def test_only_admin_can_see_and_acknowledge_network_change(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        app_module._write_network_state(
+            state_path,
+            {
+                "schema": 1,
+                "last_acknowledged_url": "http://192.168.1.10:8080",
+                "last_observed_url": "http://192.168.1.11:8080",
+                "pending": {
+                    "kind": "changed",
+                    "old_url": "http://192.168.1.10:8080",
+                    "new_url": "http://192.168.1.11:8080",
+                    "detected_at": "2026-07-24T10:00:00+08:00",
+                },
+            },
+        )
+        self.app.config["CURRENT_LAN_URL"] = "http://192.168.1.11:8080"
+
+        admin_html = self.login().get_data(as_text=True)
+        self.assertIn("同事访问网址已发生变化", admin_html)
+        self.assertIn("预约数据没有变化", admin_html)
+        self.assertIn("http://192.168.1.10:8080", admin_html)
+        self.assertIn("http://192.168.1.11:8080", admin_html)
+        self.assertIn("data-copy-network-url", admin_html)
+        self.assertNotIn('class="network-address-current"', admin_html)
+
+        self.add_user()
+        ordinary = self.app.test_client()
+        ordinary_html = self.login("user1", "pass123", ordinary).get_data(as_text=True)
+        self.assertNotIn("同事访问网址已发生变化", ordinary_html)
+        denied = self.post(
+            "/admin/network-address/acknowledge",
+            client=ordinary,
+        )
+        self.assertIn("需要管理员权限", denied.get_data(as_text=True))
+        self.assertIsNotNone(app_module.pending_network_change(state_path))
+
+        acknowledged = self.post(
+            "/admin/network-address/acknowledge",
+            {"expected_url": "http://192.168.1.11:8080"},
+        )
+        acknowledged_html = acknowledged.get_data(as_text=True)
+        self.assertIn("新网址已确认", acknowledged_html)
+        self.assertNotIn("同事访问网址已发生变化", acknowledged_html)
+        self.assertIsNone(app_module.pending_network_change(state_path))
+
+    def test_admin_sees_current_address_strip_without_pending_notice(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        current_url = "http://192.168.1.10:8080"
+        app_module.observe_network_url(state_path, current_url)
+        self.app.config["CURRENT_LAN_URL"] = current_url
+
+        admin_html = self.login().get_data(as_text=True)
+        self.assertIn('class="network-address-current"', admin_html)
+        self.assertIn("同事当前访问", admin_html)
+        self.assertIn(current_url, admin_html)
+        self.assertIn('data-copy-label="复制网址"', admin_html)
+        self.assertNotIn("同事访问网址已发生变化", admin_html)
+
+        self.add_user()
+        ordinary = self.app.test_client()
+        ordinary_html = self.login(
+            "user1",
+            "pass123",
+            ordinary,
+        ).get_data(as_text=True)
+        self.assertNotIn('class="network-address-current"', ordinary_html)
+        self.assertNotIn("同事当前访问", ordinary_html)
+        css_response = self.client.get("/static/app.css")
+        css = css_response.get_data(as_text=True)
+        css_response.close()
+        self.assertIn(
+            ".site-header, .network-address-current, .network-address-alert",
+            css,
+        )
+
+    def test_admin_sees_unknown_hint_instead_of_stale_observed_url(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        stale_url = "http://192.168.1.10:8080"
+        app_module.observe_network_url(state_path, stale_url)
+        self.app.config["CURRENT_LAN_URL"] = None
+
+        html = self.login().get_data(as_text=True)
+        self.assertIn('class="network-address-current"', html)
+        self.assertIn("暂时无法可靠识别同事访问地址", html)
+        self.assertNotIn(stale_url, html)
+
+    def test_admin_context_reads_network_state_only_once(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        current_url = "http://192.168.1.10:8080"
+        app_module.observe_network_url(state_path, current_url)
+        self.app.config["CURRENT_LAN_URL"] = current_url
+        self.login()
+
+        with mock.patch.object(
+            app_module,
+            "_read_network_state",
+            wraps=app_module._read_network_state,
+        ) as read_state:
+            response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(read_state.call_count, 1)
+
+    def test_in_memory_write_failure_fallback_keeps_admin_warning_visible(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        address_a = "http://192.168.1.10:8080"
+        address_b = "http://192.168.1.11:8080"
+        app_module.observe_network_url(state_path, address_a)
+        self.app.config.update(
+            CURRENT_LAN_URL=address_b,
+            NETWORK_WARNING_FALLBACK={
+                "kind": "changed",
+                "old_url": address_a,
+                "new_url": address_b,
+                "detected_at": "2026-07-24T12:00:00+08:00",
+            },
+            NETWORK_WARNING_PERSIST_FAILED=True,
+        )
+
+        html = self.login().get_data(as_text=True)
+        self.assertIn("同事访问网址已发生变化", html)
+        self.assertIn("本次变化提醒暂时无法保存确认", html)
+        self.assertIn("重新尝试保存确认", html)
+        self.assertNotIn('class="network-address-current"', html)
+        self.assertIsNone(app_module.pending_network_change(state_path))
+
+        with self.assertLogs(level="ERROR"), mock.patch.object(
+            app_module,
+            "_write_network_state",
+            side_effect=OSError("read only"),
+        ):
+            response = self.post(
+                "/admin/network-address/acknowledge",
+                {"expected_url": address_b},
+            )
+        failed_html = response.get_data(as_text=True)
+        self.assertIn("暂时无法保存确认", failed_html)
+        self.assertIn("同事访问网址已发生变化", failed_html)
+        self.assertIn(address_b, failed_html)
+        self.assertTrue(
+            self.app.config["NETWORK_WARNING_PERSIST_FAILED"]
+        )
+
+    def test_in_memory_warning_can_be_confirmed_after_storage_recovers(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        address_a = "http://192.168.1.10:8080"
+        address_b = "http://192.168.1.11:8080"
+        app_module.observe_network_url(state_path, address_a)
+        self.app.config.update(
+            CURRENT_LAN_URL=address_b,
+            NETWORK_WARNING_FALLBACK={
+                "kind": "changed",
+                "old_url": address_a,
+                "new_url": address_b,
+                "detected_at": "2026-07-24T12:00:00+08:00",
+            },
+            NETWORK_WARNING_PERSIST_FAILED=True,
+        )
+        self.login()
+
+        response = self.post(
+            "/admin/network-address/acknowledge",
+            {"expected_url": address_b},
+        )
+        html = response.get_data(as_text=True)
+        self.assertIn("新网址已确认", html)
+        self.assertNotIn("同事访问网址已发生变化", html)
+        self.assertFalse(
+            self.app.config["NETWORK_WARNING_PERSIST_FAILED"]
+        )
+        state = app_module._read_network_state(state_path)
+        self.assertEqual(state["last_acknowledged_url"], address_b)
+        self.assertIsNone(state["pending"])
+
+    def test_network_change_acknowledgement_requires_csrf(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        app_module.observe_network_url(
+            state_path,
+            "http://192.168.1.10:8080",
+            detected_at="2026-07-24T10:00:00+08:00",
+        )
+        app_module.observe_network_url(
+            state_path,
+            "http://192.168.1.11:8080",
+            detected_at="2026-07-24T10:01:00+08:00",
+        )
+        self.login()
+        response = self.client.post("/admin/network-address/acknowledge")
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNotNone(app_module.pending_network_change(state_path))
+
+    def test_admin_can_review_generic_recovery_warning_without_fake_old_url(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        current_url = "http://192.168.1.11:8080"
+        state_path.write_text("{damaged", encoding="utf-8")
+        result = app_module.observe_network_url(state_path, current_url)
+        self.assertEqual(result["pending"]["kind"], "verify")
+        self.assertNotIn("old_url", result["pending"])
+
+        html = self.login().get_data(as_text=True)
+        self.assertIn("请重新核对同事访问网址", html)
+        self.assertIn("无法可靠确认原网址", html)
+        self.assertIn(current_url, html)
+        self.assertNotIn("原网址</dt>", html)
+
+        acknowledged = self.post(
+            "/admin/network-address/acknowledge",
+            {"expected_url": current_url},
+        )
+        self.assertIn("新网址已确认", acknowledged.get_data(as_text=True))
+        self.assertIsNone(app_module.pending_network_change(state_path))
+
+    def test_stale_network_acknowledgement_keeps_newest_notice(self):
+        state_path = Path(self.app.config["NETWORK_STATE_FILE"])
+        address_a = "http://192.168.1.10:8080"
+        address_b = "http://192.168.1.11:8080"
+        address_c = "http://192.168.1.12:8080"
+        app_module.observe_network_url(state_path, address_a)
+        app_module.observe_network_url(state_path, address_b)
+        self.login()
+        app_module.observe_network_url(state_path, address_c)
+
+        response = self.post(
+            "/admin/network-address/acknowledge",
+            {"expected_url": address_b},
+        )
+        html = response.get_data(as_text=True)
+        self.assertIn("网址刚刚再次变化", html)
+        self.assertIn(address_c, html)
+        self.assertEqual(
+            app_module.pending_network_change(state_path)["new_url"],
+            address_c,
+        )
+
+    def test_network_copy_script_falls_back_and_reports_failure(self):
+        script = self.client.get(
+            "/network-address-notice.js"
+        ).get_data(as_text=True)
+        self.assertIn(".catch(fallbackCopy)", script)
+        self.assertIn('document.execCommand("copy")', script)
+        self.assertIn("复制失败，请手动复制", script)
+        self.assertIn("button.dataset.copyLabel", script)
+        self.assertIn("button.textContent = defaultLabel", script)
+
     def test_exact_half_hour_and_overlap_rules(self):
         self.login()
         target = (date.today() + timedelta(days=2)).isoformat()
@@ -165,11 +481,138 @@ class MeetingRoomSystemTests(unittest.TestCase):
 
     def test_default_end_time_includes_0930(self):
         self.login()
+        target = (date.today() + timedelta(days=1)).isoformat()
         response = self.client.get(
-            f"/reserve?room_id=1&date={date.today().isoformat()}&start_time=09:00"
+            f"/reserve?room_id=1&date={target}&start_time=09:00"
         )
         html = response.get_data(as_text=True)
         self.assertIn('<option value="09:30" selected>09:30</option>', html)
+
+    def test_past_and_started_reservations_are_rejected(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+
+        past_response = self.post(
+            "/reserve",
+            self.reservation_payload(reserve_date="2026-07-23"),
+        )
+        self.assertIn(
+            "不能预约已经开始或过去的时段",
+            past_response.get_data(as_text=True),
+        )
+        started_response = self.post(
+            "/reserve",
+            self.reservation_payload(reserve_date="2026-07-24"),
+        )
+        self.assertIn(
+            "不能预约已经开始或过去的时段",
+            started_response.get_data(as_text=True),
+        )
+        future_response = self.post(
+            "/reserve",
+            self.reservation_payload(
+                reserve_date="2026-07-24",
+                start_time="09:30",
+                end_time="10:00",
+            ),
+        )
+        self.assertIn("预约成功", future_response.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertEqual(
+                get_db().execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
+                1,
+            )
+
+    def test_booking_rechecks_start_time_inside_write_lock(self):
+        clock = {"now": datetime(2026, 7, 24, 9, 29)}
+        self.app.config["NOW_PROVIDER"] = lambda: clock["now"]
+        self.app.config["BEFORE_RESERVATION_WRITE"] = lambda: clock.update(
+            now=datetime(2026, 7, 24, 9, 30)
+        )
+        self.login()
+        response = self.post(
+            "/reserve",
+            self.reservation_payload(
+                reserve_date="2026-07-24",
+                start_time="09:30",
+                end_time="10:00",
+            ),
+        )
+        self.assertIn("该时段已经开始，请重新选择", response.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertEqual(
+                get_db().execute("SELECT COUNT(*) FROM reservations").fetchone()[0],
+                0,
+            )
+            self.assertFalse(get_db().in_transaction)
+
+    def test_calendar_marks_elapsed_slots_and_current_time(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+        html = self.client.get("/?date=2026-07-24").get_data(as_text=True)
+
+        self.assertIn("星期五", html)
+        self.assertIn("current-time-row", html)
+        self.assertIn("data-calendar-focus", html)
+        self.assertIn(">现在</small>", html)
+        self.assertEqual(html.count("expired-slot"), 6)
+        self.assertEqual(html.count(">已开始</span>"), 3)
+        self.assertEqual(html.count(">已过期</span>"), 3)
+        self.assertNotIn(
+            "/reserve?room_id=1&amp;date=2026-07-24&amp;start_time=09:00",
+            html,
+        )
+        self.assertIn(
+            "/reserve?room_id=1&amp;date=2026-07-24&amp;start_time=09:30",
+            html,
+        )
+
+        past_html = self.client.get(
+            "/?date=2026-07-23"
+        ).get_data(as_text=True)
+        self.assertNotIn("/reserve?", past_html)
+        self.assertNotIn("data-calendar-focus", past_html)
+
+        future_html = self.client.get(
+            "/?date=2026-07-25"
+        ).get_data(as_text=True)
+        self.assertIn("/reserve?", future_html)
+        self.assertNotIn("data-calendar-focus", future_html)
+
+    def test_calendar_focuses_business_boundaries_without_false_now_label(self):
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 7, 45)
+        self.login()
+        before_open = self.client.get("/").get_data(as_text=True)
+        self.assertEqual(before_open.count("data-calendar-focus"), 1)
+        self.assertNotIn(">现在</small>", before_open)
+
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 18, 0)
+        after_close = self.client.get("/").get_data(as_text=True)
+        self.assertEqual(after_close.count("data-calendar-focus"), 1)
+        self.assertNotIn(">现在</small>", after_close)
+        self.assertNotIn("/reserve?", after_close)
+
+    def test_reservation_form_and_flash_include_comfort_guards(self):
+        fixed_now = datetime(2026, 7, 24, 9, 27)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        login_html = self.login().get_data(as_text=True)
+        self.assertIn('data-auto-dismiss="4500"', login_html)
+
+        form_html = self.client.get(
+            "/reserve?room_id=1&date=2026-07-24&start_time=09:30"
+        ).get_data(as_text=True)
+        self.assertIn('min="2026-07-24"', form_html)
+        self.assertIn('data-today="2026-07-24"', form_html)
+        self.assertIn('data-now-minutes="567"', form_html)
+
+        other_client = self.app.test_client()
+        danger_html = self.login(
+            password="wrong", client=other_client
+        ).get_data(as_text=True)
+        self.assertIn("flash-danger", danger_html)
+        self.assertNotIn("data-auto-dismiss", danger_html)
 
     def test_cancel_is_post_only_and_releases_slot(self):
         self.login()
@@ -587,7 +1030,7 @@ class MeetingRoomSystemTests(unittest.TestCase):
     def test_admin_and_user_pages_agree_on_completed_status(self):
         self.login()
         past = (date.today() - timedelta(days=1)).isoformat()
-        self.post("/reserve", self.reservation_payload(reserve_date=past))
+        self.insert_reservation(past)
         self.assertIn("已完成", self.client.get("/my").get_data(as_text=True))
         admin_html = self.client.get(
             f"/admin/reservations?start_date={past}&end_date={past}"
@@ -605,6 +1048,26 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 "SELECT status FROM reservations WHERE id = ?", (reservation_id,)
             ).fetchone()[0]
         self.assertEqual(status, "pending")
+
+    def test_reservation_is_completed_at_exact_end_time(self):
+        fixed_now = datetime(2026, 7, 24, 9, 30)
+        self.app.config["NOW_PROVIDER"] = lambda: fixed_now
+        self.login()
+        reservation_id = self.insert_reservation(
+            "2026-07-24", start_time="09:00", end_time="09:30"
+        )
+
+        self.assertIn("已完成", self.client.get("/my").get_data(as_text=True))
+        admin_html = self.client.get(
+            "/admin/reservations?start_date=2026-07-24&end_date=2026-07-24"
+        ).get_data(as_text=True)
+        self.assertIn("已完成", admin_html)
+        self.assertNotIn(">取消</button>", admin_html)
+        response = self.post(f"/admin/cancel/{reservation_id}")
+        self.assertIn(
+            "预约已结束、已取消或不存在",
+            response.get_data(as_text=True),
+        )
 
     def test_extreme_calendar_dates_do_not_crash(self):
         self.login()
@@ -673,9 +1136,839 @@ class MeetingRoomSystemTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertNotIn("cdn.jsdelivr", html)
         self.assertNotIn("https://", html)
+        self.assertIn(
+            f"/static/app.css?v={app_module.STATIC_REVISION}", html
+        )
+        self.assertIn(
+            f"/static/app.js?v={app_module.STATIC_REVISION}", html
+        )
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+
+
+class NetworkStateTests(unittest.TestCase):
+    class FakeHealthResponse:
+        def __init__(self, payload, system_header="1"):
+            self.headers = {"X-Meeting-Room-System": system_header}
+            self.body = json.dumps(payload).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit):
+            return self.body
+
+    def test_install_id_is_created_once_and_strictly_validated(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "install_id"
+            install_id = app_module._load_or_create_install_id(path)
+            self.assertEqual(install_id, app_module._load_or_create_install_id(path))
+            self.assertEqual(install_id, str(app_module.uuid.UUID(install_id)))
+            self.assertEqual(path.read_text(encoding="utf-8"), install_id + "\n")
+
+            path.write_text(install_id.upper() + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "格式无效"):
+                app_module._load_or_create_install_id(path)
+
+            path.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "安装标识为空"):
+                app_module._load_or_create_install_id(path)
+
+            path.write_text("not-an-install-id", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "安装标识已损坏"):
+                app_module._load_or_create_install_id(path)
+
+    def test_install_identity_accepts_only_canonical_rfc4122_uuid4(self):
+        valid_uuid4 = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+        invalid_values = (
+            "00000000-0000-0000-0000-000000000000",
+            "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            "1ec9414c-232a-6b00-b3c8-9e6bdeced846",
+            "168efe19-ff50-40fb-3d86-ecc7995bf11f",
+            valid_uuid4.upper(),
+        )
+        self.assertEqual(
+            app_module._canonical_uuid4(valid_uuid4),
+            valid_uuid4,
+        )
+        self.assertEqual(
+            server_module._canonical_uuid4(valid_uuid4),
+            valid_uuid4,
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                self.assertIsNone(app_module._canonical_uuid4(value))
+                self.assertIsNone(server_module._canonical_uuid4(value))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            install_path = data_dir / "install_id"
+            for value in invalid_values:
+                with self.subTest(file_value=value):
+                    install_path.write_text(value + "\n", encoding="utf-8")
+                    with self.assertRaises(RuntimeError):
+                        app_module._load_or_create_install_id(install_path)
+                    with mock.patch.dict(
+                        os.environ,
+                        {"MEETING_ROOM_DATA_DIR": str(data_dir)},
+                    ):
+                        self.assertEqual(
+                            server_module._read_local_install_id(),
+                            (None, "invalid"),
+                        )
+
+    def test_health_probe_rejects_non_uuid4_remote_identity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            local_id = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+            (data_dir / "install_id").write_text(
+                local_id + "\n",
+                encoding="utf-8",
+            )
+            response = self.FakeHealthResponse(
+                {
+                    "ok": True,
+                    "install_id": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+                    "mode": "normal",
+                }
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEETING_ROOM_DATA_DIR": str(data_dir)},
+            ), mock.patch.object(
+                server_module.urllib.request,
+                "urlopen",
+                return_value=response,
+            ):
+                probe = server_module._probe_app(8080)
+            self.assertEqual(probe["kind"], "meeting-room-unverified")
+            self.assertIsNone(probe["remote_install_id"])
+
+    def test_first_run_identity_creation_reuses_concurrent_winner(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_path = root / "install_id"
+            winning_install_id = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+
+            def install_race(path, _value):
+                path.write_text(winning_install_id + "\n", encoding="utf-8")
+                raise FileExistsError
+
+            with mock.patch.object(
+                app_module,
+                "_write_text_exclusive",
+                side_effect=install_race,
+            ):
+                self.assertEqual(
+                    app_module._load_or_create_install_id(install_path),
+                    winning_install_id,
+                )
+
+            secret_path = root / ".secret_key"
+            winning_secret = "a" * 64
+
+            def secret_race(path, _value):
+                path.write_text(winning_secret, encoding="utf-8")
+                raise FileExistsError
+
+            with mock.patch.object(
+                app_module,
+                "_write_text_exclusive",
+                side_effect=secret_race,
+            ):
+                self.assertEqual(
+                    app_module._load_or_create_secret(secret_path),
+                    winning_secret,
+                )
+
+    def test_identity_race_waits_for_winner_to_finish_writing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            install_path = root / "install_id"
+            winning_install_id = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+            writer_done = threading.Event()
+
+            def incomplete_install_race(path, _value):
+                descriptor = os.open(
+                    path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(descriptor)
+
+                def finish_write():
+                    app_module.time.sleep(0.06)
+                    path.write_text(
+                        winning_install_id + "\n",
+                        encoding="utf-8",
+                    )
+                    writer_done.set()
+
+                threading.Thread(target=finish_write, daemon=True).start()
+                raise FileExistsError
+
+            with mock.patch.object(
+                app_module,
+                "_write_text_exclusive",
+                side_effect=incomplete_install_race,
+            ):
+                self.assertEqual(
+                    app_module._load_or_create_install_id(install_path),
+                    winning_install_id,
+                )
+            self.assertTrue(writer_done.wait(1))
+
+            secret_path = root / ".secret_key"
+            winning_secret = "b" * 64
+            secret_writer_done = threading.Event()
+
+            def incomplete_secret_race(path, _value):
+                descriptor = os.open(
+                    path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+                os.close(descriptor)
+
+                def finish_write():
+                    app_module.time.sleep(0.06)
+                    path.write_text(winning_secret, encoding="utf-8")
+                    secret_writer_done.set()
+
+                threading.Thread(target=finish_write, daemon=True).start()
+                raise FileExistsError
+
+            with mock.patch.object(
+                app_module,
+                "_write_text_exclusive",
+                side_effect=incomplete_secret_race,
+            ):
+                self.assertEqual(
+                    app_module._load_or_create_secret(secret_path),
+                    winning_secret,
+                )
+            self.assertTrue(secret_writer_done.wait(1))
+
+    def test_first_run_identity_files_are_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            path = root / "identity"
+            path.write_text("existing", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                app_module._write_text_exclusive(path, "replacement")
+            self.assertEqual(path.read_text(encoding="utf-8"), "existing")
+
+            empty_secret = root / ".secret_key"
+            empty_secret.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "会话密钥为空"):
+                app_module._load_or_create_secret(empty_secret)
+
+    def test_custom_data_dir_owns_database_install_id_and_network_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir) / "custom-data"
+            custom_app = create_app(
+                {
+                    "DATA_DIR": str(data_dir),
+                    "SECRET_KEY": "custom-secret",
+                    "INITIAL_ADMIN_PASSWORD": "test-password",
+                }
+            )
+            self.assertEqual(
+                Path(custom_app.config["DATABASE"]),
+                data_dir / "reservation.db",
+            )
+            self.assertEqual(
+                Path(custom_app.config["INSTALL_ID_FILE"]),
+                data_dir / "install_id",
+            )
+            self.assertEqual(
+                Path(custom_app.config["NETWORK_STATE_FILE"]),
+                data_dir / app_module.NETWORK_STATE_FILENAME,
+            )
+            self.assertTrue((data_dir / "install_id").is_file())
+
+    def test_healthz_uses_upgrade_check_mode_from_environment(self):
+        with tempfile.TemporaryDirectory() as temp_dir, mock.patch.dict(
+            os.environ,
+            {"MEETING_ROOM_UPGRADE_CHECK": "1"},
+        ):
+            custom_app = create_app(
+                {
+                    "DATA_DIR": temp_dir,
+                    "SECRET_KEY": "upgrade-secret",
+                    "INITIAL_ADMIN_PASSWORD": "test-password",
+                    "TESTING": True,
+                    "CURRENT_LAN_URL": "http://192.168.1.10:8080",
+                }
+            )
+            payload = custom_app.test_client().get("/healthz").get_json()
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["mode"], "upgrade-check")
+            self.assertIsNone(payload["lan_url"])
+            self.assertEqual(
+                payload["install_id"],
+                (Path(temp_dir) / "install_id").read_text(
+                    encoding="utf-8"
+                ).strip(),
+            )
+
+    def test_upgrade_check_mode_uses_loopback_only_binding(self):
+        with mock.patch.dict(
+            os.environ,
+            {"MEETING_ROOM_UPGRADE_CHECK": "1"},
+        ):
+            self.assertEqual(server_module._bind_host(), "127.0.0.1")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(server_module._bind_host(), "0.0.0.0")
+
+    def test_running_check_requires_exact_local_identity_and_normal_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir)
+            local_id = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+            (data_dir / "install_id").write_text(
+                local_id + "\n",
+                encoding="utf-8",
+            )
+            normal = self.FakeHealthResponse(
+                {
+                    "ok": True,
+                    "install_id": local_id,
+                    "mode": "normal",
+                }
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEETING_ROOM_DATA_DIR": str(data_dir)},
+            ), mock.patch.object(
+                server_module.urllib.request,
+                "urlopen",
+                return_value=normal,
+            ):
+                self.assertTrue(server_module._app_is_running(8080))
+                self.assertEqual(
+                    server_module._probe_app(8080)["kind"],
+                    "same-installation",
+                )
+
+            different = self.FakeHealthResponse(
+                {
+                    "ok": True,
+                    "install_id": "7721a579-7c2d-41ff-a3ca-8b62176b1e23",
+                    "mode": "normal",
+                }
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEETING_ROOM_DATA_DIR": str(data_dir)},
+            ), mock.patch.object(
+                server_module.urllib.request,
+                "urlopen",
+                return_value=different,
+            ):
+                self.assertFalse(server_module._app_is_running(8080))
+                self.assertEqual(
+                    server_module._probe_app(8080)["kind"],
+                    "other-installation",
+                )
+
+            upgrade_check = self.FakeHealthResponse(
+                {
+                    "ok": True,
+                    "install_id": local_id,
+                    "mode": "upgrade-check",
+                }
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEETING_ROOM_DATA_DIR": str(data_dir)},
+            ), mock.patch.object(
+                server_module.urllib.request,
+                "urlopen",
+                return_value=upgrade_check,
+            ):
+                self.assertFalse(server_module._app_is_running(8080))
+                self.assertEqual(
+                    server_module._probe_app(8080)["kind"],
+                    "upgrade-check",
+                )
+
+    def test_running_check_refuses_matching_service_without_local_identity(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            remote_id = "168efe19-ff50-40fb-bd86-ecc7995bf11f"
+            response = self.FakeHealthResponse(
+                {
+                    "ok": True,
+                    "install_id": remote_id,
+                    "mode": "normal",
+                }
+            )
+            with mock.patch.dict(
+                os.environ,
+                {"MEETING_ROOM_DATA_DIR": temp_dir},
+            ), mock.patch.object(
+                server_module.urllib.request,
+                "urlopen",
+                return_value=response,
+            ):
+                probe = server_module._probe_app(8080)
+                self.assertFalse(server_module._app_is_running(8080))
+            self.assertEqual(probe["kind"], "local-identity-problem")
+            self.assertFalse((Path(temp_dir) / "install_id").exists())
+
+    def test_main_never_opens_browser_for_another_installation(self):
+        probe = {
+            "kind": "other-installation",
+            "local_identity_state": "ok",
+            "local_install_id": "168efe19-ff50-40fb-bd86-ecc7995bf11f",
+            "remote_install_id": "7721a579-7c2d-41ff-a3ca-8b62176b1e23",
+            "remote_mode": "normal",
+        }
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["server.py"]), mock.patch.object(
+            server_module, "_configure_logging"
+        ), mock.patch.object(
+            server_module, "_probe_app", return_value=probe
+        ), mock.patch.object(
+            server_module, "_open_browser"
+        ) as open_browser, redirect_stdout(output):
+            result = server_module.main()
+        self.assertEqual(result, 1)
+        open_browser.assert_not_called()
+        self.assertIn("另一套会议室预约系统", output.getvalue())
+        self.assertIn("不会连接或打开", output.getvalue())
+
+    def test_main_stops_clearly_for_corrupt_local_install_identity(self):
+        probe = {
+            "kind": "none",
+            "local_identity_state": "invalid",
+            "local_install_id": None,
+            "remote_install_id": None,
+            "remote_mode": None,
+        }
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", ["server.py"]), mock.patch.object(
+            server_module, "_configure_logging"
+        ), mock.patch.object(
+            server_module, "_probe_app", return_value=probe
+        ), redirect_stdout(output):
+            result = server_module.main()
+        self.assertEqual(result, 1)
+        self.assertIn("install_id 已损坏", output.getvalue())
+        self.assertIn("不会自动更换", output.getvalue())
+
+    def test_windows_ip_selection_excludes_vpn_and_prefers_physical_lan(self):
+        output = """
+以太网适配器 Ethernet 2:
+   描述. . . . . . . . . . . . . . . : TAP-Windows Adapter V9
+   IPv4 地址 . . . . . . . . . . . . : 10.8.0.2
+
+无线局域网适配器 WLAN:
+   IPv4 地址 . . . . . . . . . . . . : 192.168.1.20
+"""
+        candidates = server_module._extract_ip_candidates("win32", output)
+        self.assertEqual(candidates, [("192.168.1.20", 2)])
+        self.assertEqual(
+            server_module._select_local_ip(
+                "10.8.0.2",
+                candidates,
+                "192.168.1.20",
+            ),
+            "192.168.1.20",
+        )
+
+    def test_ip_selection_is_conservative_for_ambiguous_physical_adapters(self):
+        output = """
+以太网适配器 Ethernet:
+   IPv4 Address. . . . . . . . . . . : 192.168.10.20
+
+无线局域网适配器 WLAN:
+   IPv4 Address. . . . . . . . . . . : 192.168.20.20
+"""
+        candidates = server_module._extract_ip_candidates("win32", output)
+        self.assertEqual(
+            server_module._select_local_ip(
+                "10.8.0.2",
+                candidates,
+                "192.168.10.20",
+            ),
+            "本机IP",
+        )
+        self.assertEqual(
+            server_module._select_local_ip(
+                "192.168.20.20",
+                candidates,
+                "192.168.10.20",
+            ),
+            "192.168.20.20",
+        )
+        self.assertEqual(
+            server_module._select_local_ip("10.8.0.2", [], ""),
+            "本机IP",
+        )
+
+    def test_ip_selection_prefers_route_when_it_is_a_physical_candidate(self):
+        self.assertEqual(
+            server_module._select_local_ip(
+                "10.0.0.3",
+                [
+                    ("10.0.0.3", 2),
+                    ("172.20.0.3", 2),
+                    ("192.168.50.3", 2),
+                ],
+                "10.0.0.3",
+            ),
+            "10.0.0.3",
+        )
+        self.assertEqual(
+            server_module._select_local_ip(
+                "10.8.0.2",
+                [
+                    ("172.20.0.3", 2),
+                    ("192.168.50.3", 2),
+                ],
+                "192.168.50.3",
+            ),
+            "本机IP",
+        )
+
+    def test_first_observation_without_history_establishes_quiet_baseline(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            result = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.10:8080",
+                log_dir=Path(temp_dir) / "logs",
+                detected_at="2026-07-24T10:00:00+08:00",
+            )
+            state = app_module._read_network_state(state_path)
+            self.assertIsNone(result["pending"])
+            self.assertEqual(
+                state["last_acknowledged_url"],
+                "http://192.168.1.10:8080",
+            )
+            self.assertEqual(
+                state["last_observed_url"],
+                "http://192.168.1.10:8080",
+            )
+
+    def test_missing_state_uses_latest_log_without_old_history_false_alarm(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            (log_dir / "server.log").write_text(
+                "2026-07-23 INFO root: 会议室预约系统启动，"
+                "本机地址=http://127.0.0.1:8080，"
+                "局域网地址=http://192.168.1.10:8080\n"
+                "2026-07-24 INFO root: 会议室预约系统启动，"
+                "本机地址=http://127.0.0.1:8080，"
+                "局域网地址=http://192.168.1.11:8080\n",
+                encoding="utf-8",
+            )
+            state_path = root / app_module.NETWORK_STATE_FILENAME
+            result = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.11:8080",
+                log_dir=log_dir,
+                detected_at="2026-07-24T10:00:00+08:00",
+            )
+            self.assertIsNone(result["pending"])
+
+    def test_missing_state_uses_latest_different_log_as_real_change(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            (log_dir / "server.log").write_text(
+                "局域网地址=http://192.168.1.10:8080\n",
+                encoding="utf-8",
+            )
+            result = app_module.observe_network_url(
+                root / app_module.NETWORK_STATE_FILENAME,
+                "http://192.168.1.11:8080",
+                log_dir=log_dir,
+                detected_at="2026-07-24T10:00:00+08:00",
+            )
+            self.assertEqual(
+                result["pending"],
+                {
+                    "kind": "changed",
+                    "old_url": "http://192.168.1.10:8080",
+                    "new_url": "http://192.168.1.11:8080",
+                    "detected_at": "2026-07-24T10:00:00+08:00",
+                },
+            )
+
+    def test_pending_notice_persists_and_collapses_a_to_c(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.10:8080",
+                detected_at="2026-07-24T10:00:00+08:00",
+            )
+            app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.11:8080",
+                detected_at="2026-07-24T10:01:00+08:00",
+            )
+            repeated = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.11:8080",
+                detected_at="2026-07-24T10:02:00+08:00",
+            )
+            self.assertEqual(
+                repeated["pending"]["detected_at"],
+                "2026-07-24T10:01:00+08:00",
+            )
+
+            changed_again = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.12:9090",
+                detected_at="2026-07-24T10:03:00+08:00",
+            )
+            self.assertEqual(
+                changed_again["pending"],
+                {
+                    "kind": "changed",
+                    "old_url": "http://192.168.1.10:8080",
+                    "new_url": "http://192.168.1.12:9090",
+                    "detected_at": "2026-07-24T10:03:00+08:00",
+                },
+            )
+            self.assertEqual(
+                app_module.pending_network_change(state_path),
+                changed_again["pending"],
+            )
+
+    def test_observe_and_stale_acknowledgement_are_one_locked_transaction(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            address_a = "http://192.168.1.10:8080"
+            address_b = "http://192.168.1.11:8080"
+            address_c = "http://192.168.1.12:8080"
+            app_module.observe_network_url(state_path, address_a)
+            app_module.observe_network_url(state_path, address_b)
+
+            original_write = app_module._write_network_state
+            observer_inside_write = threading.Event()
+            release_observer = threading.Event()
+            acknowledgement_finished = threading.Event()
+            result = {}
+
+            def controlled_write(path, state):
+                if threading.current_thread().name == "network-observer":
+                    observer_inside_write.set()
+                    self.assertTrue(release_observer.wait(2))
+                return original_write(path, state)
+
+            def observe():
+                result["observe"] = app_module.observe_network_url(
+                    state_path,
+                    address_c,
+                )
+
+            def acknowledge():
+                result["ack"] = app_module.acknowledge_network_change(
+                    state_path,
+                    expected_url=address_b,
+                )
+                acknowledgement_finished.set()
+
+            with mock.patch.object(
+                app_module,
+                "_write_network_state",
+                side_effect=controlled_write,
+            ):
+                observer = threading.Thread(
+                    target=observe,
+                    name="network-observer",
+                )
+                observer.start()
+                self.assertTrue(observer_inside_write.wait(2))
+                acknowledger = threading.Thread(
+                    target=acknowledge,
+                    name="network-acknowledger",
+                )
+                acknowledger.start()
+                self.assertFalse(acknowledgement_finished.wait(0.05))
+                release_observer.set()
+                observer.join(2)
+                acknowledger.join(2)
+
+            self.assertFalse(observer.is_alive())
+            self.assertFalse(acknowledger.is_alive())
+            self.assertTrue(result["observe"]["updated"])
+            self.assertFalse(result["ack"])
+            self.assertEqual(
+                app_module.pending_network_change(state_path),
+                {
+                    "kind": "changed",
+                    "old_url": address_a,
+                    "new_url": address_c,
+                    "detected_at": result["observe"]["pending"]["detected_at"],
+                },
+            )
+
+    def test_port_change_is_a_real_address_change_and_revert_clears_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            app_module.observe_network_url(
+                state_path, "http://10.0.0.8:8080"
+            )
+            changed = app_module.observe_network_url(
+                state_path, "http://10.0.0.8:8081"
+            )
+            self.assertIsNotNone(changed["pending"])
+            reverted = app_module.observe_network_url(
+                state_path, "http://10.0.0.8:8080"
+            )
+            self.assertIsNone(reverted["pending"])
+
+    def test_invalid_current_url_never_overwrites_valid_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            app_module.observe_network_url(
+                state_path, "http://192.168.1.10:8080"
+            )
+            original = state_path.read_bytes()
+            for invalid in (
+                "http://本机IP:8080",
+                "http://127.0.0.1:8080",
+                "http://198.18.0.2:8080",
+                "http://192.168.1.10:8080/<script>",
+            ):
+                result = app_module.observe_network_url(state_path, invalid)
+                self.assertEqual(result["error"], "invalid-current-url")
+                self.assertEqual(state_path.read_bytes(), original)
+
+    def test_corrupt_or_oversized_state_is_recovered_without_blocking(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_path = root / app_module.NETWORK_STATE_FILENAME
+            state_path.write_text("{bad json", encoding="utf-8")
+            recovered = app_module.observe_network_url(
+                state_path, "http://192.168.1.10:8080"
+            )
+            self.assertEqual(recovered["pending"]["kind"], "verify")
+            self.assertNotIn("old_url", recovered["pending"])
+            self.assertEqual(
+                app_module._read_network_state(state_path)["pending"],
+                recovered["pending"],
+            )
+            repeated = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.10:8080",
+                detected_at="2026-07-24T11:00:00+08:00",
+            )
+            self.assertEqual(repeated["pending"], recovered["pending"])
+
+            state_path.write_bytes(
+                b"x" * (app_module.NETWORK_STATE_MAX_BYTES + 1)
+            )
+            recovered = app_module.observe_network_url(
+                state_path, "http://192.168.1.11:8080"
+            )
+            self.assertEqual(recovered["pending"]["kind"], "verify")
+            self.assertEqual(
+                app_module._read_network_state(state_path)[
+                    "last_acknowledged_url"
+                ],
+                "http://192.168.1.11:8080",
+            )
+
+    def test_corrupt_state_recovers_last_different_logged_address(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            log_dir = root / "logs"
+            log_dir.mkdir()
+            (log_dir / "server.log").write_text(
+                "局域网地址=http://192.168.1.10:8080\n"
+                "局域网地址=http://192.168.1.11:8080\n",
+                encoding="utf-8",
+            )
+            state_path = root / app_module.NETWORK_STATE_FILENAME
+            state_path.write_text("{damaged", encoding="utf-8")
+            result = app_module.observe_network_url(
+                state_path,
+                "http://192.168.1.11:8080",
+                log_dir=log_dir,
+                detected_at="2026-07-24T10:00:00+08:00",
+            )
+            self.assertEqual(
+                result["pending"],
+                {
+                    "kind": "changed",
+                    "old_url": "http://192.168.1.10:8080",
+                    "new_url": "http://192.168.1.11:8080",
+                    "detected_at": "2026-07-24T10:00:00+08:00",
+                },
+            )
+
+    def test_verify_warning_becomes_known_change_if_address_moves_again(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            address_b = "http://192.168.1.11:8080"
+            address_c = "http://192.168.1.12:8080"
+            state_path.write_text("{damaged", encoding="utf-8")
+            verify = app_module.observe_network_url(state_path, address_b)
+            self.assertEqual(verify["pending"]["kind"], "verify")
+            changed = app_module.observe_network_url(
+                state_path,
+                address_c,
+                detected_at="2026-07-24T12:00:00+08:00",
+            )
+            self.assertEqual(
+                changed["pending"],
+                {
+                    "kind": "changed",
+                    "old_url": address_b,
+                    "new_url": address_c,
+                    "detected_at": "2026-07-24T12:00:00+08:00",
+                },
+            )
+
+    def test_network_state_write_failure_does_not_block_startup(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / app_module.NETWORK_STATE_FILENAME
+            app_module.observe_network_url(
+                state_path, "http://192.168.1.10:8080"
+            )
+            original = state_path.read_bytes()
+            with mock.patch.object(
+                app_module,
+                "_atomic_write_text",
+                side_effect=OSError("read only"),
+            ):
+                result = app_module.observe_network_url(
+                    state_path, "http://192.168.1.11:8080"
+                )
+            self.assertEqual(result["error"], "write-failed")
+            self.assertEqual(state_path.read_bytes(), original)
+
+    def test_check_mode_does_not_create_runtime_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir) / "must-not-exist"
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "MEETING_ROOM_DATA_DIR": str(data_dir),
+                    "MEETING_ROOM_PORT": "65534",
+                }
+            )
+            result = subprocess.run(
+                [sys.executable, str(Path(server_module.__file__)), "--check"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertFalse(data_dir.exists())
 
 
 class DatabaseMigrationTests(unittest.TestCase):
@@ -776,6 +2069,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             (4, [(2, noop), (4, noop)], "gap"),
             (3, [(3, noop), (2, noop)], "out_of_order"),
             (3, [(2, noop)], "highest_mismatch"),
+            (1, [(2, noop)], "registered_above_schema_version"),
         )
 
         for schema_version, migrations, label in invalid_registries:
@@ -847,6 +2141,11 @@ class MigrateCheckCommandTests(unittest.TestCase):
     def test_migrate_success_and_failure_exit_codes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             data_dir = Path(temp_dir) / "healthy-data"
+            data_dir.mkdir()
+            # --migrate 只服务于已有安装，不能负责新建数据库；这里先放置一个
+            # 可打开的既有数据库文件，再验证 init_db/迁移与自检。
+            with closing(sqlite3.connect(data_dir / "reservation.db")):
+                pass
             log_path = Path(temp_dir) / "upgrade.log"
             environment = dict(os.environ)
             environment.update(
@@ -889,9 +2188,32 @@ class MigrateCheckCommandTests(unittest.TestCase):
                 "高于当前程序版本", log_path.read_text(encoding="utf-8")
             )
 
-    def test_version_file_is_v101(self):
+    def test_migrate_rejects_missing_database_without_creating_one(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            data_dir = Path(temp_dir) / "missing-data"
+            log_path = Path(temp_dir) / "upgrade.log"
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "MEETING_ROOM_DATA_DIR": str(data_dir),
+                    "MEETING_ROOM_INITIAL_ADMIN_PASSWORD": "test-password",
+                    "MEETING_ROOM_UPGRADE_LOG": str(log_path),
+                }
+            )
+
+            result = self.run_command("--migrate", environment=environment)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("数据库文件不存在", result.stderr)
+            self.assertIn("疑似数据丢失", result.stderr)
+            self.assertFalse((data_dir / "reservation.db").exists())
+            self.assertIn(
+                "数据库文件不存在", log_path.read_text(encoding="utf-8")
+            )
+
+    def test_version_file_is_v102(self):
         version_file = self.SCRIPT.parent / "版本.txt"
-        self.assertEqual(version_file.read_text(encoding="utf-8").strip(), "1.0.1")
+        self.assertEqual(version_file.read_bytes(), b"1.0.2\n")
 
 
 if __name__ == "__main__":

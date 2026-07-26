@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
+BROKER_MARKER = "__UPGRADE_BROKER_PS1_BELOW__"
 PS_MARKER = "__UPGRADE_PS1_BELOW__"
 PAYLOAD_MARKER = "__UPGRADE_PAYLOAD_BELOW__"
 VERSION_PLACEHOLDER = "__PACKAGE_VERSION__"
@@ -32,6 +33,7 @@ SHA256_PLACEHOLDER = "__PAYLOAD_SHA256__"
 
 TOOL_DIR = Path(__file__).resolve().parent
 DEFAULT_STUB = TOOL_DIR / "bat头部模板.bat"
+DEFAULT_BROKER = TOOL_DIR / "升级入口代理.ps1"
 DEFAULT_POWERSHELL = TOOL_DIR / "升级主逻辑.ps1"
 DEFAULT_FROZEN_REQUIREMENTS = (
     TOOL_DIR.parent
@@ -404,11 +406,12 @@ def _replace_unique(text: str, placeholder: str, value: str) -> str:
 
 def render_package(
     stub_text: str,
+    broker_template: str,
     powershell_template: str,
     version: str,
     zip_bytes: bytes,
-) -> Tuple[bytes, str, str, str]:
-    """渲染最终 BAT，返回成品、ZIP 哈希和规范化后的 stub/PS1。"""
+) -> Tuple[bytes, str, str, str, str]:
+    """渲染最终 BAT，返回成品、ZIP 哈希和规范化后的三个入口区段。"""
 
     validate_version(version)
     zip_sha256 = hashlib.sha256(zip_bytes).hexdigest()
@@ -421,6 +424,7 @@ def render_package(
         raise PackageBuildError(
             "BAT 头部模板最后一条非空命令必须是 exit /b，防止继续执行嵌入内容"
         )
+    broker = _ensure_final_lf(_normalize_newlines(broker_template))
     powershell = _normalize_newlines(powershell_template)
     powershell = _replace_unique(powershell, VERSION_PLACEHOLDER, version)
     powershell = _replace_unique(powershell, SHA256_PLACEHOLDER, zip_sha256)
@@ -433,6 +437,9 @@ def render_package(
 
     package_lf = (
         stub
+        + BROKER_MARKER
+        + "\n"
+        + broker
         + PS_MARKER
         + "\n"
         + powershell
@@ -442,7 +449,7 @@ def render_package(
         + "\n"
     )
     package_bytes = package_lf.replace("\n", "\r\n").encode("utf-8")
-    return package_bytes, zip_sha256, stub, powershell
+    return package_bytes, zip_sha256, stub, broker, powershell
 
 
 def _marker_match(text_lf: str, marker: str) -> re.Match[str]:
@@ -523,6 +530,7 @@ def verify_package_bytes(
     expected_files: Mapping[str, bytes],
     expected_zip_sha256: str,
     expected_stub_lf: Optional[str] = None,
+    expected_broker_lf: Optional[str] = None,
     expected_powershell_lf: Optional[str] = None,
 ) -> bytes:
     """反向拆分并验证成品，成功时返回解码后的原始 ZIP。"""
@@ -538,21 +546,32 @@ def verify_package_bytes(
         raise PackageBuildError("最终 BAT 不是合法 UTF-8") from exc
     text_lf = text_crlf.replace("\r\n", "\n")
 
+    broker_match = _marker_match(text_lf, BROKER_MARKER)
     ps_match = _marker_match(text_lf, PS_MARKER)
     payload_match = _marker_match(text_lf, PAYLOAD_MARKER)
-    if ps_match.start() >= payload_match.start():
-        raise PackageBuildError("PS1 标记必须位于 Payload 标记之前")
+    if not (
+        broker_match.start() < ps_match.start() < payload_match.start()
+    ):
+        raise PackageBuildError(
+            "入口代理、升级主逻辑和 Payload 标记顺序错误"
+        )
 
+    broker_start = _position_after_marker_line(text_lf, broker_match)
     ps_start = _position_after_marker_line(text_lf, ps_match)
     payload_start = _position_after_marker_line(text_lf, payload_match)
-    stub = text_lf[: ps_match.start()]
+    stub = text_lf[: broker_match.start()]
+    broker = text_lf[broker_start : ps_match.start()]
     powershell = text_lf[ps_start : payload_match.start()]
     payload_text = text_lf[payload_start:]
 
     if expected_stub_lf is not None and stub != expected_stub_lf:
         raise PackageBuildError("成品中的 BAT stub 与模板不一致")
+    if expected_broker_lf is not None and broker != expected_broker_lf:
+        raise PackageBuildError("成品中的入口代理与模板不一致")
     if expected_powershell_lf is not None and powershell != expected_powershell_lf:
         raise PackageBuildError("stub 抽取出的 PowerShell 与替换后模板不一致")
+    if re.search(r"(?m)^%s$" % re.escape(PS_MARKER), broker):
+        raise PackageBuildError("抽取出的入口代理错误包含升级主逻辑标记")
     if re.search(r"(?m)^%s$" % re.escape(PAYLOAD_MARKER), powershell):
         raise PackageBuildError("抽取出的 PowerShell 错误包含独占整行 Payload 标记")
     if VERSION_PLACEHOLDER in powershell or SHA256_PLACEHOLDER in powershell:
@@ -640,15 +659,23 @@ def build_package(
     payload_root = Path(payload_dir)
     templates = Path(template_dir or TOOL_DIR)
     stub_path = templates / "bat头部模板.bat"
+    broker_path = templates / "升级入口代理.ps1"
     powershell_path = templates / "升级主逻辑.ps1"
     frozen_path = Path(frozen_requirements_path or DEFAULT_FROZEN_REQUIREMENTS)
 
     files = collect_payload(payload_root, version, frozen_path)
     zip_bytes = build_deterministic_zip(files)
     stub_text = _load_template(stub_path, "BAT 头部模板")
+    broker_text = _load_template(broker_path, "PowerShell 入口代理模板")
     powershell_text = _load_template(powershell_path, "PowerShell 主逻辑模板")
-    package_bytes, zip_sha256, normalized_stub, normalized_powershell = render_package(
-        stub_text, powershell_text, version, zip_bytes
+    (
+        package_bytes,
+        zip_sha256,
+        normalized_stub,
+        normalized_broker,
+        normalized_powershell,
+    ) = render_package(
+        stub_text, broker_text, powershell_text, version, zip_bytes
     )
     # 写盘前先在内存中完整反向验证，避免用坏包覆盖已有成品。
     verify_package_bytes(
@@ -656,6 +683,7 @@ def build_package(
         files,
         zip_sha256,
         normalized_stub,
+        normalized_broker,
         normalized_powershell,
     )
 
@@ -677,6 +705,7 @@ def build_package(
     protected_paths = {
         Path(__file__).resolve(),
         stub_path.resolve(),
+        broker_path.resolve(),
         powershell_path.resolve(),
         frozen_path.resolve(),
     }
@@ -715,6 +744,7 @@ def build_package(
             current_files,
             zip_sha256,
             normalized_stub,
+            normalized_broker,
             normalized_powershell,
         )
         os.replace(str(temporary_path), str(output))
