@@ -289,18 +289,37 @@ function Invoke-ZeroArgumentBat {
     $oldNoPause = [Environment]::GetEnvironmentVariable(
         'MEETING_ROOM_UPDATE_NO_PAUSE'
     )
+    $hadBatToRun = Test-Path -LiteralPath 'Env:MEETING_ROOM_UPDATE_BAT_TO_RUN'
+    $oldBatToRun = [Environment]::GetEnvironmentVariable(
+        'MEETING_ROOM_UPDATE_BAT_TO_RUN'
+    )
+    $workingDirectory = Split-Path -Parent $BatPath
+    $wrapperName = '__overlay_ci_zero_argument.cmd'
+    $wrapperPath = Join-Path $workingDirectory $wrapperName
     try {
         $env:MEETING_ROOM_UPDATE_INSTALL_ROOT = $InstallRoot
         $env:MEETING_ROOM_UPDATE_NO_PAUSE = '1'
+        $env:MEETING_ROOM_UPDATE_BAT_TO_RUN = $BatPath
+        [IO.File]::WriteAllText(
+            $wrapperPath,
+            (
+                "@echo off`r`n" +
+                "call `"%MEETING_ROOM_UPDATE_BAT_TO_RUN%`"`r`n" +
+                "exit /b %errorlevel%`r`n"
+            ),
+            [Text.Encoding]::ASCII
+        )
         Write-Host "Start-Process zero-argument BAT: $BatPath"
         Write-Host "Install root inherited through environment: $InstallRoot"
 
         # 故意不传任何命令行参数：验证交付给客户的零参数 BAT，且 BAT 路径
         # 自身包含中文、空格、(1) 和 &。Hosted runner 已是管理员，因此本函数
-        # 不覆盖普通用户 Explorer -> UAC 安全桌面的人工验收路径。
+        # 不覆盖普通用户 Explorer -> UAC 安全桌面的人工验收路径。CMD 包装器
+        # 只负责可靠取得批处理退出码；原 BAT 仍以零参数运行。
         $process = Start-Process `
-            -FilePath $BatPath `
-            -WorkingDirectory (Split-Path -Parent $BatPath) `
+            -FilePath $env:ComSpec `
+            -ArgumentList @('/d', '/c', $wrapperName) `
+            -WorkingDirectory $workingDirectory `
             -NoNewWindow `
             -PassThru
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
@@ -324,6 +343,13 @@ function Invoke-ZeroArgumentBat {
         else {
             Remove-Item Env:MEETING_ROOM_UPDATE_NO_PAUSE -ErrorAction SilentlyContinue
         }
+        if ($hadBatToRun) {
+            $env:MEETING_ROOM_UPDATE_BAT_TO_RUN = $oldBatToRun
+        }
+        else {
+            Remove-Item Env:MEETING_ROOM_UPDATE_BAT_TO_RUN -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $wrapperPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -705,25 +731,93 @@ try {
         -EvidencePath (Join-Path $evidenceRoot 'success-repeat-run.log')
     $results.repeat_run_success = $true
 
-    # 独占新锁后启动同一个零参数 BAT，应稳定返回 4，且不改程序或 data。
+    # 用包内 updater 自身持有新锁后启动同一个零参数 BAT，应稳定返回 4，
+    # 且不改程序或 data。不要用 FileShare.None 代替真实字节锁：那会在
+    # Python 打开锁文件时提前触发共享拒绝，不是两个更新器并发的实际路径。
     $lockPath = Join-Path $successProgram '_V102覆盖更新锁'
     $versionBeforeLock = (
         Get-Content -LiteralPath (Join-Path $successProgram '版本.txt') -Raw
     ).Trim()
     $dataBeforeLock = Get-TreeFingerprint -Root $successData
-    $lockStream = [IO.File]::Open(
-        $lockPath,
-        [IO.FileMode]::OpenOrCreate,
-        [IO.FileAccess]::ReadWrite,
-        [IO.FileShare]::None
-    )
+    $lockHelper = Join-Path $workRoot 'hold-overlay-updater-lock.py'
+    $lockReady = Join-Path $workRoot 'overlay-updater-lock.ready'
+    $lockRelease = Join-Path $workRoot 'overlay-updater-lock.release'
+    $lockStdout = Join-Path $workRoot 'overlay-updater-lock.stdout.log'
+    $lockStderr = Join-Path $workRoot 'overlay-updater-lock.stderr.log'
+    $lockPython = Join-Path $successPackage '_V1.0.2更新工具\runtime\python.exe'
+    $lockUpdater = Join-Path $successPackage '_V1.0.2更新工具\update.py'
+    Write-Utf8NoBom -Path $lockHelper -Content @'
+import importlib.util
+import os
+import pathlib
+import sys
+import time
+
+updater_path = pathlib.Path(os.environ["MEETING_ROOM_CI_LOCK_UPDATER"])
+lock_path = pathlib.Path(os.environ["MEETING_ROOM_CI_LOCK_PATH"])
+ready_path = pathlib.Path(os.environ["MEETING_ROOM_CI_LOCK_READY"])
+release_path = pathlib.Path(os.environ["MEETING_ROOM_CI_LOCK_RELEASE"])
+spec = importlib.util.spec_from_file_location("meeting_room_ci_lock_updater", updater_path)
+if spec is None or spec.loader is None:
+    raise RuntimeError("cannot load overlay updater")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+with module.ExclusiveLock(lock_path):
+    ready_path.write_text("ready\n", encoding="utf-8")
+    while not release_path.exists():
+        time.sleep(0.05)
+'@
+    Remove-Item -LiteralPath $lockReady, $lockRelease, $lockStdout, $lockStderr `
+        -Force -ErrorAction SilentlyContinue
+    $env:MEETING_ROOM_CI_LOCK_UPDATER = $lockUpdater
+    $env:MEETING_ROOM_CI_LOCK_PATH = $lockPath
+    $env:MEETING_ROOM_CI_LOCK_READY = $lockReady
+    $env:MEETING_ROOM_CI_LOCK_RELEASE = $lockRelease
     try {
+        $lockHolder = Start-Process `
+            -FilePath $lockPython `
+            -ArgumentList @(('"{0}"' -f $lockHelper)) `
+            -WorkingDirectory (Split-Path -Parent $lockUpdater) `
+            -RedirectStandardOutput $lockStdout `
+            -RedirectStandardError $lockStderr `
+            -WindowStyle Hidden `
+            -PassThru
+    }
+    finally {
+        Remove-Item Env:MEETING_ROOM_CI_LOCK_UPDATER -ErrorAction SilentlyContinue
+        Remove-Item Env:MEETING_ROOM_CI_LOCK_PATH -ErrorAction SilentlyContinue
+        Remove-Item Env:MEETING_ROOM_CI_LOCK_READY -ErrorAction SilentlyContinue
+        Remove-Item Env:MEETING_ROOM_CI_LOCK_RELEASE -ErrorAction SilentlyContinue
+    }
+    try {
+        for ($attempt = 0; $attempt -lt 100; $attempt++) {
+            if (Test-Path -LiteralPath $lockReady -PathType Leaf) {
+                break
+            }
+            if ($lockHolder.HasExited) {
+                $lockHolder.Refresh()
+                $details = @(
+                    Get-Content -LiteralPath $lockStdout, $lockStderr `
+                        -ErrorAction SilentlyContinue
+                ) -join "`n"
+                throw "包内 updater 未能持有并发锁，退出码 $($lockHolder.ExitCode)：$details"
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        Assert-True (
+            Test-Path -LiteralPath $lockReady -PathType Leaf
+        ) '等待包内 updater 持有并发锁超时'
         $lockExit = Invoke-ZeroArgumentBat `
             -BatPath $successLauncher `
             -InstallRoot $successInstall
     }
     finally {
-        $lockStream.Dispose()
+        Write-Utf8NoBom -Path $lockRelease -Content "release`n"
+        if (-not $lockHolder.WaitForExit(10000)) {
+            Stop-Process -Id $lockHolder.Id -Force -ErrorAction SilentlyContinue
+            throw '包内 updater 并发锁辅助进程没有退出'
+        }
     }
     Assert-True ($lockExit -eq 4) "锁冲突退出码不是 4：$lockExit"
     Assert-True (
