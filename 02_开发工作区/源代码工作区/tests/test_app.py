@@ -157,6 +157,8 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 "SELECT value FROM app_meta WHERE key = 'schema_version'"
             ).fetchone()[0]
         self.assertEqual(int(version), SCHEMA_VERSION)
+        self.assertEqual(SCHEMA_VERSION, 1)
+        self.assertEqual(app_module.MIGRATIONS, [])
 
     def test_login_and_admin_authorization(self):
         response = self.login(password="wrong")
@@ -246,6 +248,7 @@ class MeetingRoomSystemTests(unittest.TestCase):
 
         admin_html = self.login().get_data(as_text=True)
         self.assertIn('class="network-address-current"', admin_html)
+        self.assertIn("network-address-current-compact", admin_html)
         self.assertIn("同事当前访问", admin_html)
         self.assertIn(current_url, admin_html)
         self.assertIn('data-copy-label="复制网址"', admin_html)
@@ -265,6 +268,10 @@ class MeetingRoomSystemTests(unittest.TestCase):
         css_response.close()
         self.assertIn(
             ".site-header, .network-address-current, .network-address-alert",
+            css,
+        )
+        self.assertIn(
+            ".network-address-current-inner.network-address-current-compact",
             css,
         )
 
@@ -593,6 +600,37 @@ class MeetingRoomSystemTests(unittest.TestCase):
         self.assertEqual(after_close.count("data-calendar-focus"), 1)
         self.assertNotIn(">现在</small>", after_close)
         self.assertNotIn("/reserve?", after_close)
+
+    def test_calendar_date_jump_and_safe_busy_slot_details(self):
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 9, 0)
+        self.login()
+        self.insert_reservation(
+            "2026-07-25",
+            start_time="09:00",
+            end_time="10:00",
+        )
+
+        html = self.client.get("/?date=2026-07-25").get_data(as_text=True)
+        self.assertIn('class="date-jump-form"', html)
+        self.assertIn('name="date"', html)
+        self.assertIn('type="date"', html)
+        self.assertIn('value="2026-07-25"', html)
+        self.assertIn('id="reservation-details-dialog"', html)
+        self.assertIn("查看预约详情", html)
+        self.assertIn('data-reservation-person="管理员"', html)
+        self.assertIn('data-reservation-party="测试单位"', html)
+        self.assertIn('data-reservation-case="测试案号"', html)
+        self.assertEqual(html.count('data-reservation-start="09:00"'), 2)
+        self.assertEqual(html.count('data-reservation-end="10:00"'), 2)
+        self.assertNotIn("测试备注", html)
+        self.assertNotIn("data-reservation-notes", html)
+
+        script_response = self.client.get("/static/app.js")
+        script = script_response.get_data(as_text=True)
+        script_response.close()
+        self.assertIn("[data-reservation-details]", script)
+        self.assertIn("detail.textContent", script)
+        self.assertNotIn("detail.innerHTML", script)
 
     def test_reservation_form_and_flash_include_comfort_guards(self):
         fixed_now = datetime(2026, 7, 24, 9, 27)
@@ -1048,6 +1086,62 @@ class MeetingRoomSystemTests(unittest.TestCase):
                 "SELECT status FROM reservations WHERE id = ?", (reservation_id,)
             ).fetchone()[0]
         self.assertEqual(status, "pending")
+
+    def test_my_reservations_prioritizes_upcoming_and_collapses_history(self):
+        self.app.config["NOW_PROVIDER"] = lambda: datetime(2026, 7, 24, 9, 30)
+        self.login()
+        soon_id = self.insert_reservation(
+            "2026-07-25", start_time="09:00", end_time="09:30"
+        )
+        later_id = self.insert_reservation(
+            "2026-07-26", start_time="10:00", end_time="10:30"
+        )
+        completed_id = self.insert_reservation(
+            "2026-07-23", start_time="09:00", end_time="09:30"
+        )
+        cancelled_id = self.insert_reservation(
+            "2026-07-27", start_time="11:00", end_time="11:30"
+        )
+        with self.app.app_context():
+            db = get_db()
+            db.execute(
+                "UPDATE reservations SET case_number = ? WHERE id = ?",
+                ("UPCOMING-SOON", soon_id),
+            )
+            db.execute(
+                "UPDATE reservations SET case_number = ? WHERE id = ?",
+                ("UPCOMING-LATER", later_id),
+            )
+            db.execute(
+                "UPDATE reservations SET case_number = ? WHERE id = ?",
+                ("HISTORY-COMPLETED", completed_id),
+            )
+            db.execute(
+                """
+                UPDATE reservations
+                SET case_number = ?, status = 'cancelled'
+                WHERE id = ?
+                """,
+                ("HISTORY-CANCELLED", cancelled_id),
+            )
+
+        html = self.client.get("/my").get_data(as_text=True)
+        self.assertIn('data-reservation-section="upcoming"', html)
+        self.assertIn('<details class="reservation-history">', html)
+        self.assertNotIn('<details class="reservation-history" open', html)
+        self.assertIn("待使用预约", html)
+        self.assertIn("历史记录", html)
+        self.assertIn("reservation-table-desktop", html)
+        self.assertIn("reservation-card-list", html)
+        self.assertLess(
+            html.index("UPCOMING-SOON"),
+            html.index("UPCOMING-LATER"),
+        )
+        self.assertLess(
+            html.index("UPCOMING-LATER"),
+            html.index("HISTORY-CANCELLED"),
+        )
+        self.assertIn("HISTORY-COMPLETED", html)
 
     def test_reservation_is_completed_at_exact_end_time(self):
         fixed_now = datetime(2026, 7, 24, 9, 30)
@@ -2211,9 +2305,9 @@ class MigrateCheckCommandTests(unittest.TestCase):
                 "数据库文件不存在", log_path.read_text(encoding="utf-8")
             )
 
-    def test_version_file_is_v102(self):
+    def test_version_file_is_v103(self):
         version_file = self.SCRIPT.parent / "版本.txt"
-        self.assertEqual(version_file.read_bytes(), b"1.0.2\n")
+        self.assertEqual(version_file.read_bytes(), b"1.0.3\n")
 
 
 if __name__ == "__main__":

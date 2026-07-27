@@ -87,7 +87,7 @@ jobs:
             throw "PowerShell parser reported $($errors.Count) error(s)."
           }
 
-      - name: Run zero-argument overlay repair integration on elevated runner
+      - name: Run zero-argument r1 repair and V1.0.3 candidate integrations
         shell: powershell
         run: .\.github\scripts\windows-overlay-update-integration.ps1
 
@@ -119,4 +119,7 @@ jobs:
             ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.zip
             ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.json
             ${{ runner.temp }}\meeting-room-overlay-ci\installs\**\repair-update-*.log
+            ${{ runner.temp }}\meeting-room-overlay-ci\formal-release\**\*.zip
+            ${{ runner.temp }}\meeting-room-overlay-ci\formal-release\**\*.json
+            ${{ runner.temp }}\meeting-room-overlay-ci\installs\**\formal-update-*.log
             ${{ runner.temp }}\meeting-room-overlay-ci\evidence\**

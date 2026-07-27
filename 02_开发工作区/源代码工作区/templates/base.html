@@ -32,7 +32,7 @@
 
     {% if current_user and current_user.is_admin and network_address and not network_change %}
     <section class="network-address-current" aria-label="同事当前访问地址">
-        <div class="network-address-current-inner">
+        <div class="network-address-current-inner{% if network_address.current_url %} network-address-current-compact{% endif %}">
             {% if network_address.current_url %}
             <div class="network-address-current-copy">
                 <span>同事当前访问</span>

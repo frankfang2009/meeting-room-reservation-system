@@ -51,6 +51,42 @@
         });
     });
 
+    var reservationDetailsDialog = document.getElementById(
+        "reservation-details-dialog"
+    );
+    if (reservationDetailsDialog) {
+        var reservationDetailFields = {};
+        reservationDetailsDialog
+            .querySelectorAll("[data-reservation-detail]")
+            .forEach(function (detail) {
+                reservationDetailFields[detail.dataset.reservationDetail] = detail;
+            });
+
+        document
+            .querySelectorAll("[data-reservation-details]")
+            .forEach(function (button) {
+                button.addEventListener("click", function () {
+                    var values = {
+                        room: button.dataset.reservationRoom,
+                        date: button.dataset.reservationDate,
+                        time: (
+                            button.dataset.reservationStart +
+                            "–" +
+                            button.dataset.reservationEnd
+                        ),
+                        person: button.dataset.reservationPerson,
+                        party: button.dataset.reservationParty,
+                        case: button.dataset.reservationCase
+                    };
+                    Object.keys(reservationDetailFields).forEach(function (key) {
+                        var detail = reservationDetailFields[key];
+                        detail.textContent = values[key] || "—";
+                    });
+                    reservationDetailsDialog.showModal();
+                });
+            });
+    }
+
     var startSelect = document.getElementById("start-time");
     var endSelect = document.getElementById("end-time");
     if (startSelect && endSelect) {

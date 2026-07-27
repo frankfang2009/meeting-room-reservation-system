@@ -1122,7 +1122,17 @@ def _limited_text(value: Any, limit: int) -> str:
 def _room_reservations(room_id: int, target_date: str) -> list[dict[str, Any]]:
     rows = get_db().execute(
         """
-        SELECT r.*, u.display_name
+        SELECT
+            r.id,
+            r.room_id,
+            r.reserve_date,
+            r.start_time,
+            r.end_time,
+            r.user_id,
+            r.party_name,
+            r.case_number,
+            r.status,
+            u.display_name
         FROM reservations r
         JOIN users u ON u.id = r.user_id
         WHERE r.room_id = ? AND r.reserve_date = ? AND r.status = 'pending'
@@ -1621,7 +1631,35 @@ def _register_routes(app: Flask) -> None:
             item = dict(row)
             item["display_status"] = _reservation_display_status(item, now)
             reservations.append(item)
-        return render_template("my_reservations.html", reservations=reservations)
+        sort_key = lambda item: (
+            item["reserve_date"],
+            item["start_time"],
+            item["end_time"],
+            item["id"],
+        )
+        upcoming_reservations = sorted(
+            (
+                item
+                for item in reservations
+                if item["display_status"] == "待使用"
+            ),
+            key=sort_key,
+        )
+        history_reservations = sorted(
+            (
+                item
+                for item in reservations
+                if item["display_status"] != "待使用"
+            ),
+            key=sort_key,
+            reverse=True,
+        )
+        return render_template(
+            "my_reservations.html",
+            reservations=upcoming_reservations + history_reservations,
+            upcoming_reservations=upcoming_reservations,
+            history_reservations=history_reservations,
+        )
 
     @app.route("/admin")
     @admin_required
