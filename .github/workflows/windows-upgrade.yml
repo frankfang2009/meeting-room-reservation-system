@@ -39,15 +39,36 @@ jobs:
           Set-Location "02_开发工作区/源代码工作区"
           python -m unittest discover -s tests -v
 
+      - name: Run real BAT integration tests with Windows PowerShell 5.1
+        shell: powershell
+        run: .\.github\scripts\windows-upgrade-integration.ps1
+
+      - name: Hydrate verified frozen runtime for overlay package tests
+        shell: powershell
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "meeting-room-upgrade-ci\frozen-runtime"
+          $destination = Join-Path $PWD "02_开发工作区\Windows部署目录-V1.0.1-待实机验收\_程序文件\runtime"
+          if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            throw "旧通道集成没有生成经过校验的冻结 runtime：$source"
+          }
+          if (Test-Path -LiteralPath $destination) {
+            Remove-Item -LiteralPath $destination -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          $output = @(
+            & robocopy.exe $source $destination /MIR /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NP /NFL /NDL /NJH
+          )
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host ([string]$_) }
+          if ($exitCode -lt 0 -or $exitCode -gt 7) {
+            throw "复制冻结 runtime 失败，robocopy 退出码：$exitCode"
+          }
+
       - name: Run package-builder tests
         shell: pwsh
         run: |
           Set-Location "02_开发工作区/升级包工具"
           python -m unittest discover -s tests -v
-
-      - name: Run real BAT integration tests with Windows PowerShell 5.1
-        shell: powershell
-        run: .\.github\scripts\windows-upgrade-integration.ps1
 
       - name: Parse overlay integration script with Windows PowerShell 5.1
         shell: powershell
