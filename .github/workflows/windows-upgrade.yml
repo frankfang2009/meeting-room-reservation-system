@@ -63,6 +63,7 @@ jobs:
           if ($exitCode -lt 0 -or $exitCode -gt 7) {
             throw "复制冻结 runtime 失败，robocopy 退出码：$exitCode"
           }
+          $LASTEXITCODE = 0
 
       - name: Run package-builder tests
         shell: pwsh
