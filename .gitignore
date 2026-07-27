@@ -4,6 +4,7 @@
 .playwright-cli/
 
 **/__pycache__/
+**/.pytest_cache/
 *.py[cod]
 
 # 客户数据、凭据和运行现场永不进入版本库。

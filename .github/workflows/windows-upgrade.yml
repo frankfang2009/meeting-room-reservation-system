@@ -12,7 +12,7 @@ permissions:
 jobs:
   windows-upgrade:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       PYTHONUTF8: "1"
 
@@ -39,15 +39,71 @@ jobs:
           Set-Location "02_开发工作区/源代码工作区"
           python -m unittest discover -s tests -v
 
+      - name: Run real BAT integration tests with Windows PowerShell 5.1
+        shell: powershell
+        run: .\.github\scripts\windows-upgrade-integration.ps1
+
+      - name: Hydrate verified frozen runtime for overlay package tests
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP "meeting-room-upgrade-ci\frozen-runtime"
+          $destination = Join-Path $PWD "02_开发工作区\Windows部署目录-V1.0.1-待实机验收\_程序文件\runtime"
+          if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            throw "旧通道集成没有生成经过校验的冻结 runtime：$source"
+          }
+          if (Test-Path -LiteralPath $destination) {
+            Remove-Item -LiteralPath $destination -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          $output = @(
+            & robocopy.exe $source $destination /MIR /COPY:DAT /DCOPY:DAT /R:2 /W:1 /XJ /NP /NFL /NDL /NJH
+          )
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host ([string]$_) }
+          if ($exitCode -lt 0 -or $exitCode -gt 7) {
+            throw "复制冻结 runtime 失败，robocopy 退出码：$exitCode"
+          }
+          $LASTEXITCODE = 0
+
       - name: Run package-builder tests
         shell: pwsh
         run: |
           Set-Location "02_开发工作区/升级包工具"
           python -m unittest discover -s tests -v
 
-      - name: Run real BAT integration tests with Windows PowerShell 5.1
+      - name: Parse overlay integration script with Windows PowerShell 5.1
         shell: powershell
-        run: .\.github\scripts\windows-upgrade-integration.ps1
+        run: |
+          $tokens = $null
+          $errors = $null
+          $path = (Resolve-Path ".github\scripts\windows-overlay-update-integration.ps1").Path
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            $path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "PowerShell parser reported $($errors.Count) error(s)."
+          }
+
+      - name: Run zero-argument overlay repair integration on elevated runner
+        shell: powershell
+        run: .\.github\scripts\windows-overlay-update-integration.ps1
+
+      - name: Record standard-user UAC as a separate manual gate
+        if: always()
+        shell: pwsh
+        run: |
+          $evidence = Join-Path $env:RUNNER_TEMP "meeting-room-overlay-ci\evidence"
+          New-Item -ItemType Directory -Path $evidence -Force | Out-Null
+          @"
+          GitHub's hosted Windows runner is already elevated.
+          This workflow validates the real zero-argument BAT and updater after launch,
+          but it does not validate an ordinary user double-clicking in Explorer,
+          the UAC secure desktop/consent interaction, SmartScreen, antivirus, or group policy.
+          Those remain a separate manual Windows 10/11 acceptance gate before release.
+          "@ | Set-Content -LiteralPath (Join-Path $evidence "uac-manual-gate.txt") -Encoding utf8
 
       - name: Upload generated packages and upgrade logs
         if: always()
@@ -60,3 +116,7 @@ jobs:
             ${{ runner.temp }}\meeting-room-upgrade-ci\packages\*.bat
             ${{ runner.temp }}\meeting-room-upgrade-ci\release\**\发布清单.json
             ${{ runner.temp }}\meeting-room-upgrade-ci\installs\**\upgrade-*.log
+            ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.zip
+            ${{ runner.temp }}\meeting-room-overlay-ci\release\**\*.json
+            ${{ runner.temp }}\meeting-room-overlay-ci\installs\**\repair-update-*.log
+            ${{ runner.temp }}\meeting-room-overlay-ci\evidence\**
