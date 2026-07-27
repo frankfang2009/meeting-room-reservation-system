@@ -293,19 +293,28 @@ function Invoke-ZeroArgumentBat {
     $oldBatToRun = [Environment]::GetEnvironmentVariable(
         'MEETING_ROOM_UPDATE_BAT_TO_RUN'
     )
+    $hadExitFile = Test-Path -LiteralPath 'Env:MEETING_ROOM_UPDATE_EXIT_FILE'
+    $oldExitFile = [Environment]::GetEnvironmentVariable(
+        'MEETING_ROOM_UPDATE_EXIT_FILE'
+    )
     $workingDirectory = Split-Path -Parent $BatPath
     $wrapperName = '__overlay_ci_zero_argument.cmd'
     $wrapperPath = Join-Path $workingDirectory $wrapperName
+    $exitCodePath = Join-Path $workingDirectory '__overlay_ci_zero_argument.exit'
     try {
         $env:MEETING_ROOM_UPDATE_INSTALL_ROOT = $InstallRoot
         $env:MEETING_ROOM_UPDATE_NO_PAUSE = '1'
         $env:MEETING_ROOM_UPDATE_BAT_TO_RUN = $BatPath
+        $env:MEETING_ROOM_UPDATE_EXIT_FILE = $exitCodePath
+        Remove-Item -LiteralPath $exitCodePath -Force -ErrorAction SilentlyContinue
         [IO.File]::WriteAllText(
             $wrapperPath,
             (
                 "@echo off`r`n" +
                 "call `"%MEETING_ROOM_UPDATE_BAT_TO_RUN%`"`r`n" +
-                "exit /b %errorlevel%`r`n"
+                "set `"OVERLAY_CI_RC=%errorlevel%`"`r`n" +
+                "> `"%MEETING_ROOM_UPDATE_EXIT_FILE%`" echo %OVERLAY_CI_RC%`r`n" +
+                "exit /b %OVERLAY_CI_RC%`r`n"
             ),
             [Text.Encoding]::ASCII
         )
@@ -327,8 +336,18 @@ function Invoke-ZeroArgumentBat {
             throw "零参数 BAT 在 $TimeoutSeconds 秒内没有退出：$BatPath"
         }
         $process.Refresh()
-        Write-Host "Zero-argument BAT exit code: $($process.ExitCode)"
-        return [int]$process.ExitCode
+        Assert-True (
+            Test-Path -LiteralPath $exitCodePath -PathType Leaf
+        ) "零参数 BAT 没有写出退出码：$BatPath"
+        $exitCodeText = (
+            Get-Content -LiteralPath $exitCodePath -Raw -Encoding ASCII
+        ).Trim()
+        $exitCode = 0
+        Assert-True (
+            [int]::TryParse($exitCodeText, [ref]$exitCode)
+        ) "零参数 BAT 退出码格式非法：$exitCodeText"
+        Write-Host "Zero-argument BAT exit code: $exitCode"
+        return [int]$exitCode
     }
     finally {
         if ($hadInstallRoot) {
@@ -349,7 +368,14 @@ function Invoke-ZeroArgumentBat {
         else {
             Remove-Item Env:MEETING_ROOM_UPDATE_BAT_TO_RUN -ErrorAction SilentlyContinue
         }
-        Remove-Item -LiteralPath $wrapperPath -Force -ErrorAction SilentlyContinue
+        if ($hadExitFile) {
+            $env:MEETING_ROOM_UPDATE_EXIT_FILE = $oldExitFile
+        }
+        else {
+            Remove-Item Env:MEETING_ROOM_UPDATE_EXIT_FILE -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $wrapperPath, $exitCodePath `
+            -Force -ErrorAction SilentlyContinue
     }
 }
 
