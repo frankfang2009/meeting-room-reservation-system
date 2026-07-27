@@ -44,7 +44,7 @@ jobs:
         run: .\.github\scripts\windows-upgrade-integration.ps1
 
       - name: Hydrate verified frozen runtime for overlay package tests
-        shell: powershell
+        shell: pwsh
         run: |
           $source = Join-Path $env:RUNNER_TEMP "meeting-room-upgrade-ci\frozen-runtime"
           $destination = Join-Path $PWD "02_开发工作区\Windows部署目录-V1.0.1-待实机验收\_程序文件\runtime"
