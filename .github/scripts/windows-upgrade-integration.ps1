@@ -9,8 +9,6 @@ if ($targetVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)
     throw "源码版本号无效：$targetVersion"
 }
 $targetPackageName = "升级到V$targetVersion.bat"
-$candidatePackage = Join-Path $toolRoot "输出-待实机验收\$targetPackageName"
-$candidateManifest = Join-Path $toolRoot "输出-待实机验收\V$targetVersion-发布清单.json"
 $frozenV101Package = Join-Path $toolRoot '输出-待实机验收\升级到V1.0.1.bat'
 $expectedV101Sha256 = 'cd0d52b9ffb5d2864e7ad98d8969b86376d8577391399c30295d0722d34848cd'
 $expectedRuntimeTreeSha256 = 'b778df06bfc98d699c2aa4c68d4f146f8c6c3d55a0ce1cc7b6811251ed5aad14'
@@ -613,14 +611,12 @@ Invoke-NativeChecked -FilePath $hostPython -Arguments @(
 $preparedRelease = Join-Path $releaseRoot "V$targetVersion"
 $payloadRoot = Join-Path $preparedRelease '完整累计负载'
 $preparedManifestPath = Join-Path $preparedRelease '发布清单.json'
-Assert-True (Test-Path -LiteralPath $candidatePackage -PathType Leaf) "仓库缺少待验收的 $targetPackageName"
-Assert-True (Test-Path -LiteralPath $candidateManifest -PathType Leaf) "仓库缺少 V$targetVersion 发布清单"
+$candidatePackage = Join-Path $preparedRelease $targetPackageName
+$candidateManifest = $preparedManifestPath
+Assert-True (Test-Path -LiteralPath $candidatePackage -PathType Leaf) "未生成旧通道回归包 $targetPackageName"
+Assert-True (Test-Path -LiteralPath $candidateManifest -PathType Leaf) "未生成 V$targetVersion 旧通道回归清单"
 $candidateManifestData = Get-Content -LiteralPath $candidateManifest -Raw | ConvertFrom-Json
-$preparedManifestData = Get-Content -LiteralPath $preparedManifestPath -Raw | ConvertFrom-Json
 Assert-True ([string]$candidateManifestData.version -eq $targetVersion) '发布清单版本与源码不一致'
-Assert-True (
-    [string]$candidateManifestData.source_tree_sha256 -eq [string]$preparedManifestData.source_tree_sha256
-) '发布清单对应的源码树与当前源码不一致'
 $candidateSha256 = (Get-FileHash -LiteralPath $candidatePackage -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-True (
     $candidateSha256 -eq [string]$candidateManifestData.package_sha256

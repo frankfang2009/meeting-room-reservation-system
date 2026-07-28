@@ -645,6 +645,20 @@ class PackageBuilderTests(unittest.TestCase):
             verify_candidate,
         )
 
+        # V1.0.3 正式交付不再提交旧累计 BAT；旧通道 CI 只能测试临时生成物。
+        self.assertIn(
+            "$candidatePackage = Join-Path $preparedRelease $targetPackageName",
+            windows_ci,
+        )
+        self.assertIn(
+            "$candidateManifest = $preparedManifestPath",
+            windows_ci,
+        )
+        self.assertNotIn(
+            '"输出-待实机验收\\$targetPackageName"',
+            windows_ci,
+        )
+
         # 旧 .NET 缺少 ExternalAttributes 时必须能力探测并安全退化。
         self.assertIn(
             "$entry.PSObject.Properties['ExternalAttributes']", powershell
