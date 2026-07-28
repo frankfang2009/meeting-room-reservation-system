@@ -41,18 +41,23 @@
 ------------------
 
 - 应用、迁移与界面测试：85 项通过
-- 升级包工具测试：83 项通过
+- 升级包工具测试：84 项通过
 - V1.0.3 专项事务矩阵覆盖 V1.0.0/V1.0.1/V1.0.2、r1 未完成事务、
   旧累计残留、重复运行、回退与 data 全树保留
 - 候选 ZIP 可重复构建并通过反向 Bundle 加载
+- 冷审确认：V1.0.2-r1 冻结事务引擎及其固定哈希未修改；V1.0.0
+  兼容只进入 V1.0.3 正式引擎的白名单转换
+- GitHub Windows Actions：run 30337138697 全绿（提交 dbbfea6）
+  https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/30337138697
+- 上述 Windows 自动化使用已提升的 hosted runner，不等于普通用户 UAC、
+  SmartScreen、杀毒软件/EDR、单位策略或真实局域网实机验收
 - 本地候选：发布暂存\V1.0.3-candidate\会议室预约系统-V1.0.3-候选更新.zip
-- 候选大小：11912947 字节
-- 候选 SHA-256：2cf6e7b38f6b36fd4ad686d255ccc642c8fa8d4330613404a5668300a313b919
+- 候选大小：11913085 字节
+- 候选 SHA-256：627b65fc4756e8c97122c3b5c710d7b17be76a1a260ad161147a5e4114d2b355
 
 仍待完成
 --------
 
-- GitHub Windows Actions 全绿
 - 普通用户 Windows 10/11 从资源管理器双击
 - UAC 安全桌面确认与取消
 - SmartScreen、杀毒软件/EDR、单位策略
