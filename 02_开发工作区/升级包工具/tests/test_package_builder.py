@@ -676,6 +676,14 @@ class PackageBuilderTests(unittest.TestCase):
             overlay_windows_ci,
         )
         self.assertIn(
+            "$failureState.install_root = [string](",
+            overlay_windows_ci,
+        )
+        self.assertIn(
+            "(Resolve-Path -LiteralPath $failureInstall).Path",
+            overlay_windows_ci,
+        )
+        self.assertIn(
             "-Content (($failureState | ConvertTo-Json -Depth 8)",
             overlay_windows_ci,
         )
