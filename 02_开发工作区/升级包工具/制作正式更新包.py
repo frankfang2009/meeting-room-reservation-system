@@ -154,6 +154,53 @@ def _formal_engine_bytes() -> bytes:
             r"\.(?:版本\.txt|_V102覆盖更新状态\.json)\..+\.tmp",
             r"\.(?:版本\.txt|_正式更新状态\.json)\..+\.tmp",
         ),
+        (
+            "def _database_integrity_check(database: Path) -> None:",
+            "def _database_integrity_check(\n"
+            "    database: Path, *, allow_missing_schema_version: bool = False\n"
+            ") -> None:",
+        ),
+        (
+            '    if row is None or str(row[0]) != "1":\n'
+            '        raise UpdateError(f"数据库结构版本不是 1：{row}")',
+            "    if row is None and allow_missing_schema_version:\n"
+            "        return\n"
+            '    if row is None or str(row[0]) != "1":\n'
+            '        raise UpdateError(f"数据库结构版本不是 1：{row}")',
+        ),
+        (
+            "def _make_permanent_backup(validation_data: Path, backups: Path) -> Path:",
+            "def _make_permanent_backup(\n"
+            "    validation_data: Path,\n"
+            "    backups: Path,\n"
+            "    *,\n"
+            "    allow_missing_schema_version: bool = False,\n"
+            ") -> Path:",
+        ),
+        (
+            "        _database_integrity_check(temporary)",
+            "        _database_integrity_check(\n"
+            "            temporary,\n"
+            "            allow_missing_schema_version=allow_missing_schema_version,\n"
+            "        )",
+        ),
+        (
+            '        _database_integrity_check(validation_data / "reservation.db")\n'
+            "        backup = _make_permanent_backup(\n"
+            '            validation_data, self.program_root / "backups"\n'
+            "        )",
+            "        # V1.0.0 已有 app_meta，但还没有 schema_version。这里只放宽\n"
+            "        # 正式更新的迁移前副本；迁移完成后仍会再次严格校验。\n"
+            "        _database_integrity_check(\n"
+            '            validation_data / "reservation.db",\n'
+            "            allow_missing_schema_version=True,\n"
+            "        )\n"
+            "        backup = _make_permanent_backup(\n"
+            "            validation_data,\n"
+            '            self.program_root / "backups",\n'
+            "            allow_missing_schema_version=True,\n"
+            "        )",
+        ),
         ("meetingroom_v102_repair_launcher.log", "meetingroom_formal_update_launcher.log"),
         ("repair-update-", "formal-update-"),
         ("pre_v102_repair_", "pre_v103_update_"),

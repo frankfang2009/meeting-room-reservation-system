@@ -117,12 +117,17 @@ class FormalUpdaterTests(unittest.TestCase):
         connection = sqlite3.connect(database)
         try:
             connection.executescript(
-                """
+                f"""
                 CREATE TABLE app_meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
-                INSERT INTO app_meta(key, value) VALUES ('schema_version', '1');
+                {
+                    ""
+                    if version == "1.0.0"
+                    else "INSERT INTO app_meta(key, value) "
+                    "VALUES ('schema_version', '1');"
+                }
                 CREATE TABLE reservations (
                     id INTEGER PRIMARY KEY,
                     subject TEXT NOT NULL
@@ -188,6 +193,33 @@ class FormalUpdaterTests(unittest.TestCase):
                 self._run(install)
                 self._assert_target(install)
                 self.assertEqual(_tree_bytes(data), before)
+
+    def test_v100_precheck_allows_only_a_missing_schema_marker(self) -> None:
+        install = self._make_install("1.0.0", "schema-marker")
+        database = install / "_程序文件" / "data" / "reservation.db"
+
+        with self.assertRaisesRegex(
+            self.engine.UpdateError, "数据库结构版本不是 1"
+        ):
+            self.engine._database_integrity_check(database)
+        self.engine._database_integrity_check(
+            database, allow_missing_schema_version=True
+        )
+
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute(
+                "INSERT INTO app_meta(key, value) VALUES ('schema_version', 'broken')"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        with self.assertRaisesRegex(
+            self.engine.UpdateError, "数据库结构版本不是 1"
+        ):
+            self.engine._database_integrity_check(
+                database, allow_missing_schema_version=True
+            )
 
     def test_repeat_run_is_idempotent_and_preserves_customer_state(self) -> None:
         install = self._make_install("1.0.2", "repeat")
