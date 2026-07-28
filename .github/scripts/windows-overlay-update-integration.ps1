@@ -1168,6 +1168,15 @@ with module.ExclusiveLock(lock_path):
 
     # failureInstall 保留 r1 的 baseline_rollback_complete 状态。正式入口必须
     # 先用随包冻结 r1 恢复负载收敛，再进入 V1.0.3 自己的事务。
+    # 该状态最初来自“篡改目标包后注入健康检查失败”的测试包，所以其中的
+    # target 哈希不是正式 r1 的冻结哈希。真实 r1 残留不会有这种差异；这里只
+    # 校正 fixture 的包身份字段，不修改事务阶段、快照、程序或 data。
+    $failureState.target_zip_sha256 = [string](
+        $formalManifest.recovery.target_payload_zip_sha256
+    )
+    Write-Utf8NoBom `
+        -Path $failureStatePath `
+        -Content (($failureState | ConvertTo-Json -Depth 8) + "`n")
     $formalR1Data = Join-Path $failureInstall '_程序文件\data'
     $formalR1Before = Get-TreeFingerprint -Root $formalR1Data
     $formalR1Exit = Invoke-ZeroArgumentBat `

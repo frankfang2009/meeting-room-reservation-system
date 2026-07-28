@@ -574,6 +574,12 @@ class PackageBuilderTests(unittest.TestCase):
             / "scripts"
             / "windows-upgrade-integration.ps1"
         ).read_text(encoding="utf-8")
+        overlay_windows_ci = (
+            TOOL_DIR.parents[1]
+            / ".github"
+            / "scripts"
+            / "windows-overlay-update-integration.ps1"
+        ).read_text(encoding="utf-8-sig")
 
         # UAC 子进程与普通用户服务都必须取得严格的正进程 ID。
         self.assertIn(
@@ -657,6 +663,21 @@ class PackageBuilderTests(unittest.TestCase):
         self.assertNotIn(
             '"输出-待实机验收\\$targetPackageName"',
             windows_ci,
+        )
+
+        # r1 未完成事务 fixture 来自篡改目标包，进入正式恢复通道前必须把
+        # 身份字段校正为正式候选内冻结的 r1 目标哈希；生产校验不得放宽。
+        self.assertIn(
+            "$failureState.target_zip_sha256 = [string](",
+            overlay_windows_ci,
+        )
+        self.assertIn(
+            "$formalManifest.recovery.target_payload_zip_sha256",
+            overlay_windows_ci,
+        )
+        self.assertIn(
+            "-Content (($failureState | ConvertTo-Json -Depth 8)",
+            overlay_windows_ci,
         )
 
         # 旧 .NET 缺少 ExternalAttributes 时必须能力探测并安全退化。
