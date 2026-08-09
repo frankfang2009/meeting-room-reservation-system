@@ -1,0 +1,82 @@
+name: V2 baseline
+
+on:
+  pull_request:
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-baseline.yml"
+  push:
+    branches:
+      - "codex/v2.0.0-baseline"
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-baseline.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: v2/backend/requirements.txt
+      - name: Install backend runtime dependencies
+        run: python -m pip install --requirement v2/backend/requirements.txt
+      - name: Backend tests
+        working-directory: v2/backend
+        run: python -m unittest discover -s tests -v
+      - name: Installer and updater tests
+        run: python -m unittest discover -s v2/installer/tests -v
+      - name: Cross-layer release contracts
+        run: python -m unittest discover -s v2/tests -v
+      - name: Python compile gate
+        run: python -m compileall -q v2/backend v2/installer v2/tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Frontend locked install
+        working-directory: v2/frontend
+        run: npm ci
+      - name: Frontend contracts
+        working-directory: v2/frontend
+        run: npm test
+      - name: Frontend production build
+        working-directory: v2/frontend
+        run: npm run build
+      - name: Production bundle leak gate
+        shell: bash
+        run: |
+          if grep -R -E "demo123|TEST-2026|INITIAL_CALENDAR_BOOKINGS|/api/v2" v2/frontend/dist/client; then
+            echo "production bundle contains forbidden synthetic state"
+            exit 1
+          fi
+
+  windows-installer-contracts:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile Windows delivery Python
+        run: python -m compileall -q v2/installer
+      - name: Run cross-platform installer transaction tests
+        run: python -m unittest discover -s v2/installer/tests -v
+      - name: Verify zero-argument BAT syntax path
+        shell: cmd
+        env:
+          MEETING_ROOM_V2_INSTALL_NO_PAUSE: "1"
+        run: |
+          call v2\installer\安装V2.0.0.bat
+          set "RC=%ERRORLEVEL%"
+          if not "%RC%"=="1" exit /b 1
+          exit /b 0

@@ -1,0 +1,912 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import sqlite3
+import tempfile
+import threading
+import unittest
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
+
+import service as service_entrypoint
+from v2app import create_app
+from v2app.db import DatabaseGenerationError, get_db
+from v2app.runtime.install_state import sync_install_json
+from server import determine_bind_host
+
+
+INSTALL_ID = "00000000-0000-4000-8000-000000000001"
+
+
+class BackendTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.data_dir = self.root / "data"
+        self.database = self.data_dir / "reservation.db"
+        self.now = datetime(2026, 8, 9, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        self.restart_event = threading.Event()
+        self.app = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "BACKUP_DIR": str(self.root / "backups"),
+                "STATIC_DIR": str(self.root / "dist"),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+                "NOW_PROVIDER": lambda: self.now,
+                "SETUP_COMPLETED_EVENT": self.restart_event,
+                "LOGIN_RATE_MAX_ATTEMPTS": 50,
+            }
+        )
+        self.client = self.app.test_client()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def csrf(self, client=None) -> str:
+        client = client or self.client
+        return client.get("/api/v1/session").get_json()["csrfToken"]
+
+    def write(self, method: str, path: str, payload=None, client=None, token=None, **kwargs):
+        client = client or self.client
+        token = token or self.csrf(client)
+        return client.open(
+            path,
+            method=method,
+            json=payload if payload is not None else {},
+            headers={"X-CSRF-Token": token},
+            **kwargs,
+        )
+
+    def setup_system(self) -> dict:
+        response = self.write(
+            "POST",
+            "/api/v1/setup/complete",
+            {
+                "admin": {
+                    "username": "admin",
+                    "password": "admin-pass-123",
+                    "name": "系统管理员",
+                    "department": "测试部门",
+                },
+                "rooms": [{"name": "笔录室 1"}, {"name": "笔录室 2"}],
+                "workStart": "08:30",
+                "workEnd": "17:30",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())
+        return response.get_json()
+
+    def login(self, username="admin", password="admin-pass-123", client=None):
+        client = client or self.client
+        response = self.write(
+            "POST",
+            "/api/v1/session",
+            {"username": username, "password": password},
+            client=client,
+        )
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return response.get_json()
+
+    def bootstrap(self, client=None):
+        client = client or self.client
+        return client.get("/api/v1/bootstrap").get_json()
+
+    def booking_payload(self, room_id: str, **overrides):
+        payload = {
+            "date": "2026-08-10",
+            "roomId": room_id,
+            "start": "09:00",
+            "duration": 60,
+            "partyName": "张晓燕",
+            "caseNumber": "TEST-2026-001",
+            "purpose": "工伤笔录",
+            "notes": "合成测试备注",
+            "tagId": "tag-1",
+        }
+        payload.update(overrides)
+        return payload
+
+    def add_employee(self, username="employee") -> dict:
+        response = self.write(
+            "POST",
+            "/api/v1/users",
+            {
+                "username": username,
+                "password": "employee-pass-123",
+                "name": "普通员工",
+                "department": "测试部门",
+                "role": "employee",
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())
+        return response.get_json()
+
+
+class GenerationAndSetupTests(BackendTestCase):
+    def test_new_database_has_generation_but_no_seed_account(self):
+        with sqlite3.connect(self.database) as db:
+            meta = dict(db.execute("SELECT key, value FROM app_meta"))
+            self.assertEqual(meta["product_generation"], "2")
+            self.assertEqual(meta["schema_version"], "1")
+            self.assertEqual(meta["setup_complete"], "0")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
+        self.assertEqual(determine_bind_host(self.app), "127.0.0.1")
+
+    def test_v1_database_is_rejected_without_mutation_or_identity_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data = root / "data"
+            data.mkdir()
+            database = data / "reservation.db"
+            with sqlite3.connect(database) as db:
+                for table in ("users", "rooms", "reservations", "reservation_slots"):
+                    db.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
+                db.execute("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                db.execute("INSERT INTO app_meta VALUES ('schema_version', '1')")
+            before = hashlib.sha256(database.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(DatabaseGenerationError, "V1"):
+                create_app({"DATA_DIR": str(data), "DATABASE": str(database)})
+            self.assertEqual(hashlib.sha256(database.read_bytes()).hexdigest(), before)
+            self.assertFalse((data / ".secret_key").exists())
+            self.assertFalse((data / "install_id").exists())
+
+    def test_unknown_database_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "unknown.db"
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE alien (id INTEGER)")
+            with self.assertRaisesRegex(DatabaseGenerationError, "代际"):
+                create_app(
+                    {
+                        "DATA_DIR": temporary,
+                        "DATABASE": str(database),
+                        "SECRET_KEY": "x",
+                        "INSTALL_ID": INSTALL_ID,
+                    }
+                )
+
+    def test_setup_requires_csrf_and_loopback(self):
+        missing = self.client.post("/api/v1/setup/complete", json={})
+        self.assertEqual(missing.status_code, 403)
+        denied = self.write(
+            "POST",
+            "/api/v1/setup/complete",
+            {},
+            environ_base={"REMOTE_ADDR": "8.8.8.8"},
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.get_json()["error"]["code"], "SETUP_LOOPBACK_ONLY")
+
+    def test_setup_is_atomic_and_emits_restart_signal(self):
+        self.app.config["SETUP_FAILPOINT"] = True
+        with self.assertRaisesRegex(RuntimeError, "setup failpoint"):
+            self.write(
+                "POST",
+                "/api/v1/setup/complete",
+                {
+                    "admin": {"username": "admin", "password": "password123", "name": "管理员"},
+                    "rooms": [{"name": "笔录室"}],
+                    "workStart": "08:30",
+                    "workEnd": "17:30",
+                },
+            )
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT value FROM app_meta WHERE key='setup_complete'").fetchone()[0], "0")
+        self.app.config.pop("SETUP_FAILPOINT")
+        result = self.setup_system()
+        self.assertTrue(result["restartRequired"])
+        self.assertTrue(self.restart_event.is_set())
+        self.assertEqual(determine_bind_host(self.app), "0.0.0.0")
+
+    def test_database_truth_repairs_install_json(self):
+        install_json = self.data_dir / "install.json"
+        install_json.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "product_generation": 2,
+                    "install_id": INSTALL_ID,
+                    "installed_version": "2.0.0",
+                    "installed_at_utc": "2026-08-09T00:00:00Z",
+                    "port": 8080,
+                    "setup_bind": "127.0.0.1",
+                    "lan_bind": "0.0.0.0",
+                    "setup_complete": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.setup_system()
+        self.assertTrue(json.loads(install_json.read_text(encoding="utf-8"))["setup_complete"])
+        # A stale false value is repaired from DB on the next app construction.
+        value = json.loads(install_json.read_text(encoding="utf-8"))
+        value["setup_complete"] = False
+        install_json.write_text(json.dumps(value), encoding="utf-8")
+        create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertTrue(json.loads(install_json.read_text(encoding="utf-8"))["setup_complete"])
+
+    def test_health_identity_only_leaves_loopback(self):
+        local = self.client.get("/healthz").get_json()
+        self.assertEqual(
+            {key: local[key] for key in ("ok", "product_generation", "install_id", "setup_complete", "bind_mode", "port")},
+            {
+                "ok": True,
+                "product_generation": 2,
+                "install_id": INSTALL_ID,
+                "setup_complete": False,
+                "bind_mode": "loopback",
+                "port": 8080,
+            },
+        )
+        remote = self.client.get("/healthz", environ_base={"REMOTE_ADDR": "192.168.1.20"}).get_json()
+        self.assertNotIn("install_id", remote)
+
+
+class AuthenticationAndAdministrationTests(BackendTestCase):
+    def setUp(self):
+        super().setUp()
+        self.setup_system()
+        self.login()
+
+    def test_json_writes_require_csrf_and_bool_integer_is_validation_error(self):
+        response = self.client.post("/api/v1/rooms", json={"name": "新房间"})
+        self.assertEqual(response.status_code, 403)
+        response = self.write(
+            "POST", "/api/v1/rooms", {"name": "新房间", "sortOrder": True}
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.get_json()["error"]["code"], "VALIDATION_ERROR")
+
+    def test_create_room_and_user_preserve_explicit_disabled_state(self):
+        room = self.write(
+            "POST",
+            "/api/v1/rooms",
+            {"name": "暂停使用的笔录室", "sortOrder": 10, "isActive": False},
+        )
+        self.assertEqual(room.status_code, 201, room.get_json())
+        self.assertFalse(room.get_json()["isActive"])
+
+        user = self.write(
+            "POST",
+            "/api/v1/users",
+            {
+                "username": "disabled-user",
+                "password": "employee-pass-123",
+                "name": "待启用员工",
+                "department": "测试部门",
+                "role": "employee",
+                "enabled": False,
+            },
+        )
+        self.assertEqual(user.status_code, 201, user.get_json())
+        self.assertFalse(user.get_json()["enabled"])
+        disabled_client = self.app.test_client()
+        login = self.write(
+            "POST",
+            "/api/v1/session",
+            {"username": "disabled-user", "password": "employee-pass-123"},
+            client=disabled_client,
+        )
+        self.assertEqual(login.status_code, 403)
+        self.assertEqual(login.get_json()["error"]["code"], "ACCOUNT_DISABLED")
+        bad_room = self.write(
+            "POST",
+            "/api/v1/rooms",
+            {"name": "无效房间", "sortOrder": 11, "isActive": 0},
+        )
+        self.assertEqual(bad_room.status_code, 422)
+        bad_user = self.write(
+            "POST",
+            "/api/v1/users",
+            {
+                "username": "bad-enabled",
+                "password": "employee-pass-123",
+                "name": "无效员工",
+                "role": "employee",
+                "enabled": 0,
+            },
+        )
+        self.assertEqual(bad_user.status_code, 422)
+
+    def test_admin_user_lifecycle_and_last_admin_guard(self):
+        employee = self.add_employee()
+        changed = self.write(
+            "PATCH",
+            f"/api/v1/users/{employee['id']}",
+            {"role": "admin", "enabled": True},
+        )
+        self.assertEqual(changed.status_code, 200)
+        current = self.bootstrap()["currentUser"]
+        demoted = self.write(
+            "PATCH",
+            f"/api/v1/users/{current['id']}",
+            {"role": "employee", "enabled": True},
+        )
+        self.assertEqual(demoted.status_code, 200)
+
+        other_client = self.app.test_client()
+        self.login("employee", "employee-pass-123", other_client)
+        other_id = employee["id"]
+        blocked = self.write(
+            "PATCH",
+            f"/api/v1/users/{other_id}",
+            {"role": "employee", "enabled": True},
+            client=other_client,
+        )
+        self.assertEqual(blocked.status_code, 409)
+        self.assertEqual(blocked.get_json()["error"]["code"], "LAST_ADMIN_REQUIRED")
+
+    def test_employee_cannot_read_management_endpoints(self):
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        for path in ("/api/v1/users", "/api/v1/rooms", "/api/v1/admin/system"):
+            self.assertEqual(employee.get(path).status_code, 403, path)
+
+    def test_room_and_preferences_fields_match_frontend_contract(self):
+        room = self.bootstrap()["rooms"][0]
+        self.assertIn("isActive", room)
+        updated = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"name": room["name"], "sortOrder": 9, "isActive": False},
+        )
+        self.assertFalse(updated.get_json()["isActive"])
+        saved = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {
+                "defaultDuration": 90,
+                "defaultRoomId": "",
+                "bookingChangeNotifications": False,
+                "bookingReminder": True,
+                "personalTags": [
+                    {"slot": 3, "label": "我的标签 A"},
+                    {"slot": 4, "label": "我的标签 B"},
+                ],
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertIsNone(saved.get_json()["defaultRoomId"])
+
+    def test_admin_bootstrap_supplies_owner_personal_tags(self):
+        employee = self.add_employee()
+        selected = next(
+            item for item in self.bootstrap()["users"] if item["id"] == employee["id"]
+        )
+        self.assertEqual(
+            [(item["id"], item["slot"]) for item in selected["personalTags"]],
+            [("tag-3", 3), ("tag-4", 4)],
+        )
+
+    def test_room_management_metrics_are_derived_from_active_bookings(self):
+        room_id = self.bootstrap()["rooms"][0]["id"]
+        for booking_date in ("2026-08-09", "2026-08-10"):
+            response = self.write(
+                "POST",
+                "/api/v1/reservations",
+                self.booking_payload(room_id, date=booking_date),
+            )
+            self.assertEqual(response.status_code, 201, response.get_json())
+        room = next(
+            item
+            for item in self.client.get("/api/v1/rooms").get_json()["items"]
+            if item["id"] == room_id
+        )
+        self.assertEqual(room["todayCount"], 1)
+        self.assertEqual(room["futureCount"], 2)
+        self.assertEqual(room["nextBooking"], "今天 09:00")
+
+    def test_personal_history_filter_requires_selected_owner(self):
+        room_id = self.bootstrap()["rooms"][0]["id"]
+        created = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, tagId="tag-3"),
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
+        missing_owner = self.client.get(
+            "/api/v1/reservations/history?month=2026-08&tagId=tag-3"
+        )
+        self.assertEqual(missing_owner.status_code, 422)
+        self.assertEqual(
+            missing_owner.get_json()["error"]["code"],
+            "PERSONAL_TAG_OWNER_REQUIRED",
+        )
+        owner_id = self.bootstrap()["currentUser"]["id"]
+        selected = self.client.get(
+            f"/api/v1/reservations/history?month=2026-08&ownerId={owner_id}&tagId=tag-3"
+        )
+        self.assertEqual(len(selected.get_json()["items"]), 1)
+
+
+class ServiceEntrypointTests(BackendTestCase):
+    def test_service_control_is_loopback_token_and_process_identity_gated(self):
+        stop_event = threading.Event()
+        control = {
+            "pid": 4321,
+            "token": "a" * 64,
+            "executable": "/runtime/pythonw.exe",
+            "servicePath": "/program/service.py",
+            "installId": INSTALL_ID,
+        }
+        controlled = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+                "SERVICE_CONTROL": control,
+                "SERVICE_STOP_EVENT": stop_event,
+            }
+        ).test_client()
+        body = {
+            key: control[key]
+            for key in ("pid", "executable", "servicePath", "installId")
+        }
+        self.assertEqual(
+            controlled.post(
+                "/_service/stop",
+                json=body,
+                headers={"X-Meeting-Room-Service-Token": control["token"]},
+                environ_base={"REMOTE_ADDR": "192.168.1.20"},
+            ).status_code,
+            404,
+        )
+        self.assertEqual(controlled.post("/_service/stop", json=body).status_code, 403)
+        accepted = controlled.post(
+            "/_service/stop",
+            json=body,
+            headers={"X-Meeting-Room-Service-Token": control["token"]},
+        )
+        self.assertEqual(accepted.get_json(), {"stopping": True, "pid": 4321})
+        self.assertTrue(stop_event.is_set())
+
+    def test_windows_pid_probe_never_calls_os_kill(self):
+        with mock.patch.object(service_entrypoint.os, "name", "nt"), mock.patch.object(
+            service_entrypoint, "_windows_pid_exists", return_value=True
+        ) as windows_probe, mock.patch.object(service_entrypoint.os, "kill") as kill:
+            self.assertTrue(service_entrypoint._pid_exists(4321))
+        windows_probe.assert_called_once_with(4321)
+        kill.assert_not_called()
+
+    def test_service_default_config_check_and_optional_browser_contract(self):
+        identity = {"install_id": INSTALL_ID}
+        record = {
+            "pid": 4321,
+            "token": "b" * 64,
+            "executable": "/runtime/pythonw.exe",
+            "servicePath": "/program/service.py",
+            "installId": INSTALL_ID,
+        }
+        with mock.patch.object(
+            service_entrypoint, "_claim_pid", return_value=record
+        ), mock.patch.object(
+            service_entrypoint, "run_server_once", return_value=False
+        ) as run_once, mock.patch.object(
+            service_entrypoint, "_remove_pid_if_token", return_value=True
+        ), mock.patch.object(
+            service_entrypoint,
+            "discover_lan_address",
+            return_value="http://192.168.1.20:8080",
+        ), mock.patch.object(service_entrypoint.threading, "Thread") as thread_type, mock.patch.dict(
+            service_entrypoint.os.environ, {"MEETING_ROOM_OPEN_BROWSER": "1"}
+        ):
+            service_entrypoint.run_service(identity)
+        config = run_once.call_args.kwargs["app_config"]
+        self.assertEqual(config["STATIC_DIR"], str(service_entrypoint.SERVICE_DIR / "static"))
+        self.assertEqual(config["LAN_ADDRESS"], "http://192.168.1.20:8080")
+        self.assertEqual(run_once.call_args.args, (8080,))
+        thread_type.assert_called_once()
+
+        with mock.patch.object(
+            service_entrypoint, "load_install_identity", return_value=identity
+        ), mock.patch.object(service_entrypoint, "check_service") as check, mock.patch.object(
+            service_entrypoint, "configure_logging", return_value=mock.Mock()
+        ):
+            self.assertEqual(service_entrypoint.main(["--check"]), 0)
+        check.assert_called_once_with(identity)
+        self.assertEqual(service_entrypoint.main(["unexpected"]), 2)
+
+    def test_lan_address_accepts_only_rfc1918_ipv4(self):
+        self.assertEqual(
+            service_entrypoint._private_lan_url(
+                {
+                    "127.0.0.1",
+                    "169.254.1.1",
+                    "8.8.8.8",
+                    "224.0.0.1",
+                    "192.168.50.7",
+                },
+                8080,
+            ),
+            "http://192.168.50.7:8080",
+        )
+        self.assertIsNone(
+            service_entrypoint._private_lan_url(
+                {"127.0.0.1", "169.254.1.1", "8.8.8.8"}, 8080
+            )
+        )
+
+    def test_startup_failure_writes_rotating_log_without_identity_secrets(self):
+        log_path = self.root / "logs" / "service.log"
+        logger = service_entrypoint.configure_logging(log_path)
+        identity = {"install_id": INSTALL_ID}
+        with mock.patch.object(
+            service_entrypoint, "configure_logging", return_value=logger
+        ), mock.patch.object(
+            service_entrypoint, "load_install_identity", return_value=identity
+        ), mock.patch.object(
+            service_entrypoint,
+            "run_service",
+            side_effect=OSError("[Errno 48] Address already in use: 8080"),
+        ):
+            self.assertEqual(service_entrypoint.main([]), 1)
+        root_logger = logging.getLogger()
+        for handler in list(root_logger.handlers):
+            if getattr(handler, "_meeting_room_v2_service", False):
+                handler.flush()
+        contents = log_path.read_text(encoding="utf-8")
+        self.assertIn("Address already in use", contents)
+        self.assertIn("Traceback", contents)
+        self.assertNotIn("a" * 64, contents)
+        for handler in list(root_logger.handlers):
+            if getattr(handler, "_meeting_room_v2_service", False):
+                root_logger.removeHandler(handler)
+                handler.close()
+
+
+class ReservationTests(BackendTestCase):
+    def setUp(self):
+        super().setUp()
+        self.setup_system()
+        self.login()
+        self.room_id = self.bootstrap()["rooms"][0]["id"]
+
+    def create_booking(self, **overrides):
+        response = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, **overrides),
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())
+        return response.get_json()
+
+    def test_create_commits_record_slots_and_event_together(self):
+        booking = self.create_booking()
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 2)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 1)
+        calendar = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertEqual(calendar[0]["notes"], "合成测试备注")
+        self.assertEqual(calendar[0]["owner"]["name"], "系统管理员")
+        self.assertEqual(booking["revision"], 1)
+
+    def test_slot_conflict_and_revision_conflict(self):
+        booking = self.create_booking()
+        conflict = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, partyName="另一人"),
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.get_json()["error"]["code"], "SLOT_CONFLICT")
+        updated_payload = self.booking_payload(
+            self.room_id, start="10:00", expectedRevision=booking["revision"]
+        )
+        updated = self.write(
+            "PATCH", f"/api/v1/reservations/{booking['id']}", updated_payload
+        )
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        self.assertEqual(updated.get_json()["revision"], 2)
+        stale = self.write(
+            "PATCH", f"/api/v1/reservations/{booking['id']}", updated_payload
+        )
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.get_json()["error"]["code"], "REVISION_CONFLICT")
+        self.assertEqual(stale.get_json()["error"]["current"]["revision"], 2)
+
+    def test_create_update_cancel_failpoints_roll_back_all_state(self):
+        self.app.config["TRANSACTION_FAILPOINT"] = "create_after_slots"
+        with self.assertRaisesRegex(RuntimeError, "create_after_slots"):
+            self.write(
+                "POST", "/api/v1/reservations", self.booking_payload(self.room_id)
+            )
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 0)
+
+        self.app.config.pop("TRANSACTION_FAILPOINT")
+        booking = self.create_booking()
+        original_slots = None
+        with sqlite3.connect(self.database) as db:
+            original_slots = db.execute(
+                "SELECT room_id, booking_date, slot_start FROM reservation_slots ORDER BY slot_start"
+            ).fetchall()
+        self.app.config["TRANSACTION_FAILPOINT"] = "update_after_slots"
+        with self.assertRaisesRegex(RuntimeError, "update_after_slots"):
+            self.write(
+                "PATCH",
+                f"/api/v1/reservations/{booking['id']}",
+                self.booking_payload(self.room_id, start="10:00", expectedRevision=1),
+            )
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT revision FROM reservations").fetchone()[0], 1)
+            self.assertEqual(
+                db.execute("SELECT room_id, booking_date, slot_start FROM reservation_slots ORDER BY slot_start").fetchall(),
+                original_slots,
+            )
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 1)
+
+        self.app.config["TRANSACTION_FAILPOINT"] = "cancel_after_slots"
+        with self.assertRaisesRegex(RuntimeError, "cancel_after_slots"):
+            self.write(
+                "POST",
+                f"/api/v1/reservations/{booking['id']}/cancel",
+                {"expectedRevision": 1},
+            )
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT status FROM reservations").fetchone()[0], "active")
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 2)
+
+    def test_employee_sees_shared_details_but_cannot_mutate_other_booking(self):
+        booking = self.create_booking()
+        employee_record = self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        shared = employee.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"][0]
+        self.assertEqual(shared["notes"], booking["notes"])
+        self.assertFalse(shared["canEdit"])
+        denied = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(self.room_id, expectedRevision=1),
+            client=employee,
+        )
+        self.assertEqual(denied.status_code, 403)
+        own_history = employee.get("/api/v1/reservations/history?month=2026-08").get_json()["items"]
+        self.assertEqual(own_history, [])
+        expanded = employee.get(
+            f"/api/v1/reservations/history?month=2026-08&ownerId={booking['ownerId']}"
+        )
+        self.assertEqual(expanded.status_code, 403)
+
+    def test_cancel_increments_revision_releases_slots_and_hides_from_calendar(self):
+        booking = self.create_booking()
+        cancelled = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": 1},
+        )
+        self.assertEqual(cancelled.get_json()["revision"], 2)
+        self.assertEqual(cancelled.get_json()["status"], "cancelled")
+        calendar = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertEqual(calendar, [])
+        history = self.client.get("/api/v1/reservations/history?month=2026-08").get_json()["items"]
+        self.assertEqual(history[0]["status"], "cancelled")
+        with sqlite3.connect(self.database) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 2)
+
+    def test_tag_snapshot_survives_rename_and_history_room_filter(self):
+        booking = self.create_booking(tagId="tag-1")
+        changed = self.write(
+            "PUT",
+            "/api/v1/tags/global",
+            {"tags": [{"slot": 1, "label": "新标签"}, {"slot": 2, "label": "标签 2"}]},
+        )
+        self.assertEqual(changed.status_code, 200)
+        detail = self.client.get(f"/api/v1/reservations/{booking['id']}").get_json()
+        self.assertEqual(detail["tagLabel"], "标签 1")
+        filtered = self.client.get(
+            f"/api/v1/reservations/history?month=2026-08&roomId={self.room_id}"
+        ).get_json()["items"]
+        self.assertEqual(len(filtered), 1)
+        other_room = self.bootstrap()["rooms"][1]["id"]
+        self.assertEqual(
+            self.client.get(
+                f"/api/v1/reservations/history?month=2026-08&roomId={other_room}"
+            ).get_json()["items"],
+            [],
+        )
+
+
+class PublicSystemAndStaticTests(ReservationTests):
+    def test_public_projection_exact_allowlist_and_masking(self):
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        self.create_booking(partyName="张晓燕", start="09:00", duration=60)
+        self.now = datetime(2026, 8, 10, 9, 15, tzinfo=timezone(timedelta(hours=8)))
+        payload = self.client.get("/api/v1/display/today").get_json()
+        self.assertEqual(
+            set(payload), {"serverDate", "serverTime", "lastUpdatedAt", "status", "rooms"}
+        )
+        room = payload["rooms"][0]
+        self.assertEqual(set(room), {"id", "name", "current", "next"})
+        self.assertEqual(room["current"], {"maskedPartyName": "张*燕", "start": "09:00", "end": "10:00"})
+        serialized = json.dumps(payload, ensure_ascii=False)
+        for forbidden in ("张晓燕", "TEST-2026-001", "合成测试备注", "系统管理员", "标签 1"):
+            self.assertNotIn(forbidden, serialized)
+        denied = self.client.get(
+            "/api/v1/display/today", environ_base={"REMOTE_ADDR": "8.8.8.8"}
+        )
+        self.assertEqual(denied.status_code, 403)
+
+    def test_reminder_ack_is_revision_scoped(self):
+        self.now = datetime(2026, 8, 10, 8, 40, tzinfo=timezone(timedelta(hours=8)))
+        booking = self.create_booking(start="09:00", duration=30)
+        due = self.client.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([item["id"] for item in due], [booking["id"]])
+        ack = self.write(
+            "POST",
+            f"/api/v1/reminders/{booking['id']}/ack",
+            {"revision": 1, "kind": "upcoming"},
+        )
+        self.assertEqual(ack.status_code, 200)
+        self.assertEqual(self.client.get("/api/v1/reminders/due").get_json()["items"], [])
+
+    def test_external_change_and_upcoming_receipts_are_independent(self):
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        created = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, start="09:00"),
+            client=employee,
+        ).get_json()
+        changed = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:00",
+                expectedRevision=created["revision"],
+            ),
+        )
+        self.assertEqual(changed.status_code, 200, changed.get_json())
+        revision = changed.get_json()["revision"]
+        notifications = employee.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual(
+            [(item["kind"], item["changeType"]) for item in notifications],
+            [("change", "updated")],
+        )
+        acknowledged = self.write(
+            "POST",
+            f"/api/v1/reminders/{created['id']}/ack",
+            {"revision": revision, "kind": "change"},
+            client=employee,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+
+        self.now = datetime(2026, 8, 10, 9, 40, tzinfo=timezone(timedelta(hours=8)))
+        upcoming = employee.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([(item["kind"], item["revision"]) for item in upcoming], [("upcoming", revision)])
+        ack_upcoming = self.write(
+            "POST",
+            f"/api/v1/reminders/{created['id']}/ack",
+            {"revision": revision, "kind": "upcoming"},
+            client=employee,
+        )
+        self.assertEqual(ack_upcoming.status_code, 200, ack_upcoming.get_json())
+        self.assertEqual(employee.get("/api/v1/reminders/due").get_json()["items"], [])
+
+    def test_backup_diagnostics_and_token_read_scope(self):
+        backup = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(backup.status_code, 201, backup.get_json())
+        target = self.root / "backups" / backup.get_json()["fileName"]
+        self.assertTrue(target.is_file())
+        with sqlite3.connect(target) as db:
+            self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+        diagnostics = self.client.get("/api/v1/admin/diagnostics").get_json()
+        text = json.dumps(diagnostics, ensure_ascii=False)
+        self.assertNotIn("张晓燕", text)
+        self.assertNotIn("TEST-2026", text)
+
+        token_response = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {"name": "只读测试", "scopes": ["rooms:read"]},
+        )
+        self.assertEqual(token_response.status_code, 201)
+        raw = token_response.get_json()["token"]
+        with sqlite3.connect(self.database) as db:
+            stored = db.execute("SELECT token_hash FROM api_tokens").fetchone()[0]
+        self.assertNotEqual(stored, raw)
+        rooms = self.client.get(
+            "/api/v1/integration/rooms", headers={"Authorization": f"Bearer {raw}"}
+        )
+        self.assertEqual(rooms.status_code, 200)
+        forbidden = self.client.get(
+            "/api/v1/integration/health", headers={"Authorization": f"Bearer {raw}"}
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_token_expiry_requires_timezone_and_is_enforced(self):
+        for invalid in ("2026-08-10", "2026-08-10T12:00:00"):
+            response = self.write(
+                "POST",
+                "/api/v1/admin/tokens",
+                {
+                    "name": "无效时效",
+                    "scopes": ["health:read"],
+                    "expiresAt": invalid,
+                },
+            )
+            self.assertEqual(response.status_code, 422, invalid)
+
+        created = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {
+                "name": "有时效令牌",
+                "scopes": ["health:read"],
+                "expiresAt": "2026-08-10T00:00:00+08:00",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
+        self.assertEqual(created.get_json()["expiresAt"], "2026-08-09T16:00:00Z")
+        raw = created.get_json()["token"]
+        headers = {"Authorization": f"Bearer {raw}"}
+        self.assertEqual(
+            self.client.get("/api/v1/integration/health", headers=headers).status_code,
+            200,
+        )
+        with sqlite3.connect(self.database) as db:
+            db.execute(
+                "UPDATE api_tokens SET expires_at = '2026-08-08T00:00:00Z' WHERE id = ?",
+                (created.get_json()["id"],),
+            )
+        expired = self.client.get("/api/v1/integration/health", headers=headers)
+        self.assertEqual(expired.status_code, 401)
+        self.assertEqual(expired.get_json()["error"]["code"], "TOKEN_EXPIRED")
+
+    def test_system_shape_and_spa_fallback(self):
+        status = self.client.get("/api/v1/admin/system").get_json()
+        self.assertEqual(status["status"], "normal")
+        self.assertEqual({service["id"] for service in status["services"]}, {"api", "display", "database"})
+        dist = self.root / "dist"
+        (dist / "assets").mkdir(parents=True)
+        (dist / "index.html").write_text("<div id='root'>V2</div>", encoding="utf-8")
+        (dist / "assets" / "app.js").write_text("console.log('v2')", encoding="utf-8")
+        page = self.client.get("/history/deep-link")
+        try:
+            self.assertIn("V2", page.get_data(as_text=True))
+        finally:
+            page.close()
+        asset = self.client.get("/assets/app.js")
+        try:
+            self.assertEqual(asset.status_code, 200)
+            self.assertIn("immutable", asset.headers["Cache-Control"])
+        finally:
+            asset.close()
+        api_missing = self.client.get("/api/v1/not-real")
+        self.assertEqual(api_missing.status_code, 404)
+        self.assertTrue(api_missing.is_json)
+
+
+if __name__ == "__main__":
+    unittest.main()
