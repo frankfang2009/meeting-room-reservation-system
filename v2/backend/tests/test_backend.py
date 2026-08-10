@@ -5,27 +5,18 @@ import errno
 import io
 import json
 import logging
-import os
 import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 import service as service_entrypoint
 import server as server_entrypoint
-import restore as restore_entrypoint
 from v2app import create_app
-from v2app.backup import (
-    load_backup_sidecar,
-    maintenance_lock,
-    scheduled_backup_due,
-    sha256_file,
-)
-from v2app.db import get_db, prepare_database
-from v2app.runtime.install_state import sync_install_json
 from server import determine_bind_host
 
 
@@ -170,7 +161,7 @@ class BackendTestCase(unittest.TestCase):
 
 class GenerationAndSetupTests(BackendTestCase):
     def test_new_database_has_generation_but_no_seed_account(self):
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
             self.assertEqual(meta["product_generation"], "2")
             self.assertEqual(meta["schema_version"], "1")
@@ -184,7 +175,7 @@ class GenerationAndSetupTests(BackendTestCase):
             data = root / "data"
             data.mkdir()
             database = data / "reservation.db"
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 for table in ("users", "rooms", "reservations", "reservation_slots"):
                     db.execute(f"CREATE TABLE {table} (id INTEGER PRIMARY KEY)")
                 db.execute("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -203,7 +194,7 @@ class GenerationAndSetupTests(BackendTestCase):
     def test_unknown_database_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "unknown.db"
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute("CREATE TABLE alien (id INTEGER)")
             recovery = create_app(
                 {
@@ -313,7 +304,7 @@ class GenerationAndSetupTests(BackendTestCase):
             )
         self.assertEqual(failed.status_code, 500)
         self.assertEqual(failed.get_json()["error"]["code"], "INTERNAL_ERROR")
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT value FROM app_meta WHERE key='setup_complete'").fetchone()[0], "0")
         self.app.config.pop("SETUP_FAILPOINT")
@@ -429,7 +420,7 @@ class GenerationAndSetupTests(BackendTestCase):
     def test_corrupt_or_foreign_key_invalid_database_enters_recovery(self):
         self.setup_system()
         self.write_install_json(self.data_dir, setup_complete=True)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("PRAGMA foreign_keys=OFF")
             db.execute(
                 "INSERT INTO user_preferences (user_id) VALUES ('missing-user')"
@@ -493,7 +484,7 @@ class GenerationAndSetupTests(BackendTestCase):
     def test_invalid_setup_metadata_never_reopens_first_setup(self):
         self.setup_system()
         self.write_install_json(self.data_dir, setup_complete=False)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("DELETE FROM app_meta WHERE key='setup_complete'")
         restarted = create_app(
             {
@@ -944,7 +935,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
 
     def test_create_commits_record_slots_and_event_together(self):
         booking = self.create_booking()
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0], 1)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 1)
@@ -985,7 +976,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
             "POST", "/api/v1/reservations", self.booking_payload(self.room_id)
         )
         self.assertEqual(failed.status_code, 500)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 0)
@@ -993,7 +984,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
         self.app.config.pop("TRANSACTION_FAILPOINT")
         booking = self.create_booking()
         original_slots = None
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             original_slots = db.execute(
                 "SELECT room_id, booking_date, slot_start FROM reservation_slots ORDER BY slot_start"
             ).fetchall()
@@ -1004,7 +995,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
             self.booking_payload(self.room_id, start="10:00", expectedRevision=1),
         )
         self.assertEqual(failed.status_code, 500)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT revision FROM reservations").fetchone()[0], 1)
             self.assertEqual(
                 db.execute("SELECT room_id, booking_date, slot_start FROM reservation_slots ORDER BY slot_start").fetchall(),
@@ -1019,13 +1010,13 @@ class ReservationTests(AuthenticatedReservationTestCase):
             {"expectedRevision": 1},
         )
         self.assertEqual(failed.status_code, 500)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT status FROM reservations").fetchone()[0], "active")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 2)
 
     def test_employee_sees_shared_details_but_cannot_mutate_other_booking(self):
         booking = self.create_booking()
-        employee_record = self.add_employee()
+        self.add_employee()
         employee = self.app.test_client()
         self.login("employee", "employee-pass-123", employee)
         shared = employee.get(
@@ -1062,7 +1053,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
         self.assertEqual(calendar, [])
         history = self.client.get("/api/v1/reservations/history?month=2026-08").get_json()["items"]
         self.assertEqual(history[0]["status"], "cancelled")
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 2)
 
@@ -1173,7 +1164,7 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         self.assertEqual(backup.status_code, 201, backup.get_json())
         target = self.root / "backups" / backup.get_json()["fileName"]
         self.assertTrue(target.is_file())
-        with sqlite3.connect(target) as db:
+        with closing(sqlite3.connect(target)) as db, db:
             self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         diagnostics = self.client.get("/api/v1/admin/diagnostics").get_json()
         text = json.dumps(diagnostics, ensure_ascii=False)
@@ -1187,7 +1178,7 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         )
         self.assertEqual(token_response.status_code, 201)
         raw = token_response.get_json()["token"]
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             stored = db.execute("SELECT token_hash FROM api_tokens").fetchone()[0]
         self.assertNotEqual(stored, raw)
         rooms = self.client.get(
@@ -1229,7 +1220,7 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
             self.client.get("/api/v1/integration/health", headers=headers).status_code,
             200,
         )
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute(
                 "UPDATE api_tokens SET expires_at = '2026-08-08T00:00:00Z' WHERE id = ?",
                 (created.get_json()["id"],),

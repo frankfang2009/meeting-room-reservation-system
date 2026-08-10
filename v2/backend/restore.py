@@ -317,7 +317,7 @@ def _run_restore(args: argparse.Namespace, paths: _CliPaths) -> int:
         )
         print(json.dumps(result, ensure_ascii=False))
         return 0
-    except Exception as error:
+    except Exception:
         logger.exception("restore failed")
         print(
             "恢复失败：系统不会把当前数据库当作已恢复。请保留现场，"

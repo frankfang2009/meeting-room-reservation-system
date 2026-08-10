@@ -10,7 +10,6 @@ from typing import Any, Optional
 from waitress import create_server
 
 from v2app import create_app
-from v2app.db import is_setup_complete
 
 
 def determine_bind_host(app) -> str:
