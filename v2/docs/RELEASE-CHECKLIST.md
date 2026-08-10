@@ -10,7 +10,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | --- | --- | --- |
 | E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 62 通过；独立用例 62；继承重复 0；真实 Waitress handoff 通过且无 ResourceWarning |
 | E2 | `v2/backend/.venv/bin/python -m unittest discover -s v2/installer/tests -v` | runner 60 通过；独立用例 60；继承重复 0 |
-| E3 | `v2/backend/.venv/bin/python -m unittest discover -s v2/tests -v` | runner 16 通过；独立用例 16；继承重复 0 |
+| E3 | `v2/backend/.venv/bin/python -m unittest discover -s v2/tests -v` | runner 17 通过；独立用例 17；继承重复 0；含损坏或迁移后虚拟环境重建契约 |
 | E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；74/74 通过；Vite 6.4.3 生产构建成功 |
 | E5 | `v2/backend/.venv/bin/python -m ruff check v2/backend v2/installer v2/tests`、`python -m compileall -q v2/backend v2/installer v2/tests`、`git diff --check` | 全部通过 |
 | E6 | `PYTHON_BIN=v2/backend/.venv/bin/python .github/scripts/v2-reproducible-build.sh "$PWD" /private/tmp/meeting-room-v2-final-repro-20260810-3 /private/tmp/meeting-room-v2-runtime-materials/python-3.13.14-embed-amd64.zip /private/tmp/meeting-room-v2-runtime-materials/wheels /private/tmp/meeting-room-v2-final-repro-20260810-3-export` | 两个独立源码目录各自 `npm ci`、构建 frontend/runtime/payload/六件套；逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；SBOM 共 16 个组件，其中 4 个前端生产组件 |

@@ -138,6 +138,14 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn(("Flask", "3.1.3"), {(name, version) for name, version, _ in locked})
         self.assertIn(("waitress", "3.0.2"), {(name, version) for name, version, _ in locked})
 
+    def test_bootstrap_can_rebuild_a_broken_or_moved_virtual_environment(self) -> None:
+        bootstrap = read("scripts/bootstrap-dev.sh")
+        self.assertIn('if [ -x "$backend_root/.venv/bin/python" ]', bootstrap)
+        self.assertIn(
+            'uv venv --clear --cache-dir "$uv_cache" --python "$python_bin"',
+            bootstrap,
+        )
+
     def test_frozen_runtime_layout_is_isolated_and_traceable(self) -> None:
         core = read("installer/installer_core.py")
         builder = read("installer/build_runtime.py")

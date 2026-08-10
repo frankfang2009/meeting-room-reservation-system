@@ -43,7 +43,10 @@ if [ -x "$backend_root/.venv/bin/python" ]; then
     exit 2
   }
 else
-  uv venv --cache-dir "$uv_cache" --python "$python_bin" "$backend_root/.venv"
+  # A moved worktree leaves uv's interpreter symlink and console-script
+  # shebangs pointing at the former absolute path. The directory is still a
+  # virtual environment, so uv requires an explicit clear before rebuilding.
+  uv venv --clear --cache-dir "$uv_cache" --python "$python_bin" "$backend_root/.venv"
 fi
 uv pip install --cache-dir "$uv_cache" --python "$backend_root/.venv/bin/python" \
   --requirement "$backend_root/requirements.txt" \
