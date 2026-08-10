@@ -16,6 +16,7 @@ try:
         assert_plain_file,
         assert_plain_tree,
         is_reparse_or_link,
+        parse_hashed_requirements_lock,
         records_for_tree,
         safe_relative_path,
     )
@@ -25,6 +26,7 @@ except ImportError:
         assert_plain_file,
         assert_plain_tree,
         is_reparse_or_link,
+        parse_hashed_requirements_lock,
         records_for_tree,
         safe_relative_path,
     )
@@ -37,9 +39,17 @@ CUSTOMER_FILES = (
     "③ 设置开机自动启动.bat",
     "④ 停止本次后台系统.bat",
     "⑤ 取消开机自动启动.bat",
+    "⑥ 从备份恢复.bat",
     "使用说明.txt",
 )
-BACKEND_ROOT_FILES = ("service.py", "server.py", "backup.py", "requirements.txt")
+BACKEND_ROOT_FILES = (
+    "service.py",
+    "server.py",
+    "backup.py",
+    "restore.py",
+    "requirements.txt",
+    "requirements-win-amd64.lock",
+)
 IGNORED_SOURCE_PARTS = frozenset({"__pycache__", ".git", ".pytest_cache"})
 
 
@@ -101,6 +111,17 @@ def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> P
     assert_plain_tree(backend_root / "v2app", "V2 后端 v2app")
     for name in BACKEND_ROOT_FILES:
         assert_plain_file(backend_root / name, f"V2 后端 {name}")
+    try:
+        runtime_lock = (backend_root / "requirements-win-amd64.lock").read_text(
+            encoding="utf-8"
+        )
+    except UnicodeError as error:
+        raise PayloadAssemblyError("Windows runtime lock 不是 UTF-8") from error
+    locked = parse_hashed_requirements_lock(runtime_lock)
+    if locked.get("flask", {}).get("version") != "3.1.3" or locked.get(
+        "waitress", {}
+    ).get("version") != "3.0.2":
+        raise PayloadAssemblyError("Windows runtime lock 与后端直接依赖版本不一致")
     if output.exists() or is_reparse_or_link(output):
         raise PayloadAssemblyError(f"payload 输出必须不存在，拒绝覆盖：{output}")
     output_parent = output.parent.resolve(strict=True)
@@ -117,18 +138,22 @@ def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> P
         _copy_customer_templates(staging)
         program = staging / "_程序文件"
         program.mkdir()
+        app = program / "app"
+        app.mkdir()
         for name in BACKEND_ROOT_FILES:
-            _copy_plain_file(backend_root / name, program / name)
-        _copy_tree(backend_root / "v2app", program / "v2app", "V2 后端 v2app")
-        _copy_tree(frontend_dist, program / "static", "V2 前端 dist")
+            _copy_plain_file(backend_root / name, app / name)
+        _copy_tree(backend_root / "v2app", app / "v2app", "V2 后端 v2app")
+        _copy_tree(frontend_dist, app / "static", "V2 前端 dist")
         records = records_for_tree(staging)
         paths = {str(record["path"]) for record in records}
         required = {
-            "_程序文件/service.py",
-            "_程序文件/server.py",
-            "_程序文件/backup.py",
-            "_程序文件/v2app/__init__.py",
-            "_程序文件/static/index.html",
+            "_程序文件/app/service.py",
+            "_程序文件/app/server.py",
+            "_程序文件/app/backup.py",
+            "_程序文件/app/restore.py",
+            "_程序文件/app/requirements-win-amd64.lock",
+            "_程序文件/app/v2app/__init__.py",
+            "_程序文件/app/static/index.html",
             *CUSTOMER_FILES,
         }
         missing = sorted(required - paths)

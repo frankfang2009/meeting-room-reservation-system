@@ -69,6 +69,9 @@ except ImportError:
     )
 
 
+# This module is deliberately excluded from the V2.0.0 payload and customer
+# entrypoints.  It is a tested design foundation, not a supported updater.
+PRODUCTION_UPDATE_SUPPORTED = False
 REGISTRY_SUBKEY = r"Software\MeetingRoomReservationV2"
 DATABASE_SCHEMA_VERSION = 1
 EXPECTED_V2_TABLES = frozenset(

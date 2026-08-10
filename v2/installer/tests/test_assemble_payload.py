@@ -9,7 +9,13 @@ from v2.installer.assemble_payload import (
     PayloadAssemblyError,
     assemble_payload,
 )
-from v2.installer.build_package import ARTIFACT_NAME, build_package
+from v2.installer.build_package import ARTIFACT_NAME, build_package as production_build_package
+from v2.installer.tests.helpers import create_inputs
+
+
+def build_package(*args, **kwargs):
+    kwargs["_test_fixture"] = True
+    return production_build_package(*args, **kwargs)
 
 
 class AssemblePayloadTests(unittest.TestCase):
@@ -22,8 +28,14 @@ class AssemblePayloadTests(unittest.TestCase):
         (self.backend / "service.py").write_text("# service fixture\n", encoding="utf-8")
         (self.backend / "server.py").write_text("# server fixture\n", encoding="utf-8")
         (self.backend / "backup.py").write_text("# backup fixture\n", encoding="utf-8")
+        (self.backend / "restore.py").write_text("# restore fixture\n", encoding="utf-8")
         (self.backend / "requirements.txt").write_text(
             "Flask==3.1.3\nwaitress==3.0.2\n", encoding="utf-8"
+        )
+        (self.backend / "requirements-win-amd64.lock").write_text(
+            "Flask==3.1.3 --hash=sha256:" + "1" * 64 + "\n"
+            "waitress==3.0.2 --hash=sha256:" + "2" * 64 + "\n",
+            encoding="utf-8",
         )
         (self.backend / "v2app" / "__init__.py").write_text("# app\n", encoding="utf-8")
         (runtime_code / "identity.py").write_text("# identity\n", encoding="utf-8")
@@ -37,19 +49,21 @@ class AssemblePayloadTests(unittest.TestCase):
 
     def test_assembles_backend_frontend_and_customer_entrypoints(self) -> None:
         output = assemble_payload(self.backend, self.frontend, self.root / "payload")
-        self.assertTrue((output / "_程序文件" / "service.py").is_file())
-        self.assertTrue((output / "_程序文件" / "server.py").is_file())
-        self.assertTrue((output / "_程序文件" / "v2app" / "runtime" / "identity.py").is_file())
-        self.assertTrue((output / "_程序文件" / "static" / "index.html").is_file())
+        app = output / "_程序文件" / "app"
+        self.assertTrue((app / "service.py").is_file())
+        self.assertTrue((app / "server.py").is_file())
+        self.assertTrue((app / "restore.py").is_file())
+        self.assertTrue((app / "requirements-win-amd64.lock").is_file())
+        self.assertTrue((app / "v2app" / "runtime" / "identity.py").is_file())
+        self.assertTrue((app / "static" / "index.html").is_file())
         for name in CUSTOMER_FILES:
             self.assertTrue((output / name).is_file(), name)
 
     def test_assembled_payload_builds_into_reverse_verified_package(self) -> None:
         payload = assemble_payload(self.backend, self.frontend, self.root / "payload-build")
-        runtime = self.root / "windows-runtime"
-        runtime.mkdir()
-        (runtime / "python.exe").write_bytes(b"python")
-        (runtime / "pythonw.exe").write_bytes(b"pythonw")
+        fixture = self.root / "runtime-fixture"
+        fixture.mkdir()
+        _, runtime = create_inputs(fixture)
         output = self.root / "out"
         output.mkdir()
         result = build_package(payload, runtime, output / ARTIFACT_NAME)
@@ -75,6 +89,64 @@ class AssemblePayloadTests(unittest.TestCase):
             self.assertNotIn("Get-CimInstance", script)
             self.assertNotIn("taskkill", script.casefold())
             self.assertNotIn("netstat", script.casefold())
+
+    def test_all_customer_maintenance_entrypoints_are_uac_and_resource_bound(self) -> None:
+        output = assemble_payload(self.backend, self.frontend, self.root / "payload-contracts")
+        for name in CUSTOMER_FILES:
+            if not name.casefold().endswith(".bat"):
+                continue
+            with self.subTest(name=name):
+                script = (output / name).read_text(encoding="utf-8")
+                self.assertIn("Start-Process", script)
+                self.assertIn("-Verb RunAs", script)
+                self.assertIn("PSModulePath", script)
+                self.assertIn("WindowsPowerShell\\v1.0\\Modules", script)
+                self.assertIn("SpecialFolder]::ProgramFiles", script)
+                self.assertIn("会议室预约系统V2", script)
+                self.assertIn("TransactionInstallId", script)
+                self.assertIn("SecurityInstallId", script)
+                self.assertIn("SecurityDescriptorVersion", script)
+                self.assertIn("expectedServiceArguments", script)
+                self.assertIn("expectedBackupArguments", script)
+                self.assertIn("MSFT_TaskBootTrigger", script)
+                self.assertIn("MSFT_TaskDailyTrigger", script)
+                self.assertIn("StartWhenAvailable", script)
+                self.assertIn("IgnoreNew", script)
+                self.assertIn("_程序文件\\app\\service.py", script)
+                self.assertIn("_程序文件\\app\\backup.py", script)
+                self.assertNotIn("Settings.Enabled", script)
+                for forbidden in (
+                    "taskkill",
+                    "netstat",
+                    "Get-CimInstance",
+                    "Get-Process",
+                    "Stop-Process",
+                    "Stop-ScheduledTask",
+                    "wmic",
+                ):
+                    self.assertNotIn(forbidden.casefold(), script.casefold())
+                self.assertLess(
+                    max(len(line.encode("utf-8")) for line in script.splitlines()),
+                    8191,
+                )
+
+    def test_backup_and_restore_entrypoints_pass_current_install_id(self) -> None:
+        output = assemble_payload(self.backend, self.frontend, self.root / "payload-maintenance")
+        immediate = (output / "② 立即备份.bat").read_text(encoding="utf-8")
+        restore = (output / "⑥ 从备份恢复.bat").read_text(encoding="utf-8")
+        self.assertIn("$env:MRV2_BACKUP --expected-install-id $installId", immediate)
+        self.assertNotIn(
+            "$env:MRV2_BACKUP --scheduled --expected-install-id $installId",
+            immediate,
+        )
+        self.assertIn("人工备份确认成功", immediate)
+        self.assertIn("$newSequence -le $beforeSequence", immediate)
+        self.assertIn("_程序文件\\app\\restore.py", restore)
+        self.assertIn("--backup $selected.FullName --expected-install-id $installId", restore)
+        self.assertIn("Read-Host '请输入 RESTORE 确认", restore)
+        self.assertIn("reservation-v2-backup-*.json", restore)
+        self.assertIn("$mainWasEnabled", restore)
+        self.assertIn("$backupWasEnabled", restore)
 
 
 if __name__ == "__main__":

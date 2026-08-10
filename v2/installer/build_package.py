@@ -18,14 +18,20 @@ from typing import Any, Mapping, Optional, Sequence
 try:
     from .installer_core import (
         GENERATION_FILE,
+        BACKUP_TASK_NAME,
         HEALTH_PATH,
         INSTALLED_MANIFEST,
         INSTALL_INFO,
         LAN_BIND,
         MANIFEST_SCHEMA,
         PRODUCT_GENERATION,
+        PRODUCT_DIRECTORY_NAME,
         RECEIPT_FILE,
         RELEASE,
+        RUNTIME_LOCK_FILE,
+        RUNTIME_NOTICES_FILE,
+        RUNTIME_PROVENANCE_FILE,
+        RUNTIME_SBOM_FILE,
         SERVICE_ENTRYPOINT,
         SERVICE_PORT,
         SETUP_BIND,
@@ -44,18 +50,25 @@ try:
         sha256_bytes,
         sha256_file,
         tree_digest,
+        validate_runtime_supply_chain,
     )
 except ImportError:
     from installer_core import (  # type: ignore
         GENERATION_FILE,
+        BACKUP_TASK_NAME,
         HEALTH_PATH,
         INSTALLED_MANIFEST,
         INSTALL_INFO,
         LAN_BIND,
         MANIFEST_SCHEMA,
         PRODUCT_GENERATION,
+        PRODUCT_DIRECTORY_NAME,
         RECEIPT_FILE,
         RELEASE,
+        RUNTIME_LOCK_FILE,
+        RUNTIME_NOTICES_FILE,
+        RUNTIME_PROVENANCE_FILE,
+        RUNTIME_SBOM_FILE,
         SERVICE_ENTRYPOINT,
         SERVICE_PORT,
         SETUP_BIND,
@@ -74,6 +87,7 @@ except ImportError:
         sha256_bytes,
         sha256_file,
         tree_digest,
+        validate_runtime_supply_chain,
     )
 
 
@@ -87,11 +101,12 @@ ARTIFACT_NAME = "会议室预约系统-V2.0.0-安装包.zip"
 DELIVERED_LAUNCHER = "安装V2.0.0.bat"
 DELIVERED_GUIDE = "安装说明.txt"
 DELIVERED_TOOL = "_V2安装工具"
-DELIVERED_ENTRY = f"{DELIVERED_TOOL}/install.py"
-DELIVERED_CORE = f"{DELIVERED_TOOL}/installer_core.py"
+DELIVERED_ENTRY = f"{DELIVERED_TOOL}/app/install.py"
+DELIVERED_CORE = f"{DELIVERED_TOOL}/app/installer_core.py"
 DELIVERED_MANIFEST = f"{DELIVERED_TOOL}/manifest.json"
 PAYLOAD_NAME = "payload-v2.0.0.zip"
 DELIVERED_PAYLOAD = f"{DELIVERED_TOOL}/{PAYLOAD_NAME}"
+PAYLOAD_RUNTIME_LOCK = "_程序文件/app/requirements-win-amd64.lock"
 
 PROTECTED_PAYLOAD_PREFIXES = (
     "_程序文件/data/",
@@ -124,6 +139,9 @@ class BuildResult:
     artifact_path: Path
     sha256_path: Path
     external_manifest_path: Path
+    sbom_path: Path
+    notices_path: Path
+    runtime_provenance_path: Path
     artifact_sha256: str
     artifact_size: int
     payload_sha256: str
@@ -181,6 +199,8 @@ def _assert_payload_safe(payload_root: Path) -> tuple[Mapping[str, Any], ...]:
     paths = {str(record["path"]) for record in records}
     if SERVICE_ENTRYPOINT not in paths:
         raise PackageBuildError(f"V2 payload 缺少服务入口：{SERVICE_ENTRYPOINT}")
+    if PAYLOAD_RUNTIME_LOCK not in paths:
+        raise PackageBuildError(f"V2 payload 缺少 Windows runtime lock：{PAYLOAD_RUNTIME_LOCK}")
     return records
 
 
@@ -232,7 +252,15 @@ def _payload_files(payload_root: Path) -> tuple[dict[str, bytes], tuple[Mapping[
     return files, records
 
 
-def _runtime_files(runtime_root: Path) -> tuple[dict[str, bytes], tuple[Mapping[str, Any], ...]]:
+def _runtime_files(
+    runtime_root: Path,
+    *,
+    _test_fixture: bool = False,
+) -> tuple[dict[str, bytes], tuple[Mapping[str, Any], ...]]:
+    try:
+        validate_runtime_supply_chain(runtime_root, _test_fixture=_test_fixture)
+    except InstallerError as error:
+        raise PackageBuildError(f"冻结 runtime 供应链校验失败：{error}") from error
     records = records_for_tree(runtime_root)
     paths = {str(record["path"]) for record in records}
     required = {"python.exe", "pythonw.exe"}
@@ -266,7 +294,9 @@ def _manifest(
             "health_path": HEALTH_PATH,
             "task_path": TASK_PATH,
             "task_name": TASK_NAME,
+            "backup_task_name": BACKUP_TASK_NAME,
             "entrypoint": SERVICE_ENTRYPOINT,
+            "install_directory": f"%ProgramFiles%\\{PRODUCT_DIRECTORY_NAME}",
         },
         "payload": {
             "file": PAYLOAD_NAME,
@@ -300,8 +330,8 @@ def _outer_files(
     files = {
         DELIVERED_LAUNCHER: _crlf_bytes(LAUNCHER_SOURCE, "V2 零参数 BAT"),
         DELIVERED_GUIDE: _crlf_bytes(GUIDE_SOURCE, "V2 安装说明"),
-        DELIVERED_ENTRY: tool_files["install.py"],
-        DELIVERED_CORE: tool_files["installer_core.py"],
+        DELIVERED_ENTRY: tool_files["app/install.py"],
+        DELIVERED_CORE: tool_files["app/installer_core.py"],
         DELIVERED_MANIFEST: json_bytes(manifest),
         DELIVERED_PAYLOAD: payload_zip,
     }
@@ -310,7 +340,12 @@ def _outer_files(
     return files
 
 
-def verify_outer_package(content: bytes, expected_files: Mapping[str, bytes]) -> None:
+def verify_outer_package(
+    content: bytes,
+    expected_files: Mapping[str, bytes],
+    *,
+    _test_fixture: bool = False,
+) -> None:
     try:
         archive = zipfile.ZipFile(io.BytesIO(content), "r")
     except (OSError, zipfile.BadZipFile) as error:
@@ -339,7 +374,7 @@ def verify_outer_package(content: bytes, expected_files: Mapping[str, bytes]) ->
             destination = root.joinpath(*relative.split("/"))
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
-        loaded = Bundle.load(root / DELIVERED_TOOL)
+        loaded = Bundle.load(root / DELIVERED_TOOL, _test_fixture=_test_fixture)
         if loaded.manifest["version"] != VERSION:
             raise PackageBuildError("反向加载得到的安装包版本错误")
 
@@ -351,10 +386,20 @@ def _sidecar_paths(output: Path) -> tuple[Path, Path]:
     )
 
 
+def _supply_chain_sidecar_paths(output: Path) -> tuple[Path, Path, Path]:
+    return (
+        output.with_name(output.name + ".sbom.cdx.json"),
+        output.with_name(output.name + ".THIRD-PARTY-NOTICES.txt"),
+        output.with_name(output.name + ".runtime-provenance.json"),
+    )
+
+
 def build_package(
     payload_root: Path,
     runtime_root: Path,
     output: Path,
+    *,
+    _test_fixture: bool = False,
 ) -> BuildResult:
     payload_root = Path(payload_root).resolve(strict=True)
     runtime_root = Path(runtime_root).resolve(strict=True)
@@ -364,7 +409,15 @@ def build_package(
     if output.name != ARTIFACT_NAME:
         raise PackageBuildError(f"V2 候选 ZIP 必须命名为：{ARTIFACT_NAME}")
     sha_path, external_manifest_path = _sidecar_paths(output)
-    for path in (output, sha_path, external_manifest_path):
+    sbom_path, notices_path, runtime_provenance_path = _supply_chain_sidecar_paths(output)
+    for path in (
+        output,
+        sha_path,
+        external_manifest_path,
+        sbom_path,
+        notices_path,
+        runtime_provenance_path,
+    ):
         if path.exists():
             raise PackageBuildError(f"发布输出已经存在，拒绝覆盖：{path}")
     for source in (payload_root, runtime_root, TOOL_DIR):
@@ -373,16 +426,26 @@ def build_package(
 
     payload_files, payload_records = _payload_files(payload_root)
     payload_zip = _deterministic_zip(payload_files)
-    runtime_files, runtime_records = _runtime_files(runtime_root)
+    runtime_files, runtime_records = _runtime_files(
+        runtime_root,
+        _test_fixture=_test_fixture,
+    )
+    if payload_files[PAYLOAD_RUNTIME_LOCK] != runtime_files[RUNTIME_LOCK_FILE]:
+        raise PackageBuildError(
+            "payload 中经审核的 Windows runtime lock 与实际 runtime 不一致"
+        )
+    sbom_content = runtime_files[RUNTIME_SBOM_FILE]
+    notices_content = runtime_files[RUNTIME_NOTICES_FILE]
+    runtime_provenance_content = runtime_files[RUNTIME_PROVENANCE_FILE]
     tool_files = {
-        "install.py": _lf_bytes(ENTRY_SOURCE, "V2 Python 安装入口"),
-        "installer_core.py": _lf_bytes(CORE_SOURCE, "V2 安装事务核心"),
+        "app/install.py": _lf_bytes(ENTRY_SOURCE, "V2 Python 安装入口"),
+        "app/installer_core.py": _lf_bytes(CORE_SOURCE, "V2 安装事务核心"),
     }
     tool_records = _records_from_files(tool_files)
     manifest = _manifest(payload_zip, payload_records, runtime_records, tool_records)
     outer_files = _outer_files(payload_zip, manifest, runtime_files, tool_files)
     artifact = _deterministic_zip(outer_files)
-    verify_outer_package(artifact, outer_files)
+    verify_outer_package(artifact, outer_files, _test_fixture=_test_fixture)
     artifact_sha = sha256_bytes(artifact)
     external_manifest = {
         "schema": 1,
@@ -408,6 +471,20 @@ def build_package(
             "file_count": len(tool_records),
             "tree_sha256": tree_digest(tool_records),
         },
+        "supply_chain": {
+            "sbom": {
+                "file": sbom_path.name,
+                "sha256": sha256_bytes(sbom_content),
+            },
+            "third_party_notices": {
+                "file": notices_path.name,
+                "sha256": sha256_bytes(notices_content),
+            },
+            "runtime_provenance": {
+                "file": runtime_provenance_path.name,
+                "sha256": sha256_bytes(runtime_provenance_content),
+            },
+        },
         "service": {
             "port": SERVICE_PORT,
             "setup_bind": SETUP_BIND,
@@ -424,20 +501,34 @@ def build_package(
         staged_artifact = temporary_dir / output.name
         staged_sha = temporary_dir / sha_path.name
         staged_manifest = temporary_dir / external_manifest_path.name
+        staged_sbom = temporary_dir / sbom_path.name
+        staged_notices = temporary_dir / notices_path.name
+        staged_provenance = temporary_dir / runtime_provenance_path.name
         staged_artifact.write_bytes(artifact)
         staged_sha.write_bytes(sha_text)
         staged_manifest.write_bytes(manifest_content)
+        staged_sbom.write_bytes(sbom_content)
+        staged_notices.write_bytes(notices_content)
+        staged_provenance.write_bytes(runtime_provenance_content)
         if sha256_file(staged_artifact) != artifact_sha:
             raise PackageBuildError("V2 候选 ZIP 落盘后哈希不一致")
-        verify_outer_package(staged_artifact.read_bytes(), outer_files)
+        verify_outer_package(
+            staged_artifact.read_bytes(),
+            outer_files,
+            _test_fixture=_test_fixture,
+        )
         for staged, final in (
             (staged_artifact, output),
             (staged_sha, sha_path),
             (staged_manifest, external_manifest_path),
+            (staged_sbom, sbom_path),
+            (staged_notices, notices_path),
+            (staged_provenance, runtime_provenance_path),
         ):
             if final.exists():
                 raise PackageBuildError(f"发布输出在交付前出现，拒绝覆盖：{final}")
-            os.replace(staged, final)
+            # 同一目录硬链接既原子又带“目标必须不存在”语义，避免并发覆盖。
+            os.link(staged, final)
             delivered.append(final)
     except BaseException:
         for path in delivered:
@@ -453,6 +544,9 @@ def build_package(
         artifact_path=output,
         sha256_path=sha_path,
         external_manifest_path=external_manifest_path,
+        sbom_path=sbom_path,
+        notices_path=notices_path,
+        runtime_provenance_path=runtime_provenance_path,
         artifact_sha256=artifact_sha,
         artifact_size=len(artifact),
         payload_sha256=sha256_bytes(payload_zip),
@@ -482,6 +576,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"V2 候选 ZIP：{result.artifact_path}")
     print(f"SHA-256：{result.artifact_sha256}")
     print(f"发布清单：{result.external_manifest_path}")
+    print(f"SBOM：{result.sbom_path}")
+    print(f"第三方许可证：{result.notices_path}")
+    print(f"runtime 来源：{result.runtime_provenance_path}")
     return 0
 
 

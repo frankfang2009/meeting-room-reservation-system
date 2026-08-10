@@ -1,0 +1,4 @@
+# 每个实际分发包均须固定版本与对应 wheel/sdist SHA-256；以下仅为格式骨架。
+Flask==3.1.3 --hash=sha256:REPLACE_WITH_64_LOWERCASE_HEX
+waitress==3.0.2 --hash=sha256:REPLACE_WITH_64_LOWERCASE_HEX
+# 继续列出并锁定 Flask 的全部传递依赖。

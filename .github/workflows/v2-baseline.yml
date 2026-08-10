@@ -5,12 +5,16 @@ on:
     paths:
       - "v2/**"
       - ".github/workflows/v2-baseline.yml"
+      - ".github/scripts/v2-reproducible-build.sh"
+      - ".github/scripts/v2-windows-candidate-gate.ps1"
   push:
     branches:
       - "codex/v2.0.0-baseline"
     paths:
       - "v2/**"
       - ".github/workflows/v2-baseline.yml"
+      - ".github/scripts/v2-reproducible-build.sh"
+      - ".github/scripts/v2-windows-candidate-gate.ps1"
 
 permissions:
   contents: read
@@ -18,7 +22,7 @@ permissions:
 jobs:
   linux-contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,6 +34,8 @@ jobs:
         run: python -m pip install --requirement v2/backend/requirements.txt
       - name: Backend tests
         working-directory: v2/backend
+        env:
+          PYTHONWARNINGS: error::ResourceWarning
         run: python -m unittest discover -s tests -v
       - name: Installer and updater tests
         run: python -m unittest discover -s v2/installer/tests -v
@@ -58,10 +64,47 @@ jobs:
             echo "production bundle contains forbidden synthetic state"
             exit 1
           fi
+      - name: Independently rebuild source-to-candidate twice
+        shell: bash
+        env:
+          CANDIDATE_OUTPUT: ${{ runner.temp }}/meeting-room-v2-candidate
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/meeting-room-v2-approved-inputs"
+          mkdir -p "$input_root/wheels"
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform win_amd64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$input_root/wheels" \
+            --requirement v2/backend/requirements-win-amd64.lock
+          curl --fail --location --silent --show-error \
+            --output "$input_root/python-3.13.14-embed-amd64.zip" \
+            https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip
+          .github/scripts/v2-reproducible-build.sh \
+            "$GITHUB_WORKSPACE" \
+            "$RUNNER_TEMP/meeting-room-v2-independent-builds" \
+            "$input_root/python-3.13.14-embed-amd64.zip" \
+            "$input_root/wheels" \
+            "$CANDIDATE_OUTPUT"
+      - name: Upload independently reproduced candidate six-pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-room-v2-candidate
+          path: ${{ runner.temp }}/meeting-room-v2-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Repository whitespace gate
+        run: git diff --check
 
   windows-installer-contracts:
+    needs: linux-contracts
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -71,12 +114,11 @@ jobs:
         run: python -m compileall -q v2/installer
       - name: Run cross-platform installer transaction tests
         run: python -m unittest discover -s v2/installer/tests -v
-      - name: Verify zero-argument BAT syntax path
-        shell: cmd
-        env:
-          MEETING_ROOM_V2_INSTALL_NO_PAUSE: "1"
-        run: |
-          call v2\installer\安装V2.0.0.bat
-          set "RC=%ERRORLEVEL%"
-          if not "%RC%"=="1" exit /b 1
-          exit /b 0
+      - name: Download real candidate six-pack
+        uses: actions/download-artifact@v4
+        with:
+          name: meeting-room-v2-candidate
+          path: ${{ runner.temp }}/meeting-room-v2-candidate
+      - name: Gate real zero-argument candidate entrypoints
+        shell: pwsh
+        run: .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V2.0.0-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"

@@ -1,54 +1,75 @@
 # V2.0.0 发布门禁
 
-状态说明：`[x]` 代表已有自动化证据；`[ ]` 代表仍需完成或人工验收。只有全部发布必需项通过，才能从候选版改为正式版。
+状态说明：`[x]` 只表示下方“本轮可复跑证据”已经通过；`[ ]` 表示仍需 CI、
+Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
+完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
 
-## 源码与契约
+## 本轮可复跑证据（2026-08-10）
 
-- [x] 最新 UI refreeze 与共享日历修订已识别。
-- [x] 角色统一为 `admin | employee`。
-- [x] V2 fresh-install、无 V1 迁移边界已写入产品契约。
-- [x] 生产 bundle 不含 demo 密码、seed 业务数据、URL demo 状态或静态诊断数据。
-- [x] 公开响应字段白名单由前后端契约测试共同锁定。
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E1 | `cd v2/backend && python -m unittest discover -s tests -v` | runner 56 通过；独立用例 56；继承重复 0 |
+| E2 | `python -m unittest discover -s v2/installer/tests -v` | runner 59 通过；独立用例 59；继承重复 0 |
+| E3 | `python -m unittest discover -s v2/tests -v` | runner 15 通过；独立用例 15；继承重复 0 |
+| E4 | `cd v2/frontend && npm test && npm run build` | 67/67 通过；含身份切换控制流、session/setup 状态渲染测试；Vite 生产构建成功 |
+| E5 | `python -m compileall -q v2/backend`、`python -m compileall -q v2/installer`、`git diff --check` | 全部通过 |
+| E6 | `V2_REPRO_USE_EXISTING_NODE_MODULES=1 PYTHON_BIN=<python> .github/scripts/v2-reproducible-build.sh "$PWD" <new-work> <approved-python-zip> <locked-wheelhouse> <new-export>`（Actions 不设置 existing 模式，会在两目录分别 `npm ci`） | 两套 frontend、wheel 清单、runtime 树、payload 及最终六件套逐字节一致；脚本输出 `MRV2_REPRODUCIBLE_BUILD=PASS` |
+| E7 | `cd v2/backend && python -m unittest tests.test_hardening.SetupListenerProcessTests.test_real_waitress_setup_handoff_has_no_bad_file_descriptor -v` | 真实 Waitress 子进程收到 setup 201，连续两次确认 `bind_mode=lan`；无 `Bad file descriptor`/`Errno 9` |
+| E8 | `ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/v2-baseline.yml")'` | workflow YAML 解析通过 |
 
-## 自动化
+本轮本地六件套位于临时验证目录，不是批准的外发归档。ZIP SHA-256 是
+`aad1c9b39224db570d129af344cf3a1d12ec1677f159985154527fc282a48e1a`；清单仍为
+`formal_external_release_allowed=false`。任何后续生产源代码变化都必须作废该 SHA
+并重跑 E1–E8。
 
-- [x] 后端单元与 API 集成测试全部通过。
-- [x] 数据库代际拒绝、外键、slot 唯一占用、revision 冲突和审计原子性通过。
-- [x] 员工/管理员读取与写入权限矩阵通过。
-- [x] 公开姓名服务端脱敏和禁止字段测试通过。
-- [x] 前端测试和生产构建通过。
-- [x] SPA 静态托管、session、CSRF、首次设置和预约主流程端到端通过。
-- [x] 安装包确定性、反向解包、文件白名单和篡改拒绝通过。
-- [x] 非空目录拒绝、相邻 V1 目录指纹不变、危险 ZIP 路径拒绝通过。
-- [ ] 测试用 V2.0.1 升级验证 V2 数据保护、失败回滚和重复运行。
+## 源码、契约与安全自动化
 
-## Windows 实机
+- [x] 角色统一为 `admin | employee`，共享日历可见性与本人/管理员写权限由前后端共同锁定。（E1、E3）
+- [x] fresh-install、无 V1 读取/迁移/删除边界已写入产品契约并有相邻 V1 指纹测试。（E1、E2、E3）
+- [x] 预约、占用槽和事件的 create/update/cancel 故障点均验证事务回滚。（E1）
+- [x] 公开大屏由服务端白名单投影，前端遇到额外私有字段立即拒绝。（E1、E3、E4）
+- [x] setup 响应完成后才由 Waitress 主循环关闭旧 listener；前端等待两个稳定 LAN 健康响应后自动跳转，失败可重试。（E1、E4、E7）
+- [x] 重新登录在 session+bootstrap 完整校验前完全卸载旧工作台 DOM；失败仍保持隔离，用户或角色变化再通过 keyed remount 清除抽屉、token、审计、用户列表和草稿。（E4）
+- [x] 管理员编辑他人预约时使用原 owner 的个人标签；缺少 owner 标签时不回退到管理员语义。（E1、E3、E4）
+- [x] 日期、月份、带时区审计范围及绑定筛选的游标覆盖最小值、最大值、非法格式和反向范围；`9999-12` 稳定返回 422 JSON。（E1）
+- [x] `purpose` 在前端、后端、API 契约和产品契约中统一为必填，服务端不注入默认事项。（E1、E3、E4）
+- [x] API 413/404/405/500/503、requestId、登录限速、会话空闲/绝对过期、备份失败和恢复 fail-closed 自动化通过。（E1、E4）
+- [x] 普通用户错误提示覆盖服务未启动、非 JSON、权限不足、session 失效、数据库恢复、端口冲突及备份/恢复失败，详细异常只写日志。（E1、E3、E4）
+- [x] 正式 Runtime 钉死 CPython 3.13.14 官方 `embed-amd64` URL/SHA、requirements lock 摘要和完整 runtime 树；伪 PE、替换身份和合成 fixture 不能进入正式 `Bundle.load`。（E2、E3、E6）
+- [x] CI 定义为两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload 与六件套，并比较每层结果。（E3、E8）
+- [x] Windows BAT 与候选门禁对 launcher 缺失、工具目录缺失、runtime Python 缺失/启动失败、产品拒绝和产品成功使用独立码或精确 marker。（E2、E3）
+- [x] 未使用的 `getReservation/getRooms/getUsers/getPreferences` 已删除；变更记录、审计和提醒接口保留。（E4）
+- [x] `update_core.py` 明确标记为不进入 V2.0.0 payload 的非生产未来基线，未宣称在线升级可用。（E2、E3）
 
-- [ ] 普通用户在 Windows 10 双击零参数 BAT，UAC 接受与取消均符合预期。
-- [ ] 普通用户在 Windows 11 双击零参数 BAT，UAC 接受与取消均符合预期。
-- [ ] 中文、空格、括号和 `&` 路径安装通过。
-- [ ] 首次设置前第二台局域网电脑无法连接；完成后可以连接。
-- [ ] private/domain 防火墙规则仅开放 TCP 8080 到 LocalSubnet。
-- [ ] 真实重启后 V2 专属计划任务正常启动。
-- [ ] 端口冲突不杀进程、不改端口并给出可操作提示。
-- [ ] SmartScreen、EDR、AppLocker 和单位组策略结果已记录；不得通过关闭安全软件规避。
-- [ ] 1024×720、1280×720、1440×900、1920×1080 桌面浏览器视觉回归通过。
-- [ ] 键盘焦点、抽屉焦点陷阱、会话过期、电视大屏长时间刷新通过。
+## 尚未完成的 CI 与 Windows 实机
+
+- [ ] 在 GitHub Actions 实际运行更新后的 Linux 双构建和 Windows hosted candidate gate，并归档日志及 artifact。
+- [ ] 普通用户在 Windows 10 双击真实候选零参数 BAT，记录 UAC 接受与取消。
+- [ ] 普通用户在 Windows 11 双击真实候选零参数 BAT，记录 UAC 接受与取消。
+- [ ] 验证固定 `%ProgramFiles%\会议室预约系统V2` 安装、中文 UI、标准用户账户和 UAC 路径。
+- [ ] 首次设置前第二台局域网电脑无法连接；设置完成后自动上线且第二台电脑可连接。
+- [ ] private/domain 防火墙规则只开放 TCP 8080 到 `LocalSubnet`。
+- [ ] 真实重启后 V2 专属主任务与每日备份任务正常启动、补跑且不重复并发。
+- [ ] 实机端口冲突不杀未知进程、不换端口，并显示可操作提示。
+- [ ] 标准用户不能修改程序，也不能读取数据库、secret、PID、日志或备份；维护入口按需 UAC。
+- [ ] 删除、损坏或代际篡改已设置数据库后不初始化、不重开 setup，并完成真实备份恢复演练。
+- [ ] 每日备份、超过一天启动补备份、30 份轮转、恢复故障回滚和跨重启恢复通过。
+- [ ] SmartScreen、EDR、AppLocker、单位组策略及未签名包分发结果已记录；不得关闭安全软件规避。
+- [ ] 1024×720、1280×720、1440×900、1920×1080 的 Windows 浏览器视觉回归通过。
+- [ ] 键盘焦点、抽屉焦点陷阱、管理员→员工会话过期重登、电视大屏长时间刷新完成实机验收。
+- [ ] Authenticode 签名、签名后验签与签名制品 SHA 归档完成；没有证书时正式外发门禁保持关闭。
 
 ## 发布物
 
-- [ ] React、后端、runtime 和安装 ZIP 只构建一次，所有测试消费同一 SHA-256 制品。
-- [x] 候选安装 ZIP、外部 SHA-256 和发布清单已成套生成并反向核验。
-- [ ] 依赖许可证/SBOM、runtime 来源证明和 Windows 实机诊断证据已成套归档。
-- [x] 候选包中不存在数据库、secret、日志、备份、测试文件、node_modules 或源码映射。
-- [x] 用户说明明确：需先自行删除旧系统内容；安装器不会代删，也不会导入 V1 数据。
+- [x] 当前本地候选 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance 六件套已成套生成并反向加载。（E2、E6）
+- [x] 两个本地构建结果逐字节一致，且正式 workflow 会对独立源码目录重复整个构建链。（E6、E8）
+- [x] 候选包不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。（E2、E3）
+- [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
+- [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 六件套移入受控发布归档。
+- [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
-## 2026-08-09 候选证据
+## 已撤销候选
 
-- 后端：38 项 `unittest` 通过，`ResourceWarning` 按错误处理，`compileall` 通过。
-- 安装/更新链：35 项 `unittest` 通过，`compileall` 通过。
-- 跨层契约：10 项 `unittest` 通过。
-- 前端：28 项 Node 契约测试通过；Vite 生产构建通过。
-- 本机真实 HTTP 进程烟测通过：回环首次设置、监听重启、登录、bootstrap、预约写入/读取和 React 静态首页。
-- 真实 runtime 形态构建两次字节一致；候选 ZIP SHA-256 为 `eedee50ece4a198c98e79867b7bf961a36d6432d7aa4a3954ae6f9e967f259d6`。
-- 候选清单保持 `formal_external_release_allowed=false`；未通过本文下方 Windows 实机项前不得正式外发。
+2026-08-09 首版候选及其 SHA 已明确撤销并从有效候选列表删除，不得继续分发或用作
+验收证据。旧审核只保留问题追踪价值；本清单只承认上方 2026-08-10 的可复跑结果，
+且它仍不是正式外发批准。

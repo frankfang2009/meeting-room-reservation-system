@@ -18,13 +18,20 @@ Waitress / Flask :8080
 ```
 
 首次设置前，服务管理器以回环模式启动；完成设置后重启为局域网模式。`install_id` 同时出现在安装身份文件和健康响应中，安装器不能把端口上的其他服务误判成本系统。
-生产入口仅以当前安装的 runtime、`service.py` 路径、`install_id`、PID 与每进程随机令牌共同确认启停对象；Windows 存活探测只打开查询句柄，不按进程名或端口结束程序。后台错误写入有限大小的 `logs/service.log` 轮转文件。
+正式布局为 `_程序文件/app`（代码和静态资源）、`runtime`、`data`、`backups`、
+`logs` 五个同级目录。runtime 的 `python313._pth` 只显式加入受保护的
+`..\app`，不得把整个 `_程序文件` 裸加入模块搜索路径，也不得启用用户
+site-packages。生产入口仅以当前安装的 runtime、`app/service.py` 路径、
+`install_id`、PID 与每进程随机令牌共同确认启停对象；Windows 存活探测只打开
+查询句柄，不按进程名或端口结束程序。后台错误写入有限大小的
+`logs/service.log` 轮转文件。
 
 ## 后端边界
 
 - `v2app` 应用工厂：配置、数据库生命周期、会话、CSRF、安全响应头和蓝图注册。
 - 数据库层：代际校验、schema 初始化、明确事务和备份。
-- 认证层：服务端 session、密码哈希、登录限流、启用状态与 session 失效版本。
+- 认证层：服务端 session、密码哈希、账号+IP/IP 双层限流、固定耗时未知账号校验、
+  启用状态、30 分钟空闲/12 小时绝对失效与安全审计。
 - 预约服务：权限、slot 唯一占用、revision 乐观锁和追加式事件。
 - 管理 API：用户、笔录室、全局标签、系统健康、诊断和备份。
 - 用户 API：偏好、个人标签、提醒回执。
@@ -34,13 +41,15 @@ Waitress / Flask :8080
 ## API 约定
 
 - 基础路径：`/api/v1`。
-- 成功响应可直接返回资源或 `{ "items": [...] }`；错误统一为：
+- 成功响应可直接返回资源或 `{ "items": [...] }`；列表可增加
+  `nextCursor` 和 `total`。错误统一为：
 
 ```json
 {
   "error": {
     "code": "SLOT_CONFLICT",
     "message": "所选时段已被占用",
+    "requestId": "server-generated-uuid",
     "fields": {},
     "conflicts": []
   }
@@ -54,11 +63,15 @@ Waitress / Flask :8080
 
 ## 数据库不变量
 
-- 启动时首先读取元数据；非 `product_generation=2`、未知 schema 或疑似 V1 表结构时拒绝启动。
+- 启动时首先读取安装镜像和数据库元数据，再执行 `quick_check` 与外键检查；非
+  `product_generation=2`、未知 schema、疑似 V1、已设置后数据库缺失/为空/损坏时
+  都进入 fail-closed 恢复状态，绝不创建新库或重新开放首次设置。
 - `PRAGMA foreign_keys=ON`，写入使用显式事务；数据库文件与 secret 不进入版本库或候选 payload。
 - 用户、笔录室、预约均使用稳定随机 ID；不能用时间戳或数组下标充当业务身份。
 - 预约事件只追加；包含操作者、事件类型、发生时间以及最少必要的前后快照。
-- 备份先做 SQLite 在线备份，再执行 `integrity_check`，最终用原子改名提交。
+- 备份先做 SQLite 在线备份，再执行 `integrity_check`，最终用原子改名提交；每份
+  数据库必须有带 `install_id`、schema、SHA-256 与单调序号的 sidecar。恢复在停服
+  后执行预恢复快照、身份和完整性校验、原子替换及失败回滚。
 
 ## 前端边界
 
@@ -70,6 +83,13 @@ Waitress / Flask :8080
 ## 安装与升级边界
 
 - 安装包有顶层零参数 BAT、冻结 Python runtime、payload 和 manifest。
-- 安装只接受不存在或空目录，提交前使用同卷 staging 和事务锁。
+- 正式安装根固定为 `%ProgramFiles%\会议室预约系统V2`，提交前使用同卷 staging 和
+  事务锁；测试模式才允许注入临时目录。
 - 安装现场生成 `install_id` 与 `.secret_key`；两者绝不进入候选包。
-- 未来更新器只读取明确登记的 V2 安装根，保护 `data/`、`backups/`、`logs/`、安装身份和 secret；禁止扫描磁盘寻找旧版本。
+- 安装器关闭继承并设置 DACL：程序允许 Users 读取执行，data/backups/logs 只允许
+  SYSTEM 与 Administrators；安装、启动和更新都要复核。
+- 每日 02:00 的 SYSTEM 任务执行在线备份，服务启动时对超过 24 小时的缺口补备份；
+  本机 UAC 恢复工具是唯一恢复入口。
+- V2.0.0 不交付在线更新入口；`installer/update_core.py` 是明确排除在 payload 外的
+  非生产前置层。未来更新器只读取明确登记的 V2 安装根，保护 `data/`、`backups/`、
+  `logs/`、安装身份和 secret；禁止扫描磁盘寻找旧版本。
