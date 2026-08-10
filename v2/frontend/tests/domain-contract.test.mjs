@@ -1,15 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  bookingTagContext,
   bookingPayload,
   canManageBooking,
   canViewBookingDetails,
   findFirstAvailableStart,
   generateTimeSlots,
+  isDrawerAllowed,
   isSameBooking,
+  projectServerClock,
   rebaseBookingEdit,
   reminderDisplayMessage,
+  reservationEventLabel,
+  mapSetupFieldErrors,
+  setupStepForField,
+  userFacingError,
+  validateAuthenticatedContext,
   validateBookingForm,
+  validateSetupUsername,
+  waitForSetupRestart,
 } from "../src/domain.js";
 
 test("generates adjacent working-hour slots", () => {
@@ -27,6 +37,106 @@ test("shares authenticated details while mutation follows owner identity", () =>
   assert.equal(canManageBooking({ role: "employee", currentUserId: "user-1", booking: other }), false);
   assert.equal(canManageBooking({ role: "admin", currentUserId: "user-1", booking: other }), true);
   assert.equal(canManageBooking({ role: "staff", currentUserId: "user-1", booking: own }), false);
+});
+
+test("reauthentication validates the complete user scope before remounting", () => {
+  const adminSession = { authenticated: true, currentUser: { id: "admin-1", role: "admin" } };
+  const adminBootstrap = {
+    currentUser: { id: "admin-1", role: "admin" },
+    permissions: { manageRooms: true, manageUsers: true, manageSystem: true },
+  };
+  assert.equal(validateAuthenticatedContext(adminSession, adminBootstrap).scopeKey, "admin-1:admin");
+  const employeeSession = { authenticated: true, currentUser: { id: "employee-1", role: "employee" } };
+  const employeeBootstrap = {
+    currentUser: { id: "employee-1", role: "employee" },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+  };
+  assert.equal(validateAuthenticatedContext(employeeSession, employeeBootstrap).scopeKey, "employee-1:employee");
+  const downgradedSession = { authenticated: true, currentUser: { id: "admin-1", role: "employee" } };
+  const downgradedBootstrap = {
+    currentUser: { id: "admin-1", role: "employee" },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+  };
+  assert.equal(validateAuthenticatedContext(downgradedSession, downgradedBootstrap).scopeKey, "admin-1:employee");
+  assert.notEqual("admin-1:admin", validateAuthenticatedContext(downgradedSession, downgradedBootstrap).scopeKey);
+  assert.throws(() => validateAuthenticatedContext(adminSession, {
+    currentUser: { id: "employee-1", role: "employee" },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+  }), /身份/);
+  assert.throws(() => validateAuthenticatedContext(adminSession, {
+    currentUser: { id: "admin-1", role: "employee" },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+  }), /身份/);
+  assert.throws(() => validateAuthenticatedContext({ authenticated: false }, adminBootstrap), /身份/);
+});
+
+test("administrator drawers are denied again at render time", () => {
+  const employee = { manageRooms: false, manageUsers: false, manageSystem: false };
+  assert.equal(isDrawerAllowed("details", employee), true);
+  assert.equal(isDrawerAllowed("token-created", employee), false);
+  assert.equal(isDrawerAllowed("user-edit", employee), false);
+  assert.equal(isDrawerAllowed("token-created", { manageSystem: true }), true);
+});
+
+test("administrator edits use the booking owner's personal tag semantics", () => {
+  const context = bookingTagContext({
+    booking: { ownerId: "employee-1" },
+    role: "admin",
+    currentUserId: "admin-1",
+    globalTags: [{ id: "tag-1", slot: 1 }, { id: "tag-2", slot: 2 }],
+    currentPersonalTags: [{ id: "tag-3", slot: 3, label: "管理员标签" }],
+    users: [{
+      id: "employee-1",
+      personalTags: [
+        { id: "tag-3", slot: 3, label: "员工标签三" },
+        { id: "tag-4", slot: 4, label: "员工标签四" },
+      ],
+    }],
+  });
+  assert.equal(context.ownerTagsAvailable, true);
+  assert.deepEqual(context.tags.map((tag) => tag.label), [undefined, undefined, "员工标签三", "员工标签四"]);
+  const missing = bookingTagContext({
+    booking: { ownerId: "missing-user" }, role: "admin", currentUserId: "admin-1",
+    globalTags: [{ id: "tag-1", slot: 1 }], currentPersonalTags: [{ id: "tag-3", slot: 3 }], users: [],
+  });
+  assert.equal(missing.ownerTagsAvailable, false);
+  assert.deepEqual(missing.tags.map((tag) => tag.id), ["tag-1"]);
+});
+
+test("setup waits for a stable LAN listener and reports restart failure", async () => {
+  const states = [
+    { ok: true, status: "ready", setup_complete: true, bind_mode: "loopback" },
+    new Error("listener switching"),
+    { ok: true, status: "ready", setup_complete: true, bind_mode: "lan" },
+    { ok: true, status: "ready", setup_complete: true, bind_mode: "lan" },
+  ];
+  const health = await waitForSetupRestart({
+    probe: async () => {
+      const state = states.shift();
+      if (state instanceof Error) throw state;
+      return state;
+    },
+    pause: async () => {}, attempts: 4, stableChecks: 2,
+  });
+  assert.equal(health.bind_mode, "lan");
+  await assert.rejects(waitForSetupRestart({
+    probe: async () => { throw new Error("offline"); },
+    pause: async () => {}, attempts: 2,
+  }), (error) => error.code === "SERVICE_RESTART_TIMEOUT");
+});
+
+test("common failures include an action and safe support reference", () => {
+  assert.match(userFacingError({ code: "NETWORK_ERROR" }), /① 启动系统/);
+  assert.match(userFacingError({ code: "INVALID_RESPONSE", requestId: "req-1" }), /请求编号 req-1/);
+  assert.match(userFacingError({ code: "BACKUP_FAILED", status: 500 }), /备份没有完成/);
+  assert.doesNotMatch(userFacingError({ code: "BACKUP_FAILED", status: 500 }), /SELECT|Traceback|\.db/);
+  assert.match(userFacingError({ code: "SYSTEM_RECOVERY_REQUIRED", requestId: "req-2" }), /⑥ 从备份恢复/);
+  assert.match(userFacingError({ status: 403, message: "C:\\secret\\server.py" }), /联系管理员/);
+  assert.match(userFacingError({ status: 503, requestId: "req-3" }), /① 启动系统/);
+  assert.doesNotMatch(
+    userFacingError({ status: 500, message: "SELECT * FROM users at C:\\secret\\app.py" }, "保存失败"),
+    /SELECT|secret|app\.py/,
+  );
 });
 
 test("matches stable reservation ids only", () => {
@@ -76,4 +186,63 @@ test("formats change and upcoming reminder summaries without hiding server copy"
     kind: "change", changeType: "cancelled", date: "2026-08-10", start: "09:00", roomName: "笔录室 1",
   }), "2026-08-10 · 09:00 · 笔录室 1：预约已取消");
   assert.equal(reminderDisplayMessage({ kind: "upcoming", roomName: "笔录室 2" }), "笔录室 2：预约即将开始");
+});
+
+test("projects the server wall clock without applying the browser timezone", () => {
+  assert.deepEqual(projectServerClock({
+    serverDate: "2026-08-09",
+    serverTime: "23:59:58",
+    receivedAt: 1_000,
+  }, 5_000), {
+    date: "2026-08-10",
+    time: "00:00:02",
+  });
+  assert.deepEqual(projectServerClock({
+    serverDate: "2026-08-09",
+    serverTime: "14:32",
+    receivedAt: "2026-08-09T06:32:10Z",
+  }, "2026-08-09T06:32:15Z"), {
+    date: "2026-08-09",
+    time: "14:32:05",
+  });
+  assert.throws(() => projectServerClock({
+    serverDate: "2026-02-30",
+    serverTime: "14:32",
+    receivedAt: 0,
+  }, 0), /out of range/);
+});
+
+test("labels every reservation event type from the stable contract", () => {
+  assert.equal(reservationEventLabel("created"), "预约已创建");
+  assert.equal(reservationEventLabel("updated"), "预约已更新");
+  assert.equal(reservationEventLabel("cancelled"), "预约已取消");
+  assert.equal(reservationEventLabel("future-event"), "预约有变更");
+});
+
+test("setup username validation mirrors the server contract", () => {
+  assert.equal(validateSetupUsername("ab"), "用户名至少 3 个字符且不能包含空格");
+  assert.equal(validateSetupUsername("admin user"), "用户名至少 3 个字符且不能包含空格");
+  assert.equal(validateSetupUsername("  admin  "), "");
+});
+
+test("setup API field errors return the wizard to the earliest visible control", () => {
+  assert.deepEqual(mapSetupFieldErrors({
+    "admin.username": "用户名无效",
+    "rooms.1.name": "名称重复",
+    workEnd: "结束时间无效",
+  }, "请检查输入"), {
+    errors: {
+      username: "用户名无效",
+      "rooms.1.name": "名称重复",
+      workEnd: "结束时间无效",
+    },
+    step: 1,
+  });
+  assert.equal(mapSetupFieldErrors({ "rooms.0.name": "请输入名称" }).step, 2);
+  assert.equal(setupStepForField("workEnd"), 3);
+  assert.equal(setupStepForField("admin.password"), 1);
+  assert.deepEqual(mapSetupFieldErrors({ unsupported: "未知字段错误" }), {
+    errors: { submit: "未知字段错误" },
+    step: null,
+  });
 });

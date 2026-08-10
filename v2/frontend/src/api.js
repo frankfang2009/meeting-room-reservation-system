@@ -5,7 +5,16 @@ export const API_BASE = "/api/v1";
 let csrfToken = "";
 
 export class ApiError extends Error {
-  constructor({ status = 0, code = "NETWORK_ERROR", message = "无法连接系统服务", fields = {}, conflicts = [], current = null } = {}) {
+  constructor({
+    status = 0,
+    code = "NETWORK_ERROR",
+    message = "无法连接系统服务",
+    fields = {},
+    conflicts = [],
+    current = null,
+    requestId = "",
+    recoveryCode,
+  } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
@@ -13,6 +22,8 @@ export class ApiError extends Error {
     this.fields = fields || {};
     this.conflicts = conflicts || [];
     this.current = current || null;
+    this.requestId = typeof requestId === "string" ? requestId : "";
+    this.recoveryCode = recoveryCode ?? this.fields.recoveryCode ?? null;
   }
 }
 
@@ -29,7 +40,7 @@ function captureCsrf(value) {
   return value;
 }
 
-function errorFromResponse(status, payload) {
+function errorFromResponse(status, payload, headerRequestId = "") {
   const error = payload?.error || {};
   return new ApiError({
     status,
@@ -38,10 +49,12 @@ function errorFromResponse(status, payload) {
     fields: error.fields,
     conflicts: error.conflicts,
     current: error.current,
+    requestId: payload?.requestId || error.requestId || headerRequestId,
+    recoveryCode: error.recoveryCode,
   });
 }
 
-export async function request(path, { method = "GET", body, signal, headers = {}, responseType = "json" } = {}) {
+export async function request(path, { method = "GET", body, signal, headers = {}, responseType = "json", rootPath = false } = {}) {
   const upperMethod = method.toUpperCase();
   const requestHeaders = { Accept: "application/json", ...headers };
   const options = {
@@ -62,7 +75,7 @@ export async function request(path, { method = "GET", body, signal, headers = {}
 
   let response;
   try {
-    response = await fetch(`${API_BASE}${path}`, options);
+    response = await fetch(`${rootPath ? "" : API_BASE}${path}`, options);
   } catch (cause) {
     if (cause?.name === "AbortError") throw cause;
     throw new ApiError({ code: "NETWORK_ERROR", message: "无法连接系统服务" });
@@ -72,7 +85,7 @@ export async function request(path, { method = "GET", body, signal, headers = {}
     if (!response.ok) {
       let payload = null;
       try { payload = await response.json(); } catch { /* non-JSON error */ }
-      throw errorFromResponse(response.status, payload);
+      throw errorFromResponse(response.status, payload, response.headers.get("X-Request-Id"));
     }
     return response.blob();
   }
@@ -82,10 +95,15 @@ export async function request(path, { method = "GET", body, signal, headers = {}
     try {
       payload = await response.json();
     } catch {
-      if (!response.ok) throw new ApiError({ status: response.status, code: "INVALID_RESPONSE", message: "系统返回了无法识别的响应" });
+      throw new ApiError({
+        status: response.status,
+        code: "INVALID_RESPONSE",
+        message: "系统返回了无法识别的响应",
+        requestId: response.headers.get("X-Request-Id") || "",
+      });
     }
   }
-  if (!response.ok) throw errorFromResponse(response.status, payload);
+  if (!response.ok) throw errorFromResponse(response.status, payload, response.headers.get("X-Request-Id"));
   return captureCsrf(payload);
 }
 
@@ -100,14 +118,19 @@ function query(path, values = {}) {
 
 export const api = {
   completeSetup: (input) => request("/setup/complete", { method: "POST", body: input }),
+  getServiceHealth: () => request("/healthz", { rootPath: true }),
   getSession: () => request("/session"),
   login: (username, password) => request("/session", { method: "POST", body: { username, password } }),
   logout: () => request("/session", { method: "DELETE" }),
   getBootstrap: () => request("/bootstrap"),
 
-  getReservations: (dateFrom, dateTo = dateFrom) => request(query("/reservations", { dateFrom, dateTo })),
+  getReservations: (dateFrom, dateTo = dateFrom, { pageSize, cursor } = {}) => request(query("/reservations", {
+    dateFrom,
+    dateTo,
+    pageSize,
+    cursor,
+  })),
   getUpcoming: () => request("/reservations/upcoming"),
-  getReservation: (id) => request(`/reservations/${encodeURIComponent(id)}`),
   createReservation: (input) => request("/reservations", { method: "POST", body: input }),
   updateReservation: (id, input) => request(`/reservations/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),
   cancelReservation: (id, expectedRevision) => request(`/reservations/${encodeURIComponent(id)}/cancel`, {
@@ -117,12 +140,10 @@ export const api = {
   getReservationEvents: (id) => request(`/reservations/${encodeURIComponent(id)}/events`),
   getHistory: (filters) => request(query("/reservations/history", filters)),
 
-  getRooms: () => request("/rooms"),
   createRoom: (input) => request("/rooms", { method: "POST", body: input }),
   updateRoom: (id, input) => request(`/rooms/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),
   deleteRoom: (id) => request(`/rooms/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  getUsers: () => request("/users"),
   createUser: (input) => request("/users", { method: "POST", body: input }),
   updateUser: (id, input) => request(`/users/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),
   resetUserPassword: (id, password) => request(`/users/${encodeURIComponent(id)}/reset-password`, {
@@ -130,7 +151,6 @@ export const api = {
     body: { password },
   }),
 
-  getPreferences: () => request("/preferences"),
   updatePreferences: (input) => request("/preferences", { method: "PUT", body: input }),
   updateGlobalTags: (tags) => request("/tags/global", { method: "PUT", body: { tags } }),
 
@@ -142,9 +162,13 @@ export const api = {
 
   getSystem: () => request("/admin/system"),
   createBackup: () => request("/admin/backups", { method: "POST" }),
-  getDiagnostics: () => request("/admin/diagnostics", { responseType: "blob" }),
+  getDiagnostics: () => request("/admin/diagnostics"),
+  getAudit: (filters = {}) => request(query("/admin/audit", filters)),
+  getTokens: () => request("/admin/tokens"),
+  createToken: (input) => request("/admin/tokens", { method: "POST", body: input }),
+  revokeToken: (id) => request(`/admin/tokens/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
-  getPublicDisplay: async () => validatePublicDisplayPayload(await request("/display/today")),
+  getPublicDisplay: async (signal) => validatePublicDisplayPayload(await request("/display/today", { signal })),
 };
 
 export function unwrapItems(payload) {
