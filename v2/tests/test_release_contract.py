@@ -6,6 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
+from v2.installer.frontend_supply_chain import build_frontend_component_evidence
+
 
 V2_ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,7 +44,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_production_frontend_has_no_synthetic_business_state(self) -> None:
         source = "\n".join(
             path.read_text(encoding="utf-8")
-            for path in sorted((V2_ROOT / "frontend" / "src").glob("*"))
+            for path in sorted((V2_ROOT / "frontend" / "src").rglob("*"))
             if path.is_file()
         )
         for forbidden in (
@@ -175,6 +177,22 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         ):
             self.assertIn(material, core)
             self.assertIn(constant, package_builder)
+
+    def test_artifact_sbom_binds_frontend_production_lock(self) -> None:
+        evidence = json.loads(
+            build_frontend_component_evidence(
+                V2_ROOT / "frontend" / "package-lock.json"
+            )
+        )
+        names = {component["name"] for component in evidence["components"]}
+        self.assertTrue({"react", "react-dom", "@phosphor-icons/react"}.issubset(names))
+        self.assertNotIn("vite", names)
+        assembler = read("installer/assemble_payload.py")
+        package_builder = read("installer/build_package.py")
+        reproducible = read("../.github/scripts/v2-reproducible-build.sh")
+        self.assertIn('parser.add_argument("--frontend-lock"', assembler)
+        self.assertIn("make_artifact_sbom", package_builder)
+        self.assertIn("--frontend-lock v2/frontend/package-lock.json", reproducible)
 
     def test_public_frontend_contract_rejects_extra_fields(self) -> None:
         contract = read("frontend/src/public-contract.js")

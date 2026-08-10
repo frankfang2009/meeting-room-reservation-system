@@ -12,14 +12,16 @@
 python3 -m v2.installer.assemble_payload \
   --backend-root /absolute/path/to/v2/backend \
   --frontend-dist /absolute/path/to/v2/frontend/dist/client \
+  --frontend-lock /absolute/path/to/v2/frontend/package-lock.json \
   --output /absolute/path/to/payload-v2.0.0
 ```
 
 组装器要求正式 `service.py`、其 `server.py` 运行依赖、`backup.py`、
 `restore.py`、`requirements.txt`、`requirements-win-amd64.lock`、`v2app` 和前端
-`index.html` 全部存在，输出
+`index.html` 和 package-lock v3 全部存在，输出
 必须不存在。生产布局固定为 `_程序文件/app/{service.py,server.py,backup.py,
-restore.py,v2app,static}`。它会加入客户顶层 ①启动、②备份、③设置开机启动、
+restore.py,v2app,static}`，并从 package-lock 生成只含生产依赖的确定性前端组件证据。
+它会加入客户顶层 ①启动、②备份、③设置开机启动、
 ④停止、⑤取消开机启动、⑥从备份恢复和使用说明。所有维护入口都先取得 UAC
 管理员授权并交叉核对固定安装根、install_id、HKLM 登记和专属资源。④/⑤只
 委托 `app/service.py --stop` 按 PID 身份安全停止；不会按端口或 python 进程名
@@ -71,14 +73,16 @@ python3 -m v2.installer.build_package \
   --output /absolute/path/to/会议室预约系统-V2.0.0-安装包.zip
 ```
 
-构建器生成 ZIP、外部 SHA-256、发布清单、SBOM、第三方许可证说明和 runtime
-来源侧车，已有任一输出一律拒绝覆盖。外部三份供应链侧车与 ZIP 内同一 runtime
-材料逐字节一致，其哈希写入发布清单。payload、runtime、`install.py` 和
+构建器生成 ZIP、外部 SHA-256、发布清单、制品级 SBOM、第三方许可证说明和 runtime
+来源侧车，已有任一输出一律拒绝覆盖。制品级 SBOM 与许可证侧车合并已验证的
+CPython/Python 依赖及前端 package-lock 中的生产依赖；runtime provenance 仍与 ZIP 内
+同名材料逐字节一致。所有侧车哈希、正式 package-lock 摘要都写入内外清单。payload、runtime、`install.py` 和
 `installer_core.py` 均有文件级和树级 SHA-256 清单并反向加载验证。ZIP 顶层
 只有零参数 `安装V2.0.0.bat`、安装说明和 `_V2安装工具`。SHA-256 只能证明与
 已知摘要一致，不能代替代码签名、上游制品签名复核或可信发布渠道。
 构建时还会要求 payload 中随正式后端交付的 `requirements-win-amd64.lock` 与
-runtime 内 lock 逐字节一致，防止程序与冻结解释器依赖来自两套制品。
+runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 package-lock SHA，
+防止程序、冻结解释器和前端生产依赖来自不同构建输入。
 
 ## 后端服务接缝
 

@@ -56,6 +56,28 @@ def create_inputs(root: Path) -> Tuple[Path, Path]:
         "console.log('fixture');\n",
         encoding="utf-8",
     )
+    integrity = "sha512-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw=="
+    (app / "frontend-production-components.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "application": {"name": "meeting-room-v2-frontend", "version": "2.0.0"},
+                "packageLock": {"file": "package-lock.json", "sha256": "3" * 64},
+                "components": [
+                    {
+                        "name": "react",
+                        "version": "19.2.0",
+                        "integrity": integrity,
+                        "license": "MIT",
+                        "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
+                    }
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (payload / "使用说明.txt").write_text("fixture payload\n", encoding="utf-8")
 
     runtime = root / "runtime"

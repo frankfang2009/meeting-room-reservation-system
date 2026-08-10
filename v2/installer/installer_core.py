@@ -23,7 +23,6 @@ import shutil
 import socket
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 import unicodedata
@@ -690,6 +689,7 @@ class Bundle:
             "payload",
             "runtime",
             "tool",
+            "artifact_supply_chain",
             "acceptance",
         }
         if not isinstance(manifest, dict) or set(manifest) != expected_top:
@@ -705,7 +705,12 @@ class Bundle:
         version_tuple(str(manifest["version"]))
         cls._validate_service(manifest["service"])
         cls._validate_acceptance(manifest["acceptance"])
+        cls._validate_artifact_supply_chain(manifest["artifact_supply_chain"])
         payload = cls._load_payload(tool_root, manifest["payload"])
+        cls._validate_frontend_evidence_binding(
+            payload,
+            manifest["artifact_supply_chain"]["frontend_package_lock"]["sha256"],
+        )
         runtime_records, runtime_digest = cls._load_runtime(
             tool_root,
             manifest["runtime"],
@@ -748,6 +753,39 @@ class Bundle:
             raise InstallerError("安装包验收状态字段不符合约定")
         if value["status"] != "candidate" or value["formal_external_release_allowed"] is not False:
             raise InstallerError("未经实机验收的安装包必须保持候选状态")
+
+    @staticmethod
+    def _validate_artifact_supply_chain(value: Any) -> None:
+        expected = {
+            "sbom",
+            "third_party_notices",
+            "runtime_provenance",
+            "frontend_package_lock",
+        }
+        if not isinstance(value, dict) or set(value) != expected:
+            raise InstallerError("制品供应链摘要字段不符合约定")
+        for label, record in value.items():
+            digest = record.get("sha256") if isinstance(record, dict) else None
+            if (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise InstallerError(f"制品供应链摘要无效：{label}")
+
+    @staticmethod
+    def _validate_frontend_evidence_binding(payload: Payload, expected_lock_sha256: str) -> None:
+        relative = "_程序文件/app/frontend-production-components.json"
+        content = payload.files.get(relative)
+        if content is None:
+            raise InstallerError("payload 缺少前端生产依赖证据")
+        try:
+            evidence = json.loads(content)
+        except (UnicodeError, ValueError) as error:
+            raise InstallerError("payload 前端生产依赖证据不是有效 JSON") from error
+        lock = evidence.get("packageLock") if isinstance(evidence, dict) else None
+        if not isinstance(lock, dict) or lock.get("sha256") != expected_lock_sha256:
+            raise InstallerError("payload 前端 package-lock 摘要与安装清单不一致")
 
     @staticmethod
     def _load_payload(tool_root: Path, value: Any) -> Payload:

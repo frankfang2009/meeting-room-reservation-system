@@ -8,7 +8,6 @@ V2.0.0 暂不交付更新包；本模块先锁定未来更新器必须遵守的�
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import json
 import os

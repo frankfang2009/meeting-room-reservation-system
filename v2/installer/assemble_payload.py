@@ -11,6 +11,19 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 try:
+    from .frontend_supply_chain import (
+        FRONTEND_COMPONENTS_FILE,
+        FrontendSupplyChainError,
+        build_frontend_component_evidence,
+    )
+except ImportError:
+    from frontend_supply_chain import (  # type: ignore
+        FRONTEND_COMPONENTS_FILE,
+        FrontendSupplyChainError,
+        build_frontend_component_evidence,
+    )
+
+try:
     from .installer_core import (
         InstallerError,
         assert_plain_file,
@@ -101,12 +114,19 @@ def _copy_customer_templates(staging: Path) -> None:
             handle.write(content)
 
 
-def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> Path:
+def assemble_payload(
+    backend_root: Path,
+    frontend_dist: Path,
+    frontend_lock: Path,
+    output: Path,
+) -> Path:
     backend_root = Path(backend_root).resolve(strict=True)
     frontend_dist = Path(frontend_dist).resolve(strict=True)
+    frontend_lock = Path(frontend_lock).resolve(strict=True)
     output = Path(output).resolve()
     assert_plain_tree(backend_root, "V2 后端源目录")
     assert_plain_tree(frontend_dist, "V2 前端 dist")
+    assert_plain_file(frontend_lock, "V2 前端 package-lock.json")
     assert_plain_file(frontend_dist / "index.html", "V2 前端 dist/index.html")
     assert_plain_tree(backend_root / "v2app", "V2 后端 v2app")
     for name in BACKEND_ROOT_FILES:
@@ -122,11 +142,12 @@ def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> P
         "waitress", {}
     ).get("version") != "3.0.2":
         raise PayloadAssemblyError("Windows runtime lock 与后端直接依赖版本不一致")
+    frontend_evidence = build_frontend_component_evidence(frontend_lock)
     if output.exists() or is_reparse_or_link(output):
         raise PayloadAssemblyError(f"payload 输出必须不存在，拒绝覆盖：{output}")
     output_parent = output.parent.resolve(strict=True)
     output = output_parent / output.name
-    for source in (backend_root, frontend_dist, TEMPLATE_ROOT):
+    for source in (backend_root, frontend_dist, frontend_lock, TEMPLATE_ROOT):
         if source == output or source in output.parents or output in source.parents:
             raise PayloadAssemblyError(f"payload 输出不能与输入目录嵌套：{source}")
 
@@ -142,6 +163,9 @@ def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> P
         app.mkdir()
         for name in BACKEND_ROOT_FILES:
             _copy_plain_file(backend_root / name, app / name)
+        app.joinpath(*FRONTEND_COMPONENTS_FILE.split("/")[2:]).write_bytes(
+            frontend_evidence
+        )
         _copy_tree(backend_root / "v2app", app / "v2app", "V2 后端 v2app")
         _copy_tree(frontend_dist, app / "static", "V2 前端 dist")
         records = records_for_tree(staging)
@@ -152,6 +176,7 @@ def assemble_payload(backend_root: Path, frontend_dist: Path, output: Path) -> P
             "_程序文件/app/backup.py",
             "_程序文件/app/restore.py",
             "_程序文件/app/requirements-win-amd64.lock",
+            FRONTEND_COMPONENTS_FILE,
             "_程序文件/app/v2app/__init__.py",
             "_程序文件/app/static/index.html",
             *CUSTOMER_FILES,
@@ -182,6 +207,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="组装 V2.0.0 客户程序 payload")
     parser.add_argument("--backend-root", type=Path, required=True)
     parser.add_argument("--frontend-dist", type=Path, required=True)
+    parser.add_argument("--frontend-lock", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -192,9 +218,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output = assemble_payload(
             arguments.backend_root,
             arguments.frontend_dist,
+            arguments.frontend_lock,
             arguments.output,
         )
-    except (PayloadAssemblyError, InstallerError, OSError, ValueError) as error:
+    except (
+        PayloadAssemblyError,
+        FrontendSupplyChainError,
+        InstallerError,
+        OSError,
+        ValueError,
+    ) as error:
         print(f"V2 payload 组装失败：{error}")
         return 1
     print(f"V2 payload 已组装：{output}")

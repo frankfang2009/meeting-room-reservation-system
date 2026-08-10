@@ -62,6 +62,7 @@ for label in first second; do
     "$python_bin" -m v2.installer.assemble_payload \
       --backend-root v2/backend \
       --frontend-dist v2/frontend/dist/client \
+      --frontend-lock v2/frontend/package-lock.json \
       --output "$payload"
     "$python_bin" -m v2.installer.build_package \
       --payload-root "$payload" \

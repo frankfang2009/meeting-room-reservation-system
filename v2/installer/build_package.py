@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import os
 import shutil
 import stat
@@ -14,6 +13,23 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
+
+try:
+    from .frontend_supply_chain import (
+        FRONTEND_COMPONENTS_FILE,
+        FrontendSupplyChainError,
+        load_frontend_component_evidence,
+        make_artifact_notices,
+        make_artifact_sbom,
+    )
+except ImportError:
+    from frontend_supply_chain import (  # type: ignore
+        FRONTEND_COMPONENTS_FILE,
+        FrontendSupplyChainError,
+        load_frontend_component_evidence,
+        make_artifact_notices,
+        make_artifact_sbom,
+    )
 
 try:
     from .installer_core import (
@@ -201,6 +217,8 @@ def _assert_payload_safe(payload_root: Path) -> tuple[Mapping[str, Any], ...]:
         raise PackageBuildError(f"V2 payload 缺少服务入口：{SERVICE_ENTRYPOINT}")
     if PAYLOAD_RUNTIME_LOCK not in paths:
         raise PackageBuildError(f"V2 payload 缺少 Windows runtime lock：{PAYLOAD_RUNTIME_LOCK}")
+    if FRONTEND_COMPONENTS_FILE not in paths:
+        raise PackageBuildError("V2 payload 缺少前端生产依赖证据")
     return records
 
 
@@ -280,6 +298,7 @@ def _manifest(
     payload_records: Sequence[Mapping[str, Any]],
     runtime_records: Sequence[Mapping[str, Any]],
     tool_records: Sequence[Mapping[str, Any]],
+    artifact_supply_chain: Mapping[str, Mapping[str, str]],
 ) -> Mapping[str, Any]:
     return {
         "schema": MANIFEST_SCHEMA,
@@ -314,6 +333,7 @@ def _manifest(
             "tree_sha256": tree_digest(tool_records),
             "files": list(tool_records),
         },
+        "artifact_supply_chain": dict(artifact_supply_chain),
         "acceptance": {
             "status": "candidate",
             "formal_external_release_allowed": False,
@@ -434,15 +454,43 @@ def build_package(
         raise PackageBuildError(
             "payload 中经审核的 Windows runtime lock 与实际 runtime 不一致"
         )
-    sbom_content = runtime_files[RUNTIME_SBOM_FILE]
-    notices_content = runtime_files[RUNTIME_NOTICES_FILE]
+    runtime_sbom_content = runtime_files[RUNTIME_SBOM_FILE]
+    runtime_notices_content = runtime_files[RUNTIME_NOTICES_FILE]
     runtime_provenance_content = runtime_files[RUNTIME_PROVENANCE_FILE]
+    frontend_evidence_content = payload_files[FRONTEND_COMPONENTS_FILE]
+    try:
+        frontend_evidence = load_frontend_component_evidence(frontend_evidence_content)
+        sbom_content = make_artifact_sbom(
+            runtime_sbom_content,
+            frontend_evidence_content,
+            payload_records,
+        )
+        notices_content = make_artifact_notices(
+            runtime_notices_content,
+            frontend_evidence_content,
+        )
+    except FrontendSupplyChainError as error:
+        raise PackageBuildError(f"前端供应链证据校验失败：{error}") from error
     tool_files = {
         "app/install.py": _lf_bytes(ENTRY_SOURCE, "V2 Python 安装入口"),
         "app/installer_core.py": _lf_bytes(CORE_SOURCE, "V2 安装事务核心"),
     }
     tool_records = _records_from_files(tool_files)
-    manifest = _manifest(payload_zip, payload_records, runtime_records, tool_records)
+    artifact_supply_chain = {
+        "sbom": {"sha256": sha256_bytes(sbom_content)},
+        "third_party_notices": {"sha256": sha256_bytes(notices_content)},
+        "runtime_provenance": {"sha256": sha256_bytes(runtime_provenance_content)},
+        "frontend_package_lock": {
+            "sha256": frontend_evidence["packageLock"]["sha256"]
+        },
+    }
+    manifest = _manifest(
+        payload_zip,
+        payload_records,
+        runtime_records,
+        tool_records,
+        artifact_supply_chain,
+    )
     outer_files = _outer_files(payload_zip, manifest, runtime_files, tool_files)
     artifact = _deterministic_zip(outer_files)
     verify_outer_package(artifact, outer_files, _test_fixture=_test_fixture)

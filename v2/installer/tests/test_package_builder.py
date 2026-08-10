@@ -55,29 +55,43 @@ class PackageBuilderTests(unittest.TestCase):
         external = json.loads(first.external_manifest_path.read_text(encoding="utf-8"))
         self.assertFalse(external["formal_external_release_allowed"])
 
-    def test_external_supply_chain_sidecars_are_the_same_verified_zip_bytes(self) -> None:
+    def test_artifact_supply_chain_covers_runtime_and_frontend(self) -> None:
         result = self._build("supply-chain-sidecars")
         with zipfile.ZipFile(result.artifact_path, "r") as archive:
-            internal_sbom = archive.read(
+            runtime_sbom = archive.read(
                 "_V2安装工具/runtime/supply-chain/sbom.cdx.json"
             )
-            internal_notices = archive.read(
+            runtime_notices = archive.read(
                 "_V2安装工具/runtime/supply-chain/THIRD-PARTY-NOTICES.txt"
             )
             internal_provenance = archive.read(
                 "_V2安装工具/runtime/supply-chain/runtime-provenance.json"
             )
-        self.assertEqual(result.sbom_path.read_bytes(), internal_sbom)
-        self.assertEqual(result.notices_path.read_bytes(), internal_notices)
+            internal_manifest = json.loads(
+                archive.read("_V2安装工具/manifest.json").decode("utf-8")
+            )
+        artifact_sbom = result.sbom_path.read_bytes()
+        artifact_notices = result.notices_path.read_bytes()
+        self.assertNotEqual(artifact_sbom, runtime_sbom)
+        self.assertTrue(artifact_notices.startswith(runtime_notices.rstrip()))
+        component_names = {
+            item["name"] for item in json.loads(artifact_sbom)["components"]
+        }
+        self.assertTrue({"Python", "Flask", "waitress", "react"}.issubset(component_names))
+        self.assertIn(b"react 19.2.0", artifact_notices)
         self.assertEqual(result.runtime_provenance_path.read_bytes(), internal_provenance)
         manifest = json.loads(result.external_manifest_path.read_text(encoding="utf-8"))
         for key, content in (
-            ("sbom", internal_sbom),
-            ("third_party_notices", internal_notices),
+            ("sbom", artifact_sbom),
+            ("third_party_notices", artifact_notices),
             ("runtime_provenance", internal_provenance),
         ):
             self.assertEqual(
                 manifest["supply_chain"][key]["sha256"],
+                hashlib.sha256(content).hexdigest(),
+            )
+            self.assertEqual(
+                internal_manifest["artifact_supply_chain"][key]["sha256"],
                 hashlib.sha256(content).hexdigest(),
             )
 
@@ -174,6 +188,21 @@ class PackageBuilderTests(unittest.TestCase):
         output.mkdir()
         with self.assertRaises(PackageBuildError):
             build_package(payload, runtime, output / ARTIFACT_NAME)
+
+    def test_payload_rejects_missing_or_forged_frontend_dependency_evidence(self) -> None:
+        for label, mutation in (
+            ("missing", lambda path: path.unlink()),
+            ("forged", lambda path: path.write_text('{"schema":1,"components":[]}\n', encoding="utf-8")),
+        ):
+            with self.subTest(label=label):
+                base = self.root / f"frontend-evidence-{label}"
+                base.mkdir()
+                payload, runtime = create_inputs(base)
+                mutation(payload / "_程序文件" / "app" / "frontend-production-components.json")
+                output = base / "out"
+                output.mkdir()
+                with self.assertRaises(PackageBuildError):
+                    build_package(payload, runtime, output / ARTIFACT_NAME)
         self.assertFalse((output / ARTIFACT_NAME).exists())
 
     def test_runtime_rejects_path_shadowing_import_site_and_wrong_architecture(self) -> None:

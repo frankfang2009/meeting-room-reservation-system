@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,12 +44,30 @@ class AssemblePayloadTests(unittest.TestCase):
         (self.frontend / "assets").mkdir(parents=True)
         (self.frontend / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
         (self.frontend / "assets" / "app.js").write_text("// app\n", encoding="utf-8")
+        self.frontend_lock = self.root / "package-lock.json"
+        integrity = "sha512-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw=="
+        self.frontend_lock.write_text(json.dumps({
+            "name": "meeting-room-v2-frontend",
+            "version": "2.0.0",
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "meeting-room-v2-frontend", "version": "2.0.0"},
+                "node_modules/react": {
+                    "version": "19.2.0", "integrity": integrity,
+                    "license": "MIT", "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
+                },
+                "node_modules/vite": {
+                    "version": "6.4.3", "integrity": integrity,
+                    "license": "MIT", "resolved": "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz", "dev": True,
+                },
+            },
+        }, sort_keys=True), encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def test_assembles_backend_frontend_and_customer_entrypoints(self) -> None:
-        output = assemble_payload(self.backend, self.frontend, self.root / "payload")
+        output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload")
         app = output / "_程序文件" / "app"
         self.assertTrue((app / "service.py").is_file())
         self.assertTrue((app / "server.py").is_file())
@@ -56,11 +75,13 @@ class AssemblePayloadTests(unittest.TestCase):
         self.assertTrue((app / "requirements-win-amd64.lock").is_file())
         self.assertTrue((app / "v2app" / "runtime" / "identity.py").is_file())
         self.assertTrue((app / "static" / "index.html").is_file())
+        evidence = json.loads((app / "frontend-production-components.json").read_text())
+        self.assertEqual([item["name"] for item in evidence["components"]], ["react"])
         for name in CUSTOMER_FILES:
             self.assertTrue((output / name).is_file(), name)
 
     def test_assembled_payload_builds_into_reverse_verified_package(self) -> None:
-        payload = assemble_payload(self.backend, self.frontend, self.root / "payload-build")
+        payload = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-build")
         fixture = self.root / "runtime-fixture"
         fixture.mkdir()
         _, runtime = create_inputs(fixture)
@@ -75,11 +96,11 @@ class AssemblePayloadTests(unittest.TestCase):
         sentinel = output / "keep.txt"
         sentinel.write_bytes(b"keep")
         with self.assertRaises(PayloadAssemblyError):
-            assemble_payload(self.backend, self.frontend, output)
+            assemble_payload(self.backend, self.frontend, self.frontend_lock, output)
         self.assertEqual(sentinel.read_bytes(), b"keep")
 
     def test_stop_entrypoints_delegate_to_identity_checked_service(self) -> None:
-        output = assemble_payload(self.backend, self.frontend, self.root / "payload-stop")
+        output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-stop")
         for name in ("④ 停止本次后台系统.bat", "⑤ 取消开机自动启动.bat"):
             script = (output / name).read_text(encoding="utf-8")
             self.assertIn("service.py", script)
@@ -91,7 +112,7 @@ class AssemblePayloadTests(unittest.TestCase):
             self.assertNotIn("netstat", script.casefold())
 
     def test_all_customer_maintenance_entrypoints_are_uac_and_resource_bound(self) -> None:
-        output = assemble_payload(self.backend, self.frontend, self.root / "payload-contracts")
+        output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-contracts")
         for name in CUSTOMER_FILES:
             if not name.casefold().endswith(".bat"):
                 continue
@@ -131,7 +152,7 @@ class AssemblePayloadTests(unittest.TestCase):
                 )
 
     def test_backup_and_restore_entrypoints_pass_current_install_id(self) -> None:
-        output = assemble_payload(self.backend, self.frontend, self.root / "payload-maintenance")
+        output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-maintenance")
         immediate = (output / "② 立即备份.bat").read_text(encoding="utf-8")
         restore = (output / "⑥ 从备份恢复.bat").read_text(encoding="utf-8")
         self.assertIn("$env:MRV2_BACKUP --expected-install-id $installId", immediate)
