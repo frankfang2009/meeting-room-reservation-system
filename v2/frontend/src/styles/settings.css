@@ -1,0 +1,288 @@
+
+.settings-canvas {
+  padding-bottom: 72px;
+}
+
+.settings-header {
+  align-items: flex-start;
+}
+
+.settings-header p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.settings-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-logout-button {
+  min-width: 104px;
+  height: 46px;
+  padding: 0 18px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.settings-logout-button:hover {
+  border-color: rgba(20, 20, 19, 0.28);
+  background: rgba(250, 249, 245, 0.72);
+}
+
+.settings-logout-button:active {
+  transform: translateY(1px);
+}
+
+.settings-save-button {
+  min-width: 116px;
+  height: 46px;
+  padding: 0 22px;
+  color: var(--paper-raised);
+  border: 1px solid var(--ink);
+  border-radius: 9px;
+  background: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.settings-save-button:hover {
+  background: #2a2a27;
+}
+
+.settings-save-button:active {
+  transform: translateY(1px);
+}
+
+.settings-save-button:focus-visible,
+.settings-logout-button:focus-visible,
+.settings-layout input:focus-visible,
+.settings-layout select:focus-visible {
+  outline-color: rgba(20, 20, 19, 0.38);
+}
+
+.settings-layout {
+  width: min(1240px, 100%);
+  margin: 0 auto;
+}
+
+.settings-section {
+  padding: 26px 0 30px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.settings-profile-section {
+  padding-block: 34px 24px;
+}
+
+.settings-profile-section h2 {
+  margin-bottom: 19px;
+}
+
+.settings-section h2 {
+  margin: 0 0 23px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px 46px;
+}
+
+.settings-profile-section .settings-field-grid {
+  row-gap: 13px;
+}
+
+.settings-field {
+  display: grid;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.settings-field input {
+  width: 100%;
+  height: 46px;
+  padding: 0 16px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: rgba(250, 249, 245, 0.72);
+  font-size: 15px;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.settings-field input:hover {
+  border-color: rgba(20, 20, 19, 0.24);
+}
+
+.settings-field input:focus {
+  border-color: rgba(20, 20, 19, 0.42);
+  background: var(--paper-raised);
+}
+
+.settings-choice-list,
+.settings-notification-list {
+  display: grid;
+  gap: 20px;
+}
+
+.settings-preferences-section {
+  padding-block: 28px 18px;
+}
+
+.settings-preferences-section h2 {
+  margin-bottom: 14px;
+}
+
+.settings-choice-list {
+  gap: 2px;
+}
+
+.settings-preferences-section .settings-choice-row {
+  min-height: 44px;
+}
+
+.settings-notifications-section h2 {
+  margin-bottom: 20px;
+}
+
+.settings-notifications-section {
+  padding-bottom: 23px;
+}
+
+.settings-notification-list {
+  gap: 12px;
+}
+
+.settings-notification-row {
+  min-height: 44px;
+}
+
+.settings-choice-row,
+.settings-notification-row {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.settings-choice-row {
+  color: var(--ink-secondary);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.settings-select-wrap {
+  position: relative;
+  min-width: 145px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--muted);
+}
+
+.settings-select-wrap select {
+  width: 100%;
+  height: 44px;
+  padding: 0 30px 0 10px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  text-align-last: right;
+  appearance: none;
+  cursor: pointer;
+}
+
+.settings-select-wrap select:hover {
+  color: var(--ink);
+  background: rgba(20, 20, 19, 0.035);
+}
+
+.settings-select-wrap svg {
+  position: absolute;
+  right: 3px;
+  pointer-events: none;
+}
+
+.settings-notification-row {
+  cursor: pointer;
+}
+
+.settings-notification-row > span {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-notification-row strong {
+  color: var(--ink-secondary);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.settings-notification-row small {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.settings-switch {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: #c8c6be;
+  appearance: none;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.settings-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--paper-raised);
+  box-shadow: 0 1px 4px rgba(20, 20, 19, 0.2);
+  transition: transform 150ms ease;
+}
+
+.settings-switch:checked {
+  background: var(--ink);
+}
+
+.settings-switch:checked::after {
+  transform: translateX(20px);
+}
+
+.settings-switch:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.38);
+  outline-offset: 3px;
+}

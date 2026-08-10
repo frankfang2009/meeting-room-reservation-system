@@ -1,0 +1,258 @@
+
+.rooms-canvas {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.rooms-header {
+  align-items: flex-start;
+}
+
+.rooms-header h1 {
+  font-size: clamp(34px, 2.7vw, 42px);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+}
+
+.rooms-header p {
+  margin: 15px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  letter-spacing: 0.01em;
+}
+
+.room-create-button {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--paper-raised);
+  border: 0;
+  border-radius: 9px;
+  background: var(--ink);
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.room-create-button:hover,
+.room-create-button:focus-visible {
+  background: #2c2c29;
+  transform: translateY(-1px);
+}
+
+.room-create-button:focus-visible {
+  outline: 1px solid var(--ink-secondary);
+  outline-offset: 4px;
+}
+
+.room-create-button::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 80;
+  padding: 7px 9px;
+  color: var(--paper-raised);
+  border-radius: 7px;
+  background: #292927;
+  box-shadow: 0 7px 18px rgba(20, 20, 19, 0.12);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.room-create-button:hover::after,
+.room-create-button:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.room-overview {
+  width: min(1240px, 100%);
+  min-height: calc(100vh - 210px);
+  margin: 68px auto 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.room-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 44px 58px 30px 62px;
+  border-left: 1px solid var(--hairline);
+}
+
+.room-column:nth-child(3n + 1) {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.room-sort-order {
+  display: block;
+  color: var(--muted);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.room-column-heading h2 {
+  margin: 22px 0 0;
+  color: var(--ink);
+  font-size: clamp(29px, 2.8vw, 38px);
+  font-weight: 500;
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+}
+
+.room-title-button {
+  width: max-content;
+  max-width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: left;
+}
+
+.room-title-button svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0.42;
+  transform: translateX(-4px);
+  transition: color 140ms ease, opacity 140ms ease, transform 140ms ease;
+}
+
+.room-title-button:hover svg,
+.room-title-button:focus-visible svg {
+  color: var(--ink);
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.room-title-button:focus-visible {
+  border-radius: 3px;
+  outline: 1px solid var(--ink-secondary);
+  outline-offset: 8px;
+}
+
+.room-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 15px;
+  color: var(--ink-secondary);
+  font-size: 15px;
+}
+
+.room-state i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #7b9a79;
+}
+
+.room-state.inactive {
+  color: var(--muted);
+}
+
+.room-state.inactive i {
+  background: var(--faint);
+}
+
+.room-metrics {
+  display: grid;
+  gap: 25px;
+  margin: 73px 0 0;
+}
+
+.room-metrics > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+}
+
+.room-metrics dt,
+.room-metrics dd {
+  margin: 0;
+}
+
+.room-metrics dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 15px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.room-metrics dd {
+  color: var(--muted);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.room-next-booking {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 48px;
+  color: var(--muted);
+  border-top: 1px solid var(--hairline);
+  font-size: 15px;
+}
+
+.room-next-booking strong {
+  color: var(--muted);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.rooms-empty {
+  width: min(720px, 100%);
+  min-height: 420px;
+  margin: 80px auto 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  color: var(--muted);
+}
+
+.rooms-empty p {
+  margin: 0;
+  font-size: 18px;
+}
+
+.rooms-empty button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 3px;
+  color: var(--ink);
+  border: 0;
+  border-bottom: 1px solid var(--hairline-strong);
+  background: transparent;
+  cursor: pointer;
+}

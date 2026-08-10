@@ -11,13 +11,13 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 62 通过；独立用例 62；继承重复 0；真实 Waitress handoff 通过且无 ResourceWarning |
 | E2 | `v2/backend/.venv/bin/python -m unittest discover -s v2/installer/tests -v` | runner 60 通过；独立用例 60；继承重复 0 |
 | E3 | `v2/backend/.venv/bin/python -m unittest discover -s v2/tests -v` | runner 17 通过；独立用例 17；继承重复 0；含损坏或迁移后虚拟环境重建契约 |
-| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；74/74 通过；Vite 6.4.3 生产构建成功 |
+| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；78/78 通过；全局 CSS 拆分契约和冻结源码 SHA 通过；Vite 6.4.3 生产构建成功 |
 | E5 | `v2/backend/.venv/bin/python -m ruff check v2/backend v2/installer v2/tests`、`python -m compileall -q v2/backend v2/installer v2/tests`、`git diff --check` | 全部通过 |
-| E6 | `PYTHON_BIN=v2/backend/.venv/bin/python .github/scripts/v2-reproducible-build.sh "$PWD" /private/tmp/meeting-room-v2-final-repro-20260810-3 /private/tmp/meeting-room-v2-runtime-materials/python-3.13.14-embed-amd64.zip /private/tmp/meeting-room-v2-runtime-materials/wheels /private/tmp/meeting-room-v2-final-repro-20260810-3-export` | 两个独立源码目录各自 `npm ci`、构建 frontend/runtime/payload/六件套；逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；SBOM 共 16 个组件，其中 4 个前端生产组件 |
+| E6 | `PYTHON_BIN="$PWD/v2/backend/.venv/bin/python" .github/scripts/v2-reproducible-build.sh "$PWD" /private/tmp/meeting-room-v2-css-split-repro-20260810-2 /private/tmp/meeting-room-v2-runtime-materials/python-3.13.14-embed-amd64.zip /private/tmp/meeting-room-v2-runtime-materials/wheels /private/tmp/meeting-room-v2-css-split-repro-20260810-2-export` | CSS 拆分后重新从两个独立源码目录各自 `npm ci`、构建 frontend/runtime/payload/六件套；逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；ZIP SHA 与拆分前一致；SBOM 共 16 个组件，其中 4 个前端生产组件 |
 | E7 | `cd v2/backend && python -m unittest tests.test_hardening.SetupListenerProcessTests.test_real_waitress_setup_handoff_has_no_bad_file_descriptor -v` | 真实 Waitress 子进程收到 setup 201，连续两次确认 `bind_mode=lan`；无 `Bad file descriptor`/`Errno 9` |
 | E8 | `ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/v2-baseline.yml")'` | workflow YAML 解析通过 |
 
-本轮本地六件套位于 `/private/tmp/meeting-room-v2-final-repro-20260810-3-export`，
+本轮本地六件套位于 `/private/tmp/meeting-room-v2-css-split-repro-20260810-2-export`，
 不是批准的外发归档。ZIP SHA-256 是
 `e3c371e360beb4fa9242b353cec81236d17b36d5e57fd8d37b5faea9b976c6a8`；清单仍为
 `formal_external_release_allowed=false`。任何后续生产源代码变化都必须作废该 SHA
@@ -43,6 +43,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 - [x] 未使用的 `getReservation/getRooms/getUsers/getPreferences` 已删除；变更记录、审计和提醒接口保留。（E4）
 - [x] `update_core.py` 明确标记为不进入 V2.0.0 payload 的非生产未来基线，未宣称在线升级可用。（E2、E3）
 - [x] 项目本地 Python/Node 版本、隔离依赖、Ruff/ESLint 及一键 bootstrap/check 命令已经固定；V2 不再复用视觉原型的 `node_modules`。（E4、E5）
+- [x] 全局 CSS 已按功能域机械拆分；入口顺序、冻结源码 SHA 和生产 CSS SHA 均保持一致，未修改 className 或视觉规则。（E4、E6）
 
 ## 尚未完成的 CI 与 Windows 实机
 
