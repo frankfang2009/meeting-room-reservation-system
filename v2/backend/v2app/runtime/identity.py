@@ -35,10 +35,14 @@ def _wait_for_value(path: Path) -> str:
 
 def load_or_create_secret(path: Path) -> str:
     try:
+        if path.stat().st_size > 128:
+            raise RuntimeError("系统会话密钥体积异常")
         value = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         value = ""
-    except OSError as error:
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError) as error:
         raise RuntimeError("无法读取系统会话密钥") from error
     if value:
         if not re.fullmatch(r"[0-9a-f]{64}", value):
@@ -58,6 +62,20 @@ def load_or_create_secret(path: Path) -> str:
     return value
 
 
+def load_existing_secret(path: Path) -> str:
+    try:
+        if path.stat().st_size > 128:
+            raise RuntimeError("系统会话密钥体积异常")
+        value = path.read_text(encoding="utf-8").strip()
+    except RuntimeError:
+        raise
+    except (FileNotFoundError, OSError, UnicodeError) as error:
+        raise RuntimeError("缺少或无法读取系统会话密钥") from error
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise RuntimeError("系统会话密钥已损坏")
+    return value
+
+
 def load_or_create_install_id(path: Path) -> str:
     try:
         if path.stat().st_size > 128:
@@ -65,7 +83,7 @@ def load_or_create_install_id(path: Path) -> str:
         value = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         value = ""
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         raise RuntimeError("无法读取安装标识") from error
     if value:
         try:
@@ -90,4 +108,22 @@ def load_or_create_install_id(path: Path) -> str:
         raise RuntimeError("安装标识创建后校验失败") from error
     if str(parsed) != value or parsed.version != 4:
         raise RuntimeError("安装标识创建后校验失败")
+    return value
+
+
+def load_existing_install_id(path: Path) -> str:
+    try:
+        if path.stat().st_size > 128:
+            raise RuntimeError("安装标识文件过大")
+        value = path.read_text(encoding="utf-8").strip()
+    except RuntimeError:
+        raise
+    except (FileNotFoundError, OSError, UnicodeError) as error:
+        raise RuntimeError("缺少或无法读取安装标识") from error
+    try:
+        parsed = uuid.UUID(value)
+    except ValueError as error:
+        raise RuntimeError("安装标识已损坏") from error
+    if str(parsed) != value or parsed.version != 4 or parsed.variant != uuid.RFC_4122:
+        raise RuntimeError("安装标识格式无效")
     return value

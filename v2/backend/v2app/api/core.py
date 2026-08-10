@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import re
+import secrets
+import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from flask import Blueprint, current_app, jsonify, g, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -18,20 +22,97 @@ from ..common import (
 from ..db import PRODUCT_GENERATION, SCHEMA_VERSION, get_db, is_setup_complete, transaction
 from ..errors import ApiError
 from ..security import (
+    audit_fingerprint,
     assert_login_allowed,
     clear_login_failures,
     csrf_token,
     current_user,
-    login_rate_key,
+    login_rate_keys,
     login_required,
     record_login_failure,
+    request_ip_fingerprint,
     serialize_user,
 )
-from ..services.audit import write_security_audit
+from ..services.audit import write_bounded_auth_failure, write_security_audit
 from ..runtime.install_state import sync_install_json
 
 
 bp = Blueprint("core_api", __name__, url_prefix="/api/v1")
+_DUMMY_PASSWORD_HASH = generate_password_hash(secrets.token_urlsafe(32))
+
+
+def _setup_host_is_loopback() -> bool:
+    """Accept only an explicit loopback Host on the fixed service port.
+
+    The setup listener is loopback-bound, but checking REMOTE_ADDR alone is not
+    sufficient against DNS rebinding in a browser.  Never resolve the supplied
+    host name here: only the literal ``localhost`` name and loopback IP literals
+    are accepted.
+    """
+
+    raw_host = request.environ.get("HTTP_HOST")
+    if (
+        not isinstance(raw_host, str)
+        or not raw_host
+        or raw_host != raw_host.strip()
+        or any(character in raw_host for character in "\r\n\t")
+    ):
+        return False
+    try:
+        parsed = urlsplit("//" + raw_host)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or port != int(current_app.config["SERVICE_PORT"])
+    ):
+        return False
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _write_auth_audit(
+    *,
+    action: str,
+    username: str,
+    reason: str,
+    actor_user_id: Any = None,
+) -> None:
+    db = get_db()
+    with transaction(db, track_change=False):
+        username_fingerprint = audit_fingerprint("username", username.casefold())
+        ip_fingerprint = request_ip_fingerprint()
+        if action == "auth.login_failed":
+            write_bounded_auth_failure(
+                db,
+                ip_fingerprint=ip_fingerprint,
+                username_fingerprint=username_fingerprint,
+                reason=reason,
+            )
+            return
+        write_security_audit(
+            db,
+            actor_user_id=actor_user_id,
+            action=action,
+            target_type="session",
+            target_id=username_fingerprint,
+            details={
+                "reason": reason,
+                "ipFingerprint": ip_fingerprint,
+                "result": "succeeded",
+            },
+        )
 
 
 def serialize_room(row: Any) -> dict[str, Any]:
@@ -44,43 +125,63 @@ def serialize_room(row: Any) -> dict[str, Any]:
 
 
 def serialize_room_with_metrics(db, row: Any) -> dict[str, Any]:
-    result = serialize_room(row)
+    return serialize_rooms_with_metrics(db, [row])[0]
+
+
+def serialize_rooms_with_metrics(db, rows: list[Any]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
     now = local_now().replace(tzinfo=None)
     today = now.date().isoformat()
     current_time = now.strftime("%H:%M")
-    counts = db.execute(
-        """
+    room_ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" for _ in room_ids)
+    count_rows = db.execute(
+        f"""
         SELECT
+            room_id,
             SUM(CASE WHEN booking_date = ? THEN 1 ELSE 0 END) AS today_count,
             SUM(CASE WHEN booking_date > ? OR
                           (booking_date = ? AND start_time > ?)
                      THEN 1 ELSE 0 END) AS future_count
         FROM reservations
-        WHERE room_id = ? AND status = 'active'
+        WHERE room_id IN ({placeholders}) AND status = 'active'
+        GROUP BY room_id
         """,
-        (today, today, today, current_time, row["id"]),
-    ).fetchone()
-    next_row = db.execute(
-        """
-        SELECT booking_date, start_time
+        (today, today, today, current_time, *room_ids),
+    ).fetchall()
+    counts = {row["room_id"]: row for row in count_rows}
+    next_rows = db.execute(
+        f"""
+        SELECT room_id, booking_date, start_time
         FROM reservations
-        WHERE room_id = ? AND status = 'active'
+        WHERE room_id IN ({placeholders}) AND status = 'active'
           AND (booking_date > ? OR (booking_date = ? AND start_time > ?))
-        ORDER BY booking_date, start_time
-        LIMIT 1
+        ORDER BY room_id, booking_date, start_time, id
         """,
-        (row["id"], today, today, current_time),
-    ).fetchone()
-    result["todayCount"] = int(counts["today_count"] or 0)
-    result["futureCount"] = int(counts["future_count"] or 0)
-    if next_row is None:
-        result["nextBooking"] = None
-    elif next_row["booking_date"] == today:
-        result["nextBooking"] = f"今天 {next_row['start_time']}"
-    else:
-        month, day = next_row["booking_date"].split("-")[1:]
-        result["nextBooking"] = f"{int(month)}月{int(day)}日 {next_row['start_time']}"
-    return result
+        (*room_ids, today, today, current_time),
+    ).fetchall()
+    next_by_room = {}
+    for next_row in next_rows:
+        next_by_room.setdefault(next_row["room_id"], next_row)
+    results = []
+    for row in rows:
+        result = serialize_room(row)
+        count = counts.get(row["id"])
+        next_row = next_by_room.get(row["id"])
+        result["todayCount"] = int(count["today_count"] or 0) if count else 0
+        result["futureCount"] = int(count["future_count"] or 0) if count else 0
+        if next_row is None:
+            result["nextBooking"] = None
+        elif next_row["booking_date"] == today:
+            result["nextBooking"] = f"今天 {next_row['start_time']}"
+        else:
+            month, day = next_row["booking_date"].split("-")[1:]
+            result["nextBooking"] = (
+                f"{int(month)}月{int(day)}日 {next_row['start_time']}"
+            )
+        results.append(result)
+    return results
 
 
 def _serialize_preferences(db, user_id: str) -> dict[str, Any]:
@@ -173,6 +274,12 @@ def _validate_password(value: Any, *, field: str = "password") -> str:
 def complete_setup():
     if not remote_is_loopback():
         raise ApiError(403, "SETUP_LOOPBACK_ONLY", "首次设置只能在服务器本机完成")
+    if not _setup_host_is_loopback():
+        raise ApiError(
+            403,
+            "SETUP_HOST_INVALID",
+            "首次设置只能通过服务器本机的固定地址完成",
+        )
     payload = parse_json_object()
     admin_payload = payload.get("admin")
     rooms_payload = payload.get("rooms")
@@ -303,15 +410,19 @@ def complete_setup():
     except (OSError, RuntimeError):
         current_app.logger.exception("首次设置已提交，但 install.json 同步失败；下次启动将自愈")
     completed_event = current_app.config.get("SETUP_COMPLETED_EVENT")
-    if completed_event is not None:
-        completed_event.set()
-    return jsonify(
+    current_app.config["DATABASE_SETUP_COMPLETE"] = True
+    response = jsonify(
         {
             "setupComplete": True,
             "restartRequired": True,
             "installStateSynchronized": synchronized,
         }
-    ), 201
+    )
+    if completed_event is not None:
+        # Waitress closes the WSGI iterable after it has queued the complete
+        # response. Only then may the listener hand-off begin.
+        response.call_on_close(completed_event.set)
+    return response, 201
 
 
 @bp.post("/session")
@@ -323,24 +434,65 @@ def login():
         payload.get("username"), field="username", label="用户名", maximum=80
     )
     password = str(payload.get("password") or "")
+    keys = login_rate_keys(username)
+    try:
+        assert_login_allowed(keys)
+    except ApiError:
+        _write_auth_audit(
+            action="auth.login_failed",
+            username=username,
+            reason="rate_limited",
+        )
+        raise
     if len(password) > 256:
+        record_login_failure(keys)
+        _write_auth_audit(
+            action="auth.login_failed",
+            username=username,
+            reason="invalid_credentials",
+        )
         raise ApiError(401, "INVALID_CREDENTIALS", "用户名或密码错误")
-    key = login_rate_key(username)
-    assert_login_allowed(key)
     row = get_db().execute(
         "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
     ).fetchone()
-    valid_password = bool(row and check_password_hash(row["password_hash"], password))
+    candidate_hash = row["password_hash"] if row is not None else _DUMMY_PASSWORD_HASH
+    password_matches = check_password_hash(candidate_hash, password)
+    valid_password = bool(row is not None and password_matches)
     if not valid_password:
-        record_login_failure(key)
+        record_login_failure(keys)
+        _write_auth_audit(
+            action="auth.login_failed",
+            username=username,
+            reason="invalid_credentials",
+        )
         raise ApiError(401, "INVALID_CREDENTIALS", "用户名或密码错误")
     if not row["is_active"]:
-        record_login_failure(key)
+        record_login_failure(keys)
+        _write_auth_audit(
+            action="auth.login_failed",
+            username=username,
+            actor_user_id=row["id"],
+            reason="account_disabled",
+        )
         raise ApiError(403, "ACCOUNT_DISABLED", "账号已停用，请联系管理员")
-    clear_login_failures(key)
+    clear_login_failures(keys)
+    _write_auth_audit(
+        action="auth.login_succeeded",
+        username=username,
+        actor_user_id=row["id"],
+        reason="authenticated",
+    )
     session.clear()
+    now = float(
+        current_app.config["SESSION_TIME_PROVIDER"]()
+        if current_app.config.get("SESSION_TIME_PROVIDER")
+        else time.time()
+    )
+    session.permanent = True
     session["user_id"] = row["id"]
     session["session_version"] = row["session_version"]
+    session["_issued_at"] = now
+    session["_last_active_at"] = now
     token = csrf_token()
     g.current_user = dict(row)
     return jsonify(
@@ -354,6 +506,14 @@ def login():
 
 @bp.delete("/session")
 def logout():
+    actor = current_user()
+    if actor is not None:
+        _write_auth_audit(
+            action="auth.logout",
+            username=actor["username"],
+            actor_user_id=actor["id"],
+            reason="user_requested",
+        )
     session.clear()
     g.pop("current_user", None)
     return jsonify({"authenticated": False, "csrfToken": csrf_token()})
@@ -369,12 +529,11 @@ def bootstrap():
         room_query += " WHERE is_active = 1"
     room_query += " ORDER BY sort_order, name"
     room_rows = db.execute(room_query).fetchall()
-    rooms = [
-        serialize_room_with_metrics(db, row)
+    rooms = (
+        serialize_rooms_with_metrics(db, room_rows)
         if user["role"] == "admin"
-        else serialize_room(row)
-        for row in room_rows
-    ]
+        else [serialize_room(row) for row in room_rows]
+    )
     users = []
     if user["role"] == "admin":
         user_rows = db.execute(
@@ -419,4 +578,5 @@ __all__ = [
     "bp",
     "serialize_room",
     "serialize_room_with_metrics",
+    "serialize_rooms_with_metrics",
 ]

@@ -19,7 +19,9 @@ def list_bookings():
         from ..common import local_now
 
         date_from = date_to = local_now().date().isoformat()
-    return jsonify({"items": service.list_reservations(date_from, date_to)})
+    return jsonify(
+        service.list_reservations(date_from, date_to, request.args.to_dict())
+    )
 
 
 @bp.post("")
@@ -37,7 +39,7 @@ def upcoming_bookings():
 @bp.get("/history")
 @login_required
 def booking_history():
-    return jsonify({"items": service.list_history(request.args.to_dict())})
+    return jsonify(service.list_history(request.args.to_dict()))
 
 
 @bp.get("/<reservation_id>")

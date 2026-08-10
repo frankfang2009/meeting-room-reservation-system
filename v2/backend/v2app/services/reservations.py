@@ -11,11 +11,14 @@ from flask import current_app
 from ..common import (
     canonical_json,
     clean_text,
+    decode_cursor,
+    encode_cursor,
     local_now,
     minutes_to_time,
     new_id,
     parse_date,
     parse_int,
+    parse_page_size,
     time_to_minutes,
 )
 from ..db import get_db, transaction
@@ -132,7 +135,7 @@ def _validate_booking_payload(
         payload.get("caseNumber"), field="caseNumber", label="案号", maximum=120
     )
     purpose = clean_text(
-        payload.get("purpose", "工伤笔录"),
+        payload.get("purpose"),
         field="purpose",
         label="事项",
         maximum=120,
@@ -176,15 +179,19 @@ def _row_for_id(db: sqlite3.Connection, reservation_id: str):
 
 def serialize_reservation(row: Any, actor: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     item = dict(row)
-    owner_name = item.get("owner_display_name") or item.get("owner_name_snapshot")
+    owner_name = item.get("owner_name_snapshot")
     can_manage = False
     if actor is not None:
         can_manage = actor["role"] == "admin" or actor["id"] == item["owner_user_id"]
     start_at = datetime.strptime(
         f"{item['booking_date']} {item['start_time']}", "%Y-%m-%d %H:%M"
     )
-    has_not_started = start_at > local_now().replace(tzinfo=None)
-    can_mutate = bool(can_manage and item["status"] == "active" and has_not_started)
+    end_at = datetime.strptime(
+        f"{item['booking_date']} {item['end_time']}", "%Y-%m-%d %H:%M"
+    )
+    now = local_now().replace(tzinfo=None)
+    can_edit = bool(can_manage and item["status"] == "active" and start_at > now)
+    can_cancel = bool(can_manage and item["status"] == "active" and end_at > now)
     return {
         "id": item["id"],
         "date": item["booking_date"],
@@ -204,8 +211,8 @@ def serialize_reservation(row: Any, actor: Optional[dict[str, Any]] = None) -> d
         "revision": item["revision"],
         "createdAt": item["created_at"],
         "updatedAt": item["updated_at"],
-        "canEdit": can_mutate,
-        "canCancel": can_mutate,
+        "canEdit": can_edit,
+        "canCancel": can_cancel,
     }
 
 
@@ -371,6 +378,8 @@ def _load_mutable_reservation(
     db: sqlite3.Connection,
     reservation_id: str,
     actor: dict[str, Any],
+    *,
+    allow_started_cancel: bool = False,
 ) -> Any:
     row = _row_for_id(db, reservation_id)
     if row is None:
@@ -382,8 +391,15 @@ def _load_mutable_reservation(
     starts_at = datetime.strptime(
         f"{row['booking_date']} {row['start_time']}", "%Y-%m-%d %H:%M"
     )
-    if starts_at <= local_now().replace(tzinfo=None):
-        raise ApiError(409, "BOOKING_STARTED", "已经开始的预约不能修改或取消")
+    now = local_now().replace(tzinfo=None)
+    if allow_started_cancel:
+        ends_at = datetime.strptime(
+            f"{row['booking_date']} {row['end_time']}", "%Y-%m-%d %H:%M"
+        )
+        if ends_at <= now:
+            raise ApiError(409, "BOOKING_ENDED", "已结束的预约不能取消")
+    elif starts_at <= now:
+        raise ApiError(409, "BOOKING_STARTED", "已经开始的预约不能修改")
     return row
 
 
@@ -471,7 +487,9 @@ def cancel_reservation(reservation_id: str, payload: dict[str, Any]) -> dict[str
     db = get_db()
     with transaction(db):
         actor = locked_actor(db)
-        existing = _load_mutable_reservation(db, reservation_id, actor)
+        existing = _load_mutable_reservation(
+            db, reservation_id, actor, allow_started_cancel=True
+        )
         if existing["revision"] != expected:
             raise ApiError(
                 409,
@@ -507,22 +525,64 @@ def cancel_reservation(reservation_id: str, payload: dict[str, Any]) -> dict[str
     return serialize_reservation(_row_for_id(db, reservation_id), actor)
 
 
-def list_reservations(date_from: str, date_to: str) -> list[dict[str, Any]]:
+def list_reservations(
+    date_from: str,
+    date_to: str,
+    args: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     start = date.fromisoformat(parse_date(date_from, field="dateFrom"))
     end = date.fromisoformat(parse_date(date_to, field="dateTo"))
     if end < start or (end - start).days > 366:
         raise ApiError(422, "VALIDATION_ERROR", "日期范围无效或过大")
     actor = current_user()
+    args = args or {}
+    page_size = parse_page_size(args.get("pageSize"))
+    cursor_context = canonical_json(
+        {"kind": "reservations", "dateFrom": start.isoformat(), "dateTo": end.isoformat()}
+    )
+    clauses = ["r.booking_date BETWEEN ? AND ?", "r.status = 'active'"]
+    params: list[Any] = [start.isoformat(), end.isoformat()]
+    total = get_db().execute(
+        f"SELECT COUNT(*) FROM reservations r WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()[0]
+    if args.get("cursor"):
+        cursor = decode_cursor(args["cursor"], length=4, context=cursor_context)
+        clauses.append(
+            "(r.booking_date, r.start_time, r.room_name_snapshot, r.id) > (?, ?, ?, ?)"
+        )
+        params.extend(cursor)
+    params.append(page_size + 1)
     rows = get_db().execute(
-        """
+        f"""
         SELECT r.*, u.display_name AS owner_display_name
         FROM reservations r JOIN users u ON u.id = r.owner_user_id
-        WHERE r.booking_date BETWEEN ? AND ? AND r.status = 'active'
-        ORDER BY r.booking_date, r.start_time, r.room_name_snapshot
+        WHERE {' AND '.join(clauses)}
+        ORDER BY r.booking_date, r.start_time, r.room_name_snapshot, r.id
+        LIMIT ?
         """,
-        (start.isoformat(), end.isoformat()),
+        params,
     ).fetchall()
-    return [serialize_reservation(row, actor) for row in rows]
+    has_more = len(rows) > page_size
+    page = rows[:page_size]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        next_cursor = encode_cursor(
+            [
+                last["booking_date"],
+                last["start_time"],
+                last["room_name_snapshot"],
+                last["id"],
+            ],
+            context=cursor_context,
+        )
+    return {
+        "items": [serialize_reservation(row, actor) for row in page],
+        "nextCursor": next_cursor,
+        "pageSize": page_size,
+        "total": total,
+    }
 
 
 def list_upcoming() -> list[dict[str, Any]]:
@@ -542,12 +602,19 @@ def list_upcoming() -> list[dict[str, Any]]:
 
 
 def _next_month(month_start: date) -> date:
+    if month_start.year == date.max.year and month_start.month == 12:
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "月份超出系统可安全查询的范围",
+            fields={"month": "最大可查询月份为 9999-11"},
+        )
     if month_start.month == 12:
         return date(month_start.year + 1, 1, 1)
     return date(month_start.year, month_start.month + 1, 1)
 
 
-def list_history(args: dict[str, Any]) -> list[dict[str, Any]]:
+def list_history(args: dict[str, Any]) -> dict[str, Any]:
     month = str(args.get("month") or local_now().strftime("%Y-%m"))
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise ApiError(422, "VALIDATION_ERROR", "月份格式应为 YYYY-MM")
@@ -556,6 +623,7 @@ def list_history(args: dict[str, Any]) -> list[dict[str, Any]]:
     except ValueError:
         raise ApiError(422, "VALIDATION_ERROR", "月份无效")
     actor = current_user()
+    page_size = parse_page_size(args.get("pageSize"))
     owner_id = str(args.get("ownerId") or "").strip() or None
     if actor["role"] == "employee":
         if owner_id and owner_id != actor["id"]:
@@ -587,16 +655,50 @@ def list_history(args: dict[str, Any]) -> list[dict[str, Any]]:
         )
         pattern = f"%{query}%"
         params.extend([pattern, pattern, pattern, pattern])
+    cursor_context = canonical_json(
+        {
+            "kind": "history",
+            "month": month,
+            "ownerId": owner_id,
+            "roomId": room_id,
+            "tagSlot": tag_slot,
+            "query": query,
+        }
+    )
+    total = get_db().execute(
+        f"SELECT COUNT(*) FROM reservations r WHERE {' AND '.join(clauses)}",
+        params,
+    ).fetchone()[0]
+    if args.get("cursor"):
+        cursor = decode_cursor(args["cursor"], length=3, context=cursor_context)
+        clauses.append("(r.booking_date, r.start_time, r.id) < (?, ?, ?)")
+        params.extend(cursor)
+    params.append(page_size + 1)
     rows = get_db().execute(
         f"""
         SELECT r.*, u.display_name AS owner_display_name
         FROM reservations r JOIN users u ON u.id = r.owner_user_id
         WHERE {' AND '.join(clauses)}
-        ORDER BY r.booking_date DESC, r.start_time DESC
+        ORDER BY r.booking_date DESC, r.start_time DESC, r.id DESC
+        LIMIT ?
         """,
         params,
     ).fetchall()
-    return [serialize_reservation(row, actor) for row in rows]
+    has_more = len(rows) > page_size
+    page = rows[:page_size]
+    next_cursor = None
+    if has_more and page:
+        last = page[-1]
+        next_cursor = encode_cursor(
+            [last["booking_date"], last["start_time"], last["id"]],
+            context=cursor_context,
+        )
+    return {
+        "items": [serialize_reservation(row, actor) for row in page],
+        "nextCursor": next_cursor,
+        "pageSize": page_size,
+        "total": total,
+    }
 
 
 def get_reservation(reservation_id: str) -> dict[str, Any]:

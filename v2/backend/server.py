@@ -14,8 +14,9 @@ from v2app.db import is_setup_complete
 
 
 def determine_bind_host(app) -> str:
-    with app.app_context():
-        return "0.0.0.0" if is_setup_complete() else "127.0.0.1"
+    if not app.config.get("SYSTEM_READY", False):
+        return "127.0.0.1"
+    return "0.0.0.0" if app.config.get("DATABASE_SETUP_COMPLETE") else "127.0.0.1"
 
 
 def _port() -> int:
@@ -42,24 +43,56 @@ def run_server_once(
         config["SERVICE_STOP_EVENT"] = service_stop_event
     app = create_app(config)
     host = determine_bind_host(app)
+    app.config["ACTIVE_BIND_MODE"] = "lan" if host == "0.0.0.0" else "loopback"
     logger = logging.getLogger("meeting_room_v2.service")
     logger.info("listener starting host=%s port=%s", host, port)
     server = create_server(app, host=host, port=port, threads=8)
+    close_requested = threading.Event()
+    listener_closed = threading.Event()
+    close_lock = threading.Lock()
+    server_stopped = threading.Event()
+
+    def close_listener_in_loop(reason: str) -> None:
+        with close_lock:
+            if listener_closed.is_set():
+                return
+            listener_closed.set()
+        logger.info("listener close requested reason=%s", reason)
+        # This callback runs in Waitress's asyncore thread. Mark existing
+        # keep-alive channels to close only after their buffered response is
+        # flushed, then remove the accepting socket and wakeup trigger from
+        # the same thread that owns select(). Closing them from the monitor
+        # thread makes select() observe a stale fd and raise EBADF.
+        for channel in tuple(getattr(server, "active_channels", {}).values()):
+            channel.close_when_flushed = True
+        server.close()
+
+    def request_listener_close(reason: str) -> None:
+        with close_lock:
+            if close_requested.is_set():
+                return
+            close_requested.set()
+        trigger = getattr(getattr(server, "trigger", None), "pull_trigger", None)
+        if callable(trigger):
+            trigger(lambda: close_listener_in_loop(reason))
+        else:
+            # Test doubles and non-Waitress adapters do not expose a trigger.
+            close_listener_in_loop(reason)
 
     def close_after_runtime_signal() -> None:
-        while True:
+        while not server_stopped.is_set():
             if service_stop_event is not None and service_stop_event.wait(0.1):
                 # Let the authenticated stop response flush before closing.
                 logger.info("listener received authenticated stop signal")
                 time.sleep(0.25)
-                server.close()
+                request_listener_close("service-stop")
                 return
             if setup_completed.wait(0.1):
                 # Leave enough time for Waitress to flush the setup response
                 # before recreating the listener on 0.0.0.0.
                 logger.info("setup committed; listener restarting in LAN mode")
                 time.sleep(0.5)
-                server.close()
+                request_listener_close("setup-complete")
                 return
 
     should_monitor = host == "127.0.0.1" or service_stop_event is not None
@@ -74,7 +107,15 @@ def run_server_once(
     try:
         server.run()
     finally:
-        server.close()
+        server_stopped.set()
+        if not listener_closed.is_set():
+            # run() has returned, so no select() call can race this fallback.
+            close_listener_in_loop("server-run-returned")
+        dispatcher = getattr(server, "task_dispatcher", None)
+        if dispatcher is not None:
+            dispatcher.shutdown()
+        if monitor is not None and monitor.is_alive():
+            monitor.join(timeout=1.0)
         logger.info("listener closed host=%s port=%s", host, port)
     return setup_completed.is_set() and not (
         service_stop_event is not None and service_stop_event.is_set()

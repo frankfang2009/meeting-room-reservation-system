@@ -18,7 +18,7 @@ from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor, serialize_user
 from ..services.audit import write_security_audit
-from .core import serialize_room_with_metrics
+from .core import serialize_room_with_metrics, serialize_rooms_with_metrics
 
 
 bp = Blueprint("admin_api", __name__, url_prefix="/api/v1")
@@ -66,7 +66,7 @@ def list_rooms():
     rows = db.execute(
         "SELECT * FROM rooms ORDER BY sort_order, name"
     ).fetchall()
-    return jsonify({"items": [serialize_room_with_metrics(db, row) for row in rows]})
+    return jsonify({"items": serialize_rooms_with_metrics(db, rows)})
 
 
 @bp.post("/rooms")
@@ -288,7 +288,15 @@ def update_user(user_id: str):
             target = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             if target is None:
                 raise ApiError(404, "NOT_FOUND", "用户不存在")
-            username = _validate_username(payload.get("username", target["username"]))
+            submitted_username = payload.get("username", target["username"])
+            username = _validate_username(submitted_username)
+            if username != target["username"]:
+                raise ApiError(
+                    422,
+                    "USERNAME_IMMUTABLE",
+                    "用户名创建后不可修改",
+                    fields={"username": "用户名创建后不可修改"},
+                )
             display_name = clean_text(
                 payload.get("name", target["display_name"]),
                 field="name",

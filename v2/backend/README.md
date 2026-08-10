@@ -14,7 +14,8 @@ installation identity files are created.
 The client obtains a session/CSRF token from `GET /api/v1/session`. Every JSON
 write uses the same-origin session cookie and `X-CSRF-Token`.
 
-Production packages use `_程序文件/service.py`:
+Production packages use `_程序文件/app/service.py`; `data`, `backups`, `logs`
+and `runtime` are siblings of `app` under `_程序文件`:
 
 - no arguments starts the foreground/scheduled-task service;
 - `--check` accepts only the loopback `/healthz` for the same V2 `install_id`;
@@ -24,5 +25,20 @@ Production packages use `_程序文件/service.py`:
 - exit code `0` means success/already in the requested state, `1` means an
   identity/runtime/health failure, and `2` means invalid CLI arguments.
 
-The installed React build is read from `_程序文件/static`; development
-`server.py` defaults to `v2/frontend/dist/client`.
+The installed React build is read from `_程序文件/app/static`; development
+`server.py` defaults to `v2/frontend/dist/client`. Startup validates database
+generation, `quick_check`, foreign keys and the setup mirror. A completed
+installation with a missing, empty, damaged or rolled-back database starts in
+loopback recovery mode and never initializes a replacement database.
+
+Maintenance entry points use the same protected `data/maintenance.lock`:
+
+- `backup.py --scheduled --expected-install-id UUID` is the daily task;
+- `backup.py --catch-up --expected-install-id UUID` is launched idempotently
+  after service startup and after first setup switches the listener;
+- `restore.py --backup ABSOLUTE_PATH --expected-install-id UUID` accepts only a
+  verified backup and sidecar from this installation's protected backup
+  directory while the service is stopped. It snapshots the current database,
+  atomically replaces and rechecks it, and rolls back on failure.
+
+Maintenance commands return `0` on success/idempotent skip and `1` on failure.

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from flask import Flask, current_app, g
 
@@ -30,6 +31,24 @@ EXPECTED_TABLES = {
 
 class DatabaseGenerationError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class DatabaseStartupState:
+    ready: bool
+    setup_complete: bool
+    initialized: bool = False
+    code: str = "READY"
+    message: str = "数据库已就绪"
+
+
+def _recovery(code: str, message: str) -> DatabaseStartupState:
+    return DatabaseStartupState(
+        ready=False,
+        setup_complete=False,
+        code=code,
+        message=message,
+    )
 
 
 SCHEMA_STATEMENTS = (
@@ -108,7 +127,7 @@ SCHEMA_STATEMENTS = (
         owner_name_snapshot TEXT NOT NULL,
         party_name TEXT NOT NULL,
         case_number TEXT NOT NULL,
-        purpose TEXT NOT NULL DEFAULT '工伤笔录',
+        purpose TEXT NOT NULL,
         notes TEXT NOT NULL DEFAULT '',
         tag_slot INTEGER NOT NULL CHECK (tag_slot BETWEEN 1 AND 4),
         tag_label_snapshot TEXT NOT NULL,
@@ -249,6 +268,17 @@ def classify_existing_database(path: Path) -> str:
             raise DatabaseGenerationError(
                 f"数据库结构版本不受支持：需要 {SCHEMA_VERSION}，实际 {version or '缺失'}"
             )
+        setup_value = _meta_value(db, "setup_complete")
+        if setup_value not in ("0", "1"):
+            raise DatabaseGenerationError("数据库 setup_complete 元数据无效")
+        for key in ("data_sequence", "backup_sequence"):
+            sequence_value = _meta_value(db, key)
+            if (
+                sequence_value is None
+                or not sequence_value.isdigit()
+                or int(sequence_value) < 0
+            ):
+                raise DatabaseGenerationError(f"数据库 {key} 元数据无效")
         missing = EXPECTED_TABLES - tables
         if missing:
             raise DatabaseGenerationError(
@@ -276,6 +306,8 @@ def _initialize_database(path: Path) -> None:
                     ("product_generation", str(PRODUCT_GENERATION)),
                     ("schema_version", str(SCHEMA_VERSION)),
                     ("setup_complete", "0"),
+                    ("data_sequence", "0"),
+                    ("backup_sequence", "0"),
                 ),
             )
             db.execute(
@@ -298,12 +330,97 @@ def _initialize_database(path: Path) -> None:
         db.close()
 
 
-def prepare_database(path: Path) -> None:
+def database_health(db: sqlite3.Connection) -> dict[str, Any]:
+    quick_rows = [str(row[0]) for row in db.execute("PRAGMA quick_check").fetchall()]
+    foreign_key_rows = db.execute("PRAGMA foreign_key_check").fetchall()
+    return {
+        "quickCheck": quick_rows,
+        "quickCheckOk": quick_rows == ["ok"],
+        "foreignKeyErrors": len(foreign_key_rows),
+        "foreignKeysOk": not foreign_key_rows,
+    }
+
+
+def prepare_database(
+    path: Path,
+    *,
+    mirror_setup_complete: Optional[bool] = None,
+) -> DatabaseStartupState:
     if path.exists() and path.is_dir():
-        raise DatabaseGenerationError("数据库路径指向文件夹")
-    state = classify_existing_database(path) if path.exists() else "empty"
-    if state == "empty":
-        _initialize_database(path)
+        return _recovery("DATABASE_PATH_INVALID", "数据库路径无效")
+    missing_or_empty = not path.exists()
+    if path.exists():
+        try:
+            missing_or_empty = path.stat().st_size == 0
+        except OSError:
+            return _recovery("DATABASE_UNAVAILABLE", "数据库无法读取")
+    if missing_or_empty:
+        if mirror_setup_complete is True:
+            return _recovery(
+                "DATABASE_MISSING_AFTER_SETUP",
+                "已完成设置的安装缺少数据库，已进入恢复模式",
+            )
+        try:
+            _initialize_database(path)
+        except (OSError, sqlite3.Error, DatabaseGenerationError):
+            return _recovery("DATABASE_INITIALIZATION_FAILED", "数据库初始化失败")
+        return DatabaseStartupState(
+            ready=True,
+            setup_complete=False,
+            initialized=True,
+        )
+
+    try:
+        classify_existing_database(path)
+        db = _connect(path, readonly=True)
+        try:
+            health = database_health(db)
+            setup_complete = _meta_value(db, "setup_complete") == "1"
+            pre_setup_has_state = bool(
+                not setup_complete
+                and any(
+                    db.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                    for table in (
+                        "users",
+                        "rooms",
+                        "user_preferences",
+                        "reservations",
+                        "reservation_slots",
+                        "reservation_events",
+                        "api_tokens",
+                    )
+                )
+            )
+        finally:
+            db.close()
+    except DatabaseGenerationError:
+        return _recovery(
+            "DATABASE_GENERATION_INVALID",
+            "数据库不属于可识别的 V2 代际，已进入恢复模式",
+        )
+    except (OSError, sqlite3.Error):
+        return _recovery("DATABASE_UNAVAILABLE", "数据库无法读取，已进入恢复模式")
+    if not health["quickCheckOk"]:
+        return _recovery(
+            "DATABASE_INTEGRITY_FAILED",
+            "数据库完整性检查失败，已进入恢复模式",
+        )
+    if not health["foreignKeysOk"]:
+        return _recovery(
+            "DATABASE_FOREIGN_KEY_FAILED",
+            "数据库关联完整性检查失败，已进入恢复模式",
+        )
+    if mirror_setup_complete is True and not setup_complete:
+        return _recovery(
+            "SETUP_STATE_CONFLICT",
+            "安装状态与数据库矛盾，已进入恢复模式",
+        )
+    if pre_setup_has_state:
+        return _recovery(
+            "SETUP_STATE_INVALID",
+            "未完成设置的数据库含有业务数据，已进入恢复模式",
+        )
+    return DatabaseStartupState(ready=True, setup_complete=setup_complete)
 
 
 def get_db() -> sqlite3.Connection:
@@ -319,13 +436,25 @@ def close_db(_error: Optional[BaseException] = None) -> None:
 
 
 @contextmanager
-def transaction(db: Optional[sqlite3.Connection] = None) -> Iterator[sqlite3.Connection]:
+def transaction(
+    db: Optional[sqlite3.Connection] = None,
+    *,
+    track_change: bool = True,
+) -> Iterator[sqlite3.Connection]:
     connection = db or get_db()
     if connection.in_transaction:
         raise RuntimeError("不允许嵌套数据库写事务")
     connection.execute("BEGIN IMMEDIATE")
     try:
         yield connection
+        if track_change:
+            connection.execute(
+                """
+                INSERT INTO app_meta (key, value) VALUES ('data_sequence', '1')
+                ON CONFLICT(key) DO UPDATE
+                SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)
+                """
+            )
         connection.execute("COMMIT")
     except Exception:
         if connection.in_transaction:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import ipaddress
+import base64
+import binascii
+import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -128,22 +132,83 @@ def parse_bool(value: Any, *, field: str) -> bool:
 
 
 def parse_int(value: Any, *, field: str) -> int:
-    if isinstance(value, bool):
+    if type(value) is not int:
         raise ApiError(
             422,
             "VALIDATION_ERROR",
             "请检查输入内容",
             fields={field: "必须是整数"},
         )
+    return value
+
+
+def parse_page_size(value: Any, *, default: int = 100, maximum: int = 200) -> int:
+    if value in (None, ""):
+        return default
+    text = str(value)
+    if not re.fullmatch(r"[1-9][0-9]{0,3}", text):
+        raise ApiError(422, "VALIDATION_ERROR", "pageSize 必须是正整数")
+    parsed = int(text)
+    if parsed > maximum:
+        raise ApiError(422, "VALIDATION_ERROR", f"pageSize 不能超过 {maximum}")
+    return parsed
+
+
+def _cursor_context_digest(context: str) -> str:
+    return hashlib.sha256(context.encode("utf-8")).hexdigest()
+
+
+def encode_cursor(parts: list[str], *, context: Optional[str] = None) -> str:
+    value: Any = parts
+    if context is not None:
+        value = {"context": _cursor_context_digest(context), "parts": parts}
+    raw = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("ascii")
+    body = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    secret = str(current_app.config["SECRET_KEY"]).encode("utf-8")
+    signature = hmac.new(
+        secret, b"api-cursor\0" + body.encode("ascii"), hashlib.sha256
+    ).hexdigest()
+    return body + "." + signature
+
+
+def decode_cursor(
+    value: Any,
+    *,
+    length: int,
+    context: Optional[str] = None,
+) -> list[str]:
+    if not isinstance(value, str) or not value or len(value) > 1024:
+        raise ApiError(422, "INVALID_CURSOR", "分页游标无效")
     try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "请检查输入内容",
-            fields={field: "必须是整数"},
-        )
+        body, supplied_signature = value.rsplit(".", 1)
+        secret = str(current_app.config["SECRET_KEY"]).encode("utf-8")
+        expected_signature = hmac.new(
+            secret, b"api-cursor\0" + body.encode("ascii"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise ValueError("cursor signature mismatch")
+        padded = body + "=" * (-len(body) % 4)
+        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+        decoded = json.loads(raw.decode("ascii"))
+    except (binascii.Error, UnicodeError, ValueError):
+        raise ApiError(422, "INVALID_CURSOR", "分页游标无效")
+    if context is None:
+        parts = decoded
+    elif (
+        not isinstance(decoded, dict)
+        or set(decoded) != {"context", "parts"}
+        or decoded.get("context") != _cursor_context_digest(context)
+    ):
+        raise ApiError(422, "INVALID_CURSOR", "分页游标与当前筛选条件不匹配")
+    else:
+        parts = decoded["parts"]
+    if (
+        not isinstance(parts, list)
+        or len(parts) != length
+        or not all(isinstance(part, str) and len(part) <= 256 for part in parts)
+    ):
+        raise ApiError(422, "INVALID_CURSOR", "分页游标无效")
+    return parts
 
 
 def mask_party_name(value: Any) -> str:

@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -26,12 +27,14 @@ from server import run_server_once
 PRODUCT_GENERATION = 2
 SERVICE_PORT = 8080
 MAX_CONTROL_BYTES = 16 * 1024
-SERVICE_DIR = Path(__file__).resolve().parent
-DATA_DIR = SERVICE_DIR / "data"
+APP_DIR = Path(__file__).resolve().parent
+SERVICE_DIR = APP_DIR
+PROGRAM_DIR = APP_DIR.parent
+DATA_DIR = PROGRAM_DIR / "data"
 INSTALL_INFO_PATH = DATA_DIR / "install.json"
 INSTALL_ID_PATH = DATA_DIR / "install_id"
 PID_PATH = DATA_DIR / "service.pid"
-LOG_DIR = SERVICE_DIR / "logs"
+LOG_DIR = PROGRAM_DIR / "logs"
 LOG_PATH = LOG_DIR / "service.log"
 
 INSTALL_FIELDS = {
@@ -59,6 +62,22 @@ PID_FIELDS = {
 
 class ServiceAlreadyRunning(RuntimeError):
     pass
+
+
+def service_failure_message(error: BaseException) -> str:
+    if isinstance(error, OSError) and (
+        error.errno == errno.EADDRINUSE
+        or getattr(error, "winerror", None) == 10048
+        or "address already in use" in str(error).casefold()
+    ):
+        return (
+            "V2 服务无法启动：8080 端口已被其他程序占用。"
+            "请关闭占用程序后重新运行“① 启动系统”；仍失败请提交 _程序文件\\logs。"
+        )
+    return (
+        "V2 服务启动或操作未完成。请重新运行“① 启动系统”；"
+        "仍失败请提交 _程序文件\\logs，日志中已记录详细原因。"
+    )
 
 
 def configure_logging(path: Path = LOG_PATH) -> logging.Logger:
@@ -151,7 +170,7 @@ def _normalized_path(value: Union[str, Path]) -> str:
 
 
 def _allowed_service_executables() -> set[str]:
-    runtime = SERVICE_DIR / "runtime"
+    runtime = PROGRAM_DIR / "runtime"
     if runtime.is_dir():
         return {
             _normalized_path(runtime / "python.exe"),
@@ -389,7 +408,9 @@ def _claim_pid(identity: dict[str, Any]) -> dict[str, Any]:
         "servicePath": _normalized_path(SERVICE_DIR / "service.py"),
         "installId": identity["install_id"],
         "port": SERVICE_PORT,
-        "startedAtUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "startedAtUtc": dt.datetime.now(dt.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
     }
     for _attempt in range(2):
         try:
@@ -472,6 +493,35 @@ def _open_browser_once() -> None:
         return
 
 
+def _launch_backup_catch_up(identity: dict[str, Any]) -> None:
+    """Start the idempotent catch-up worker without blocking the listener."""
+
+    logger = logging.getLogger("meeting_room_v2.service")
+    command = [
+        sys.executable,
+        str(APP_DIR / "backup.py"),
+        "--catch-up",
+        "--expected-install-id",
+        identity["install_id"],
+    ]
+    options: dict[str, Any] = {
+        "cwd": str(APP_DIR),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if os.name == "nt":
+        options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        subprocess.Popen(command, **options)
+        logger.info("backup catch-up worker launched")
+    except Exception:
+        # Backup failures must never take the listener down. The service log
+        # records launch failures; a launched worker has its own backup.log.
+        logger.exception("failed to launch backup catch-up worker")
+
+
 def run_service(identity: dict[str, Any]) -> None:
     logger = logging.getLogger("meeting_room_v2.service")
     record = _claim_pid(identity)
@@ -479,10 +529,11 @@ def run_service(identity: dict[str, Any]) -> None:
     stop_event = threading.Event()
     if os.environ.get("MEETING_ROOM_OPEN_BROWSER") == "1":
         threading.Thread(target=_open_browser_once, daemon=True).start()
+    _launch_backup_catch_up(identity)
     config = {
         "DATA_DIR": str(DATA_DIR),
         "SERVICE_PORT": SERVICE_PORT,
-        "STATIC_DIR": str(SERVICE_DIR / "static"),
+        "STATIC_DIR": str(APP_DIR / "static"),
         "LAN_ADDRESS": discover_lan_address(SERVICE_PORT),
         "SERVICE_CONTROL": record,
         "SERVICE_STOP_EVENT": stop_event,
@@ -493,7 +544,10 @@ def run_service(identity: dict[str, Any]) -> None:
             app_config=config,
             service_stop_event=stop_event,
         ):
-            continue
+            # The first worker intentionally skips an incomplete setup. Once
+            # setup commits and the listener is recreated in LAN mode, launch
+            # catch-up again so the first durable backup is not delayed a day.
+            _launch_backup_catch_up(identity)
     finally:
         _remove_pid_if_token(record["token"])
         logger.info("service process stopped pid=%s", record["pid"])
@@ -532,7 +586,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     except Exception as error:
         logger.exception("service command failed action=%s", action)
-        print(f"V2 服务操作失败：{error}", file=sys.stderr)
+        print(service_failure_message(error), file=sys.stderr)
         return 1
 
 

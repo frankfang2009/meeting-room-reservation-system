@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import errno
+import io
 import json
 import logging
+import os
 import sqlite3
 import tempfile
 import threading
@@ -12,8 +15,16 @@ from pathlib import Path
 from unittest import mock
 
 import service as service_entrypoint
+import server as server_entrypoint
+import restore as restore_entrypoint
 from v2app import create_app
-from v2app.db import DatabaseGenerationError, get_db
+from v2app.backup import (
+    load_backup_sidecar,
+    maintenance_lock,
+    scheduled_backup_due,
+    sha256_file,
+)
+from v2app.db import get_db, prepare_database
 from v2app.runtime.install_state import sync_install_json
 from server import determine_bind_host
 
@@ -59,7 +70,7 @@ class BackendTestCase(unittest.TestCase):
             path,
             method=method,
             json=payload if payload is not None else {},
-            headers={"X-CSRF-Token": token},
+            headers={"Host": "localhost:8080", "X-CSRF-Token": token},
             **kwargs,
         )
 
@@ -79,8 +90,10 @@ class BackendTestCase(unittest.TestCase):
                 "workEnd": "17:30",
             },
         )
-        self.assertEqual(response.status_code, 201, response.get_json())
-        return response.get_json()
+        payload = response.get_json()
+        self.assertEqual(response.status_code, 201, payload)
+        response.close()
+        return payload
 
     def login(self, username="admin", password="admin-pass-123", client=None):
         client = client or self.client
@@ -127,6 +140,33 @@ class BackendTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.get_json())
         return response.get_json()
 
+    def write_install_json(
+        self,
+        data_dir: Path,
+        *,
+        setup_complete: bool,
+        install_id: str = INSTALL_ID,
+    ) -> Path:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        target = data_dir / "install.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "product_generation": 2,
+                    "install_id": install_id,
+                    "installed_version": "2.0.0",
+                    "installed_at_utc": "2026-08-09T00:00:00Z",
+                    "port": 8080,
+                    "setup_bind": "127.0.0.1",
+                    "lan_bind": "0.0.0.0",
+                    "setup_complete": setup_complete,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return target
+
 
 class GenerationAndSetupTests(BackendTestCase):
     def test_new_database_has_generation_but_no_seed_account(self):
@@ -150,8 +190,12 @@ class GenerationAndSetupTests(BackendTestCase):
                 db.execute("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
                 db.execute("INSERT INTO app_meta VALUES ('schema_version', '1')")
             before = hashlib.sha256(database.read_bytes()).hexdigest()
-            with self.assertRaisesRegex(DatabaseGenerationError, "V1"):
-                create_app({"DATA_DIR": str(data), "DATABASE": str(database)})
+            recovery = create_app({"DATA_DIR": str(data), "DATABASE": str(database)})
+            self.assertFalse(recovery.config["SYSTEM_READY"])
+            self.assertEqual(
+                recovery.config["RECOVERY_STATE"]["code"],
+                "DATABASE_GENERATION_INVALID",
+            )
             self.assertEqual(hashlib.sha256(database.read_bytes()).hexdigest(), before)
             self.assertFalse((data / ".secret_key").exists())
             self.assertFalse((data / "install_id").exists())
@@ -161,15 +205,15 @@ class GenerationAndSetupTests(BackendTestCase):
             database = Path(temporary) / "unknown.db"
             with sqlite3.connect(database) as db:
                 db.execute("CREATE TABLE alien (id INTEGER)")
-            with self.assertRaisesRegex(DatabaseGenerationError, "代际"):
-                create_app(
-                    {
-                        "DATA_DIR": temporary,
-                        "DATABASE": str(database),
-                        "SECRET_KEY": "x",
-                        "INSTALL_ID": INSTALL_ID,
-                    }
-                )
+            recovery = create_app(
+                {
+                    "DATA_DIR": temporary,
+                    "DATABASE": str(database),
+                    "SECRET_KEY": "x",
+                    "INSTALL_ID": INSTALL_ID,
+                }
+            )
+            self.assertFalse(recovery.config["SYSTEM_READY"])
 
     def test_setup_requires_csrf_and_loopback(self):
         missing = self.client.post("/api/v1/setup/complete", json={})
@@ -183,10 +227,81 @@ class GenerationAndSetupTests(BackendTestCase):
         self.assertEqual(denied.status_code, 403)
         self.assertEqual(denied.get_json()["error"]["code"], "SETUP_LOOPBACK_ONLY")
 
+        setup_payload = {
+            "admin": {
+                "username": "admin",
+                "password": "admin-pass-123",
+                "name": "系统管理员",
+            },
+            "rooms": [{"name": "笔录室 1"}],
+        }
+        attacker = self.app.test_client()
+        attacker_base = "http://attacker.example:8080"
+        attacker_token = attacker.get(
+            "/api/v1/session", base_url=attacker_base
+        ).get_json()["csrfToken"]
+        rebound = attacker.post(
+            "/api/v1/setup/complete",
+            base_url=attacker_base,
+            json=setup_payload,
+            headers={"X-CSRF-Token": attacker_token},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(rebound.status_code, 403)
+        self.assertEqual(rebound.get_json()["error"]["code"], "SETUP_HOST_INVALID")
+
+        wrong_port = self.app.test_client()
+        wrong_port_base = "http://127.0.0.1:8081"
+        wrong_port_token = wrong_port.get(
+            "/api/v1/session", base_url=wrong_port_base
+        ).get_json()["csrfToken"]
+        rejected_port = wrong_port.post(
+            "/api/v1/setup/complete",
+            base_url=wrong_port_base,
+            json=setup_payload,
+            headers={"X-CSRF-Token": wrong_port_token},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        )
+        self.assertEqual(rejected_port.status_code, 403)
+        self.assertEqual(
+            rejected_port.get_json()["error"]["code"], "SETUP_HOST_INVALID"
+        )
+
+        ipv6 = self.app.test_client()
+        ipv6_base = "http://[::1]:8080"
+        ipv6_token = ipv6.get(
+            "/api/v1/session",
+            base_url=ipv6_base,
+            environ_base={"REMOTE_ADDR": "::1"},
+        ).get_json()["csrfToken"]
+        allowed = ipv6.post(
+            "/api/v1/setup/complete",
+            base_url=ipv6_base,
+            json=setup_payload,
+            headers={"X-CSRF-Token": ipv6_token},
+            environ_base={"REMOTE_ADDR": "::1"},
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.get_json())
+
+        lan = self.app.test_client()
+        lan_base = "http://192.168.50.10:8080"
+        lan_token = lan.get(
+            "/api/v1/session",
+            base_url=lan_base,
+            environ_base={"REMOTE_ADDR": "192.168.50.20"},
+        ).get_json()["csrfToken"]
+        normal_lan_login = lan.post(
+            "/api/v1/session",
+            base_url=lan_base,
+            json={"username": "admin", "password": "admin-pass-123"},
+            headers={"X-CSRF-Token": lan_token},
+            environ_base={"REMOTE_ADDR": "192.168.50.20"},
+        )
+        self.assertEqual(normal_lan_login.status_code, 200, normal_lan_login.get_json())
+
     def test_setup_is_atomic_and_emits_restart_signal(self):
         self.app.config["SETUP_FAILPOINT"] = True
-        with self.assertRaisesRegex(RuntimeError, "setup failpoint"):
-            self.write(
+        failed = self.write(
                 "POST",
                 "/api/v1/setup/complete",
                 {
@@ -196,6 +311,8 @@ class GenerationAndSetupTests(BackendTestCase):
                     "workEnd": "17:30",
                 },
             )
+        self.assertEqual(failed.status_code, 500)
+        self.assertEqual(failed.get_json()["error"]["code"], "INTERNAL_ERROR")
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT value FROM app_meta WHERE key='setup_complete'").fetchone()[0], "0")
@@ -255,6 +372,145 @@ class GenerationAndSetupTests(BackendTestCase):
         )
         remote = self.client.get("/healthz", environ_base={"REMOTE_ADDR": "192.168.1.20"}).get_json()
         self.assertNotIn("install_id", remote)
+
+    def test_completed_install_never_initializes_missing_or_empty_database(self):
+        for empty_file in (False, True):
+            with self.subTest(empty_file=empty_file), tempfile.TemporaryDirectory() as temporary:
+                data = Path(temporary) / "data"
+                self.write_install_json(data, setup_complete=True)
+                database = data / "reservation.db"
+                if empty_file:
+                    database.touch()
+                app = create_app(
+                    {
+                        "TESTING": True,
+                        "DATA_DIR": str(data),
+                        "DATABASE": str(database),
+                        "SECRET_KEY": "test-secret",
+                        "INSTALL_ID": INSTALL_ID,
+                    }
+                )
+                self.assertFalse(app.config["SYSTEM_READY"])
+                self.assertEqual(
+                    app.config["RECOVERY_STATE"]["code"],
+                    "DATABASE_MISSING_AFTER_SETUP",
+                )
+                self.assertFalse(database.exists() and database.stat().st_size > 0)
+                client = app.test_client()
+                health = client.get("/healthz/").get_json()
+                self.assertFalse(health["ok"])
+                self.assertEqual(health["status"], "recovery")
+                blocked = client.get("/api/v1/session")
+                self.assertEqual(blocked.status_code, 503)
+                self.assertIn("requestId", blocked.get_json())
+                blocked_write = client.post("/api/v1/session", json={})
+                self.assertEqual(blocked_write.status_code, 503)
+                self.assertEqual(
+                    blocked_write.get_json()["error"]["code"],
+                    "SYSTEM_RECOVERY_REQUIRED",
+                )
+
+    def test_mirror_true_database_false_is_fail_closed(self):
+        self.write_install_json(self.data_dir, setup_complete=True)
+        restarted = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertFalse(restarted.config["SYSTEM_READY"])
+        self.assertEqual(
+            restarted.config["RECOVERY_STATE"]["code"], "SETUP_STATE_CONFLICT"
+        )
+
+    def test_corrupt_or_foreign_key_invalid_database_enters_recovery(self):
+        self.setup_system()
+        self.write_install_json(self.data_dir, setup_complete=True)
+        with sqlite3.connect(self.database) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute(
+                "INSERT INTO user_preferences (user_id) VALUES ('missing-user')"
+            )
+        invalid_fk = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertEqual(
+            invalid_fk.config["RECOVERY_STATE"]["code"],
+            "DATABASE_FOREIGN_KEY_FAILED",
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary) / "data"
+            self.write_install_json(data, setup_complete=True)
+            database = data / "reservation.db"
+            database.write_bytes(b"not-a-sqlite-database")
+            before = database.read_bytes()
+            corrupt = create_app(
+                {
+                    "TESTING": True,
+                    "DATA_DIR": str(data),
+                    "DATABASE": str(database),
+                    "SECRET_KEY": "test-secret",
+                    "INSTALL_ID": INSTALL_ID,
+                }
+            )
+            self.assertFalse(corrupt.config["SYSTEM_READY"])
+            self.assertEqual(database.read_bytes(), before)
+
+    def test_quick_check_failure_enters_recovery(self):
+        with mock.patch(
+            "v2app.db.database_health",
+            return_value={
+                "quickCheck": ["corrupt"],
+                "quickCheckOk": False,
+                "foreignKeyErrors": 0,
+                "foreignKeysOk": True,
+            },
+        ):
+            restarted = create_app(
+                {
+                    "TESTING": True,
+                    "DATA_DIR": str(self.data_dir),
+                    "DATABASE": str(self.database),
+                    "SECRET_KEY": "test-secret",
+                    "INSTALL_ID": INSTALL_ID,
+                }
+            )
+        self.assertEqual(
+            restarted.config["RECOVERY_STATE"]["code"],
+            "DATABASE_INTEGRITY_FAILED",
+        )
+
+    def test_invalid_setup_metadata_never_reopens_first_setup(self):
+        self.setup_system()
+        self.write_install_json(self.data_dir, setup_complete=False)
+        with sqlite3.connect(self.database) as db:
+            db.execute("DELETE FROM app_meta WHERE key='setup_complete'")
+        restarted = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "test-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertFalse(restarted.config["SYSTEM_READY"])
+        self.assertEqual(
+            restarted.config["RECOVERY_STATE"]["code"],
+            "DATABASE_GENERATION_INVALID",
+        )
+        response = restarted.test_client().get("/api/v1/setup")
+        self.assertEqual(response.status_code, 503)
 
 
 class AuthenticationAndAdministrationTests(BackendTestCase):
@@ -436,6 +692,95 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
 
 
 class ServiceEntrypointTests(BackendTestCase):
+    def test_service_port_conflict_is_actionable_without_leaking_exception(self):
+        with mock.patch.object(
+            service_entrypoint,
+            "load_install_identity",
+            return_value={"install_id": INSTALL_ID},
+        ), mock.patch.object(
+            service_entrypoint,
+            "run_service",
+            side_effect=OSError(errno.EADDRINUSE, "Address already in use: private path"),
+        ), mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(service_entrypoint.main([]), 1)
+        message = stderr.getvalue()
+        self.assertIn("8080 端口已被其他程序占用", message)
+        self.assertIn("① 启动系统", message)
+        self.assertIn("_程序文件\\logs", message)
+        self.assertNotIn("private path", message)
+
+    def test_listener_handoff_reports_actual_bind_and_closes_once(self):
+        class FakeServer:
+            def __init__(self):
+                self.close_calls = 0
+                self.closed = threading.Event()
+                self.triggered = threading.Event()
+                self.thunk = None
+                self.run_thread_id = None
+                self.close_thread_id = None
+                server = self
+
+                class FakeTrigger:
+                    def pull_trigger(self, thunk):
+                        server.thunk = thunk
+                        server.triggered.set()
+
+                self.trigger = FakeTrigger()
+
+            def run(self):
+                self.run_thread_id = threading.get_ident()
+                self.triggered.wait(2)
+                self.thunk()
+                self.closed.wait(2)
+
+            def close(self):
+                self.close_calls += 1
+                self.close_thread_id = threading.get_ident()
+                self.closed.set()
+
+        fake_server = FakeServer()
+        captured_app = None
+
+        def create_fake_server(app, **kwargs):
+            nonlocal captured_app
+            captured_app = app
+            self.assertEqual(kwargs["host"], "127.0.0.1")
+            return fake_server
+
+        def complete_setup():
+            while captured_app is None:
+                threading.Event().wait(0.01)
+            captured_app.config["SETUP_COMPLETED_EVENT"].set()
+
+        signal = threading.Thread(target=complete_setup)
+        signal.start()
+        with mock.patch.object(server_entrypoint, "create_server", create_fake_server):
+            restart = server_entrypoint.run_server_once(
+                8080,
+                app_config={
+                    "TESTING": True,
+                    "DATA_DIR": str(self.data_dir),
+                    "DATABASE": str(self.database),
+                    "SECRET_KEY": "test-secret",
+                    "INSTALL_ID": INSTALL_ID,
+                },
+            )
+        signal.join(timeout=1)
+        self.assertTrue(restart)
+        self.assertEqual(fake_server.close_calls, 1)
+        self.assertEqual(fake_server.close_thread_id, fake_server.run_thread_id)
+        with captured_app.test_client() as client:
+            health = client.get("/healthz").get_json()
+        self.assertEqual(health["bind_mode"], "loopback")
+
+    def test_listener_handoff_failure_is_not_reported_as_success(self):
+        with mock.patch.object(
+            server_entrypoint,
+            "run_server_once",
+            side_effect=[True, OSError("new LAN listener failed")],
+        ), mock.patch.object(server_entrypoint, "_port", return_value=8080):
+            self.assertEqual(server_entrypoint.main(), 1)
+
     def test_service_control_is_loopback_token_and_process_identity_gated(self):
         stop_event = threading.Event()
         control = {
@@ -505,7 +850,12 @@ class ServiceEntrypointTests(BackendTestCase):
             service_entrypoint,
             "discover_lan_address",
             return_value="http://192.168.1.20:8080",
-        ), mock.patch.object(service_entrypoint.threading, "Thread") as thread_type, mock.patch.dict(
+        ), mock.patch.object(
+            service_entrypoint,
+            "_launch_backup_catch_up",
+        ) as catch_up, mock.patch.object(
+            service_entrypoint.threading, "Thread"
+        ) as thread_type, mock.patch.dict(
             service_entrypoint.os.environ, {"MEETING_ROOM_OPEN_BROWSER": "1"}
         ):
             service_entrypoint.run_service(identity)
@@ -513,6 +863,7 @@ class ServiceEntrypointTests(BackendTestCase):
         self.assertEqual(config["STATIC_DIR"], str(service_entrypoint.SERVICE_DIR / "static"))
         self.assertEqual(config["LAN_ADDRESS"], "http://192.168.1.20:8080")
         self.assertEqual(run_once.call_args.args, (8080,))
+        catch_up.assert_called_once_with(identity)
         thread_type.assert_called_once()
 
         with mock.patch.object(
@@ -572,7 +923,7 @@ class ServiceEntrypointTests(BackendTestCase):
                 handler.close()
 
 
-class ReservationTests(BackendTestCase):
+class AuthenticatedReservationTestCase(BackendTestCase):
     def setUp(self):
         super().setUp()
         self.setup_system()
@@ -587,6 +938,9 @@ class ReservationTests(BackendTestCase):
         )
         self.assertEqual(response.status_code, 201, response.get_json())
         return response.get_json()
+
+
+class ReservationTests(AuthenticatedReservationTestCase):
 
     def test_create_commits_record_slots_and_event_together(self):
         booking = self.create_booking()
@@ -627,10 +981,10 @@ class ReservationTests(BackendTestCase):
 
     def test_create_update_cancel_failpoints_roll_back_all_state(self):
         self.app.config["TRANSACTION_FAILPOINT"] = "create_after_slots"
-        with self.assertRaisesRegex(RuntimeError, "create_after_slots"):
-            self.write(
-                "POST", "/api/v1/reservations", self.booking_payload(self.room_id)
-            )
+        failed = self.write(
+            "POST", "/api/v1/reservations", self.booking_payload(self.room_id)
+        )
+        self.assertEqual(failed.status_code, 500)
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservations").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
@@ -644,12 +998,12 @@ class ReservationTests(BackendTestCase):
                 "SELECT room_id, booking_date, slot_start FROM reservation_slots ORDER BY slot_start"
             ).fetchall()
         self.app.config["TRANSACTION_FAILPOINT"] = "update_after_slots"
-        with self.assertRaisesRegex(RuntimeError, "update_after_slots"):
-            self.write(
-                "PATCH",
-                f"/api/v1/reservations/{booking['id']}",
-                self.booking_payload(self.room_id, start="10:00", expectedRevision=1),
-            )
+        failed = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(self.room_id, start="10:00", expectedRevision=1),
+        )
+        self.assertEqual(failed.status_code, 500)
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT revision FROM reservations").fetchone()[0], 1)
             self.assertEqual(
@@ -659,12 +1013,12 @@ class ReservationTests(BackendTestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 1)
 
         self.app.config["TRANSACTION_FAILPOINT"] = "cancel_after_slots"
-        with self.assertRaisesRegex(RuntimeError, "cancel_after_slots"):
-            self.write(
-                "POST",
-                f"/api/v1/reservations/{booking['id']}/cancel",
-                {"expectedRevision": 1},
-            )
+        failed = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": 1},
+        )
+        self.assertEqual(failed.status_code, 500)
         with sqlite3.connect(self.database) as db:
             self.assertEqual(db.execute("SELECT status FROM reservations").fetchone()[0], "active")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 2)
@@ -735,7 +1089,7 @@ class ReservationTests(BackendTestCase):
         )
 
 
-class PublicSystemAndStaticTests(ReservationTests):
+class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
     def test_public_projection_exact_allowlist_and_masking(self):
         self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
         self.create_booking(partyName="张晓燕", start="09:00", duration=60)
@@ -887,7 +1241,10 @@ class PublicSystemAndStaticTests(ReservationTests):
     def test_system_shape_and_spa_fallback(self):
         status = self.client.get("/api/v1/admin/system").get_json()
         self.assertEqual(status["status"], "normal")
-        self.assertEqual({service["id"] for service in status["services"]}, {"api", "display", "database"})
+        self.assertEqual(
+            {service["id"] for service in status["services"]},
+            {"api", "display", "database", "backup"},
+        )
         dist = self.root / "dist"
         (dist / "assets").mkdir(parents=True)
         (dist / "index.html").write_text("<div id='root'>V2</div>", encoding="utf-8")

@@ -30,19 +30,24 @@ def today_display():
     now = local_now()
     today = now.date().isoformat()
     current_time = now.strftime("%H:%M")
-    rooms = []
-    for room in db.execute(
+    room_rows = db.execute(
         "SELECT id, name FROM rooms WHERE is_active = 1 ORDER BY sort_order, name"
-    ).fetchall():
-        rows = db.execute(
-            """
-            SELECT party_name, start_time, end_time
-            FROM reservations
-            WHERE room_id = ? AND booking_date = ? AND status = 'active'
-            ORDER BY start_time
-            """,
-            (room["id"], today),
-        ).fetchall()
+    ).fetchall()
+    booking_rows = db.execute(
+        """
+        SELECT room_id, party_name, start_time, end_time
+        FROM reservations
+        WHERE booking_date = ? AND status = 'active'
+        ORDER BY room_id, start_time, id
+        """,
+        (today,),
+    ).fetchall()
+    bookings_by_room = {}
+    for booking in booking_rows:
+        bookings_by_room.setdefault(booking["room_id"], []).append(booking)
+    rooms = []
+    for room in room_rows:
+        rows = bookings_by_room.get(room["id"], ())
         current = next(
             (row for row in rows if row["start_time"] <= current_time < row["end_time"]),
             None,
