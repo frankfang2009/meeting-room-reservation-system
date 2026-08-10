@@ -66,6 +66,8 @@ DNS rebinding 夺取首次管理员：
 ```json
 {
   "productVersion": "V2.0.0",
+  "serverDate": "2026-08-10",
+  "serverTime": "14:32:05",
   "currentUser": {},
   "rooms": [],
   "users": [],
@@ -81,6 +83,9 @@ DNS rebinding 夺取首次管理员：
   }
 }
 ```
+
+`serverDate/serverTime` 是认证工作台的业务时间真源；客户端只能以收到响应时的本地
+单调经过时间推进这个服务端墙钟，不得用浏览器时区重新解释业务日期。
 
 `users` 只对管理员包含全量用户；普通员工仍可从预约对象的 `owner` 摘要显示共享日历的预约人。
 

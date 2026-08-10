@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from http.cookiejar import CookieJar
 from pathlib import Path
@@ -30,6 +31,7 @@ from v2app.backup import (
     sha256_file,
 )
 from v2app.db import prepare_database
+from v2app.errors import ApiError
 
 
 class ApiAndAuthenticationHardeningTests(BackendTestCase):
@@ -90,7 +92,7 @@ class ApiAndAuthenticationHardeningTests(BackendTestCase):
             stored["_last_active_at"] = clock[0]
         absolute = self.client.get("/api/v1/bootstrap")
         self.assertEqual(absolute.status_code, 401)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             reasons = [
                 json.loads(row[0])["reason"]
                 for row in db.execute(
@@ -139,7 +141,7 @@ class ApiAndAuthenticationHardeningTests(BackendTestCase):
         )
         self.assertEqual(limited.status_code, 429)
         self.assertEqual(limited.get_json()["error"]["code"], "LOGIN_RATE_LIMITED")
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             audit_text = "\n".join(
                 row[0]
                 for row in db.execute(
@@ -150,6 +152,58 @@ class ApiAndAuthenticationHardeningTests(BackendTestCase):
         self.assertNotIn(address, audit_text)
         self.assertNotIn("rotating-three", audit_text)
         self.assertIn("ipFingerprint", audit_text)
+
+
+class ApplicationInvariantHardeningTests(BackendTestCase):
+    def test_bootstrap_exposes_server_business_clock(self):
+        self.setup_system()
+        self.login()
+        payload = self.bootstrap()
+        self.assertEqual(payload["serverDate"], "2026-08-09")
+        self.assertEqual(payload["serverTime"], "08:00:00")
+
+    def test_missing_required_user_preference_fails_closed(self):
+        self.setup_system()
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("DELETE FROM user_preferences")
+            db.commit()
+
+        state = prepare_database(self.database, mirror_setup_complete=True)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_APPLICATION_INVARIANT_FAILED")
+
+    def test_missing_global_tag_fails_closed(self):
+        self.setup_system()
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("DELETE FROM global_tags WHERE slot = 2")
+            db.commit()
+        state = prepare_database(self.database, mirror_setup_complete=True)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_APPLICATION_INVARIANT_FAILED")
+
+    def test_missing_settings_fails_closed(self):
+        self.setup_system()
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("DELETE FROM system_settings WHERE id = 1")
+            db.commit()
+        state = prepare_database(self.database, mirror_setup_complete=True)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_APPLICATION_INVARIANT_FAILED")
+
+    def test_backup_rejects_readable_database_with_missing_preference(self):
+        self.setup_system()
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("DELETE FROM user_preferences")
+            db.commit()
+        with self.assertRaisesRegex(RuntimeError, "业务完整性"):
+            create_backup(
+                self.database,
+                self.root / "backups",
+                install_id=INSTALL_ID,
+                sequence=1,
+            )
 
     def test_login_account_limit_applies_across_rotating_ip_addresses(self):
         self.setup_system()
@@ -332,7 +386,7 @@ class PaginationAndReservationHardeningTests(BackendTestCase):
         self.assertEqual(audit_mismatch.get_json()["error"]["code"], "INVALID_CURSOR")
 
     def test_reservation_purpose_is_required_by_the_api(self):
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             purpose_column = next(
                 row for row in db.execute("PRAGMA table_info(reservations)")
                 if row[1] == "purpose"
@@ -456,7 +510,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         )
         second = self.write("POST", "/api/v1/admin/backups")
         self.assertEqual(second.get_json()["sequence"], 2)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("UPDATE app_meta SET value='0' WHERE key='backup_sequence'")
         third = self.write("POST", "/api/v1/admin/backups")
         self.assertEqual(third.get_json()["sequence"], 3)
@@ -483,7 +537,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
             failed = self.write("POST", "/api/v1/admin/backups")
         self.assertEqual(failed.status_code, 500)
         self.assertEqual(failed.get_json()["error"]["code"], "BACKUP_FAILED")
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             actions = {
                 row[0]
                 for row in db.execute(
@@ -493,6 +547,15 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertTrue(
             {"backup.requested", "backup.succeeded", "backup.failed"}.issubset(actions)
         )
+
+    def test_backup_preserves_product_defined_api_errors(self):
+        denied = ApiError(403, "FORBIDDEN", "当前账户无权执行备份")
+        with mock.patch("v2app.api.system.locked_actor", side_effect=denied):
+            response = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(response.status_code, 403)
+        body = response.get_json()
+        self.assertEqual(body["error"]["code"], "FORBIDDEN")
+        self.assertNotEqual(body["error"]["code"], "BACKUP_FAILED")
 
     def test_scheduled_backup_is_due_on_new_local_day_before_exact_24_hours(self):
         backup_dir = self.root / "backups"
@@ -636,7 +699,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertTrue(restored["restored"])
         state = prepare_database(self.database, mirror_setup_complete=True)
         self.assertTrue(state.ready)
-        with sqlite3.connect(self.database) as db:
+        with closing(sqlite3.connect(self.database)) as db, db:
             db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         before = hashlib.sha256(self.database.read_bytes()).hexdigest()
         with mock.patch.object(

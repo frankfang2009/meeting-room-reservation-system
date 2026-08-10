@@ -36,9 +36,17 @@ import { readAuthenticatedContext, reauthenticateContext, scopedAppKey } from ".
 import { SessionIsolationBoundary } from "./session-isolation.js";
 import { runSetupRestartTransition, SetupRestartStatus } from "./setup-restart.js";
 import {
+  adminApiFieldErrors,
+  validatePasswordReset,
+  validateRoomAdminForm,
+  validateUserAdminForm,
+} from "./features/admin/validation.js";
+import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
+import {
   bookingTagContext,
   bookingPayload,
   canManageBooking,
+  clampDurationToWorkday,
   dateKey,
   durationFromRange,
   endFromDuration,
@@ -49,6 +57,7 @@ import {
   mapSetupFieldErrors,
   projectServerClock,
   rebaseBookingEdit,
+  reservationConflictDifferences,
   reminderDisplayMessage,
   reservationEventLabel,
   setupStepForField,
@@ -156,12 +165,12 @@ function toApiTimestamp(value) {
   return Number.isNaN(timestamp.getTime()) ? "" : timestamp.toISOString();
 }
 
-async function fetchAllReservations(dateFrom, dateTo = dateFrom) {
+async function fetchAllReservations(dateFrom, dateTo = dateFrom, { signal } = {}) {
   const items = [];
   const seenCursors = new Set();
   let cursor = "";
   do {
-    const page = await api.getReservations(dateFrom, dateTo, { pageSize: 100, cursor });
+    const page = await api.getReservations(dateFrom, dateTo, { pageSize: 100, cursor, signal });
     items.push(...unwrapItems(page));
     cursor = page?.nextCursor || "";
     if (cursor && seenCursors.has(cursor)) throw new Error("预约分页游标重复");
@@ -178,7 +187,9 @@ function useDocumentTitle(title) {
 
 function useFocusTrap(ref, active, onClose, dismissable = true) {
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
   useEffect(() => {
     if (!active || !ref.current) return undefined;
     const node = ref.current;
@@ -597,6 +608,7 @@ function PublicDisplay() {
     try {
       const next = await api.getPublicDisplay(controller.signal);
       const receivedAt = new Date().getTime();
+      const recovered = failureCountRef.current > 0;
       payloadRef.current = next;
       failureCountRef.current = 0;
       lastSuccessRef.current = receivedAt;
@@ -605,7 +617,7 @@ function PublicDisplay() {
       setClockTick(receivedAt);
       setRecoveryError(null);
       setState(next.status === "online" ? "normal" : "stale");
-      if (manual) setMessage("数据连接已恢复");
+      setMessage(recovered || manual ? "连接已恢复，数据已更新" : "");
     } catch (error) {
       if (error?.code === "SYSTEM_RECOVERY_REQUIRED") {
         setRecoveryError(error);
@@ -724,30 +736,51 @@ function SessionExpired({ onRecovered, onRecovery }) {
   </section></div>;
 }
 
-function BookingForm({ form, setForm, errors, rooms, tags, settings, editing, busy, failure, conflict, onSubmit, onDismissFailure, onUseLatest, onContinueDraft }) {
-  const maxDuration = Number(settings.maxDurationMinutes || 180);
+function BookingForm({ form, setForm, errors, rooms, tags, settings, editing, busy, failure, conflict, onSubmit, onFieldChange, onDismissFailure, onUseLatest, onContinueDraft }) {
+  const maxDuration = Math.min(
+    Number(settings.maxDurationMinutes || 180),
+    form.start ? Math.max(0, durationFromRange(form.start, settings.workEnd)) : Number(settings.maxDurationMinutes || 180),
+  );
   const durations = DURATION_STEPS.filter((value) => value <= maxDuration);
   const roomName = rooms.find((room) => room.id === form.roomId)?.name || "请选择笔录室";
   const minimum = durations[0] || 30;
   const maximum = durations.at(-1) || 180;
   const selectedProgress = maximum === minimum ? 100 : ((Number(form.duration) - minimum) / (maximum - minimum)) * 100;
-  const durationPicker = <fieldset className="duration-field"><div className="duration-field-heading"><legend>预约时长</legend><output>{form.duration} 分钟</output></div><div className="duration-slider-shell" style={{ "--duration-available-progress": "100%", "--duration-selected-progress": selectedProgress + "%" }}><div className="duration-slider-track"><span className="duration-slider-available" /><span className="duration-slider-selected" /></div><span className="duration-slider-knob" aria-hidden="true" /><input className="duration-range-input" aria-label="预约时长" type="range" min={minimum} max={maximum} step="30" value={form.duration} onChange={(event) => setForm((current) => ({ ...current, duration: Number(event.target.value) }))} /></div>{errors.duration && <small className="duration-error">{errors.duration}</small>}</fieldset>;
+  const updateField = (field, value) => {
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "start") {
+        next.duration = clampDurationToWorkday({
+          desired: current.duration,
+          start: value,
+          workEnd: settings.workEnd,
+          maxDuration: settings.maxDurationMinutes,
+          slotMinutes: settings.slotMinutes,
+        });
+      }
+      return next;
+    });
+    onFieldChange?.(field);
+    if (field === "start") onFieldChange?.("duration");
+  };
+  const conflictDifferences = reservationConflictDifferences(form, conflict?.current, { rooms, tags });
+  const durationPicker = <fieldset className="duration-field"><div className="duration-field-heading"><legend>预约时长</legend><output>{form.duration} 分钟</output></div><div className="duration-slider-shell" style={{ "--duration-available-progress": "100%", "--duration-selected-progress": selectedProgress + "%" }}><div className="duration-slider-track"><span className="duration-slider-available" /><span className="duration-slider-selected" /></div><span className="duration-slider-knob" aria-hidden="true" /><input className="duration-range-input" aria-label="预约时长" aria-invalid={Boolean(errors.duration)} type="range" min={minimum} max={maximum} step="30" value={form.duration} onChange={(event) => updateField("duration", Number(event.target.value))} /></div>{errors.duration && <small className="duration-error">{errors.duration}</small>}</fieldset>;
   return <form className={`booking-form ${editing ? "booking-form-edit" : "booking-form-new"}`} onSubmit={onSubmit} noValidate aria-busy={busy}>
     <div className="booking-form-scroll">
       {editing ? <div className="booking-edit-identity"><p>{form.partyName || "未填写姓名"} <span>·</span> {form.caseNumber || "未填写案号"}</p></div> : <div className="booking-create-summary"><p>{form.date ? dateLabel(form.date) : "请选择日期"}<span>·</span>{roomName}</p><h2>{form.start || "选择时段"}{form.start ? "–" + endFromDuration(form.start, form.duration) : ""}</h2></div>}
-      {editing && <section className="booking-form-section booking-arrangement-section" aria-labelledby="booking-arrangement-heading"><h3 id="booking-arrangement-heading">安排</h3><div className="booking-schedule-fields"><label className="field"><span>日期</span><input type="date" value={form.date} aria-invalid={Boolean(errors.date)} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} />{errors.date && <small>{errors.date}</small>}</label><label className="field"><span>笔录室</span><select value={form.roomId} aria-invalid={Boolean(errors.roomId)} onChange={(event) => setForm((current) => ({ ...current, roomId: event.target.value }))}><option value="">请选择</option>{rooms.filter((room) => room.isActive !== false).map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select>{errors.roomId && <small>{errors.roomId}</small>}</label><label className="field"><span>开始时间</span><input type="time" step={Number(settings.slotMinutes || 30) * 60} value={form.start} aria-invalid={Boolean(errors.start)} onChange={(event) => setForm((current) => ({ ...current, start: event.target.value }))} />{errors.start && <small>{errors.start}</small>}</label></div>{durationPicker}</section>}
+      {editing && <section className="booking-form-section booking-arrangement-section" aria-labelledby="booking-arrangement-heading"><h3 id="booking-arrangement-heading">安排</h3><div className="booking-schedule-fields"><label className="field"><span>日期</span><input type="date" value={form.date} aria-invalid={Boolean(errors.date)} onChange={(event) => updateField("date", event.target.value)} />{errors.date && <small>{errors.date}</small>}</label><label className="field"><span>笔录室</span><select value={form.roomId} aria-invalid={Boolean(errors.roomId)} onChange={(event) => updateField("roomId", event.target.value)}><option value="">请选择</option>{rooms.filter((room) => room.isActive !== false).map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select>{errors.roomId && <small>{errors.roomId}</small>}</label><label className="field"><span>开始时间</span><input type="time" step={Number(settings.slotMinutes || 30) * 60} value={form.start} aria-invalid={Boolean(errors.start)} onChange={(event) => updateField("start", event.target.value)} />{errors.start && <small>{errors.start}</small>}</label></div>{durationPicker}</section>}
       {!editing && durationPicker}
       <section className="booking-form-section booking-information-section" aria-labelledby="booking-information-heading"><h3 id="booking-information-heading">预约信息</h3>
         {Object.keys(errors).length > 0 && <div className="booking-validation-summary" role="alert"><WarningCircle size={17} weight="fill" /><span>请检查 {Object.keys(errors).length} 个字段</span></div>}
-        <label className="field"><span>预约对象</span><input data-initial-focus value={form.partyName} aria-invalid={Boolean(errors.partyName)} onChange={(event) => setForm((current) => ({ ...current, partyName: event.target.value }))} />{errors.partyName && <small>{errors.partyName}</small>}</label>
-        <label className="field"><span>案号</span><input value={form.caseNumber} aria-invalid={Boolean(errors.caseNumber)} onChange={(event) => setForm((current) => ({ ...current, caseNumber: event.target.value }))} />{errors.caseNumber && <small>{errors.caseNumber}</small>}</label>
-        <label className="field"><span>事项</span><input value={form.purpose} aria-invalid={Boolean(errors.purpose)} onChange={(event) => setForm((current) => ({ ...current, purpose: event.target.value }))} />{errors.purpose && <small>{errors.purpose}</small>}</label>
-        <fieldset className="tag-field"><legend>标签</legend><div className="tag-choice-grid">{tags.map((tag) => <button type="button" className={`tag-choice ${form.tagId === tag.id ? "selected" : ""}`} style={tagStyle(tag)} aria-pressed={form.tagId === tag.id} key={tag.id} onClick={() => setForm((current) => ({ ...current, tagId: tag.id }))}><i />{tag.label}</button>)}</div></fieldset>
+        <label className="field"><span>预约对象</span><input data-initial-focus value={form.partyName} aria-invalid={Boolean(errors.partyName)} onChange={(event) => updateField("partyName", event.target.value)} />{errors.partyName && <small>{errors.partyName}</small>}</label>
+        <label className="field"><span>案号</span><input value={form.caseNumber} aria-invalid={Boolean(errors.caseNumber)} onChange={(event) => updateField("caseNumber", event.target.value)} />{errors.caseNumber && <small>{errors.caseNumber}</small>}</label>
+        <label className="field"><span>事项</span><input value={form.purpose} aria-invalid={Boolean(errors.purpose)} onChange={(event) => updateField("purpose", event.target.value)} />{errors.purpose && <small>{errors.purpose}</small>}</label>
+        <fieldset className="tag-field"><legend>标签</legend><div className="tag-choice-grid">{tags.map((tag) => <button type="button" className={`tag-choice ${form.tagId === tag.id ? "selected" : ""}`} style={tagStyle(tag)} aria-pressed={form.tagId === tag.id} key={tag.id} onClick={() => updateField("tagId", tag.id)}><i />{tag.label}</button>)}</div></fieldset>
         {errors.tagId && <small className="duration-error">{errors.tagId}</small>}
-        <label className="field booking-notes-field"><span>备注 <em>选填</em></span><textarea rows="3" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} /></label>
+        <label className="field booking-notes-field"><span>备注 <em>选填</em></span><textarea rows="3" value={form.notes} onChange={(event) => updateField("notes", event.target.value)} /></label>
       </section>
     </div>
-    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留。</p></div></div><div className="booking-modified-actions"><button className="submit-button" type="button" onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" onClick={onContinueDraft}>返回继续调整</button></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
+    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留，请比较后决定。</p></div></div>{conflictDifferences.length ? <div className="booking-modified-comparison"><div className="booking-modified-comparison-head"><span>字段</span><strong>你的修改</strong><strong>最新预约</strong></div>{conflictDifferences.map((item) => <div className="booking-modified-comparison-row" key={item.label}><span>{item.label}</span><span>{item.localValue}</span><span>{item.serverValue}</span></div>)}</div> : <p>服务器版本已更新，但当前字段值没有可见差异。</p>}<div className="booking-modified-actions"><button className="submit-button" type="button" onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" onClick={onContinueDraft}>返回继续调整</button></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
   </form>;
 }
 
@@ -772,15 +805,23 @@ function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState,
 }
 
 function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOut, onRecovery }) {
+  const initialReceivedAt = useRef(Date.now()).current;
+  const initialBusinessDate = parseDate(initialBootstrap.serverDate);
   const [bootstrap, setBootstrap] = useState(initialBootstrap || null);
   const [activeView, setActiveView] = useState("mine");
-  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [businessClockAnchor, setBusinessClockAnchor] = useState(() => ({
+    serverDate: initialBootstrap.serverDate,
+    serverTime: initialBootstrap.serverTime,
+    receivedAt: initialReceivedAt,
+  }));
+  const [businessClockTick, setBusinessClockTick] = useState(initialReceivedAt);
+  const [currentDate, setCurrentDate] = useState(initialBusinessDate);
   const [bookings, setBookings] = useState([]);
   const [upcoming, setUpcoming] = useState([]);
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState({ nextCursor: null, pageSize: 50, total: 0 });
   const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
-  const [historyMonth, setHistoryMonth] = useState(() => monthKey(new Date()));
+  const [historyMonth, setHistoryMonth] = useState(() => monthKey(initialBusinessDate));
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyScope, setHistoryScope] = useState("unit");
   const [historyOwner, setHistoryOwner] = useState("");
@@ -807,6 +848,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingTags, setBookingTags] = useState(() => new Set([...(initialBootstrap?.globalTags || []), ...(initialBootstrap?.personalTags || [])].map((tag) => tag.id)));
   const [moreBookingsOpen, setMoreBookingsOpen] = useState(false);
   const [tagEditing, setTagEditing] = useState(false);
+  const [tagSaving, setTagSaving] = useState("");
   const [tagDrafts, setTagDrafts] = useState(() => Object.fromEntries([...(initialBootstrap?.globalTags || []), ...(initialBootstrap?.personalTags || [])].map((tag, index) => [tag.id || "tag-" + (tag.slot || index + 1), tag.label || tag.name || "标签 " + (tag.slot || index + 1)])));
   const [users, setUsers] = useState(() => initialBootstrap?.users || []);
   const [rooms, setRooms] = useState(() => initialBootstrap?.rooms || []);
@@ -829,6 +871,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [preservedDraft, setPreservedDraft] = useState(null);
   const mainRef = useRef(null);
   const eventRequestRef = useRef(0);
+  const calendarRequestRef = useRef(0);
+  const calendarAbortRef = useRef(null);
   const historyRequestRef = useRef(0);
   const historyUserSelectRef = useRef(null);
   const auditRequestRef = useRef(0);
@@ -836,6 +880,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const currentUser = bootstrap?.currentUser || session.currentUser;
   const permissions = bootstrap?.permissions || {};
   const settings = bootstrap?.settings || { workStart: "08:30", workEnd: "17:30", slotMinutes: 30, maxDurationMinutes: 180 };
+  const businessClock = useMemo(
+    () => projectServerClock(businessClockAnchor, businessClockTick),
+    [businessClockAnchor, businessClockTick],
+  );
+  const businessDate = useMemo(() => parseDate(businessClock.date), [businessClock.date]);
   const tags = useMemo(() => [...(bootstrap?.globalTags || []), ...(bootstrap?.personalTags || [])].map(normalizeTag).sort((a, b) => a.slot - b.slot), [bootstrap]);
   const editTagContext = useMemo(() => bookingTagContext({
     booking: drawer?.type === "edit" ? drawer.booking : null,
@@ -854,6 +903,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     catch { return generateTimeSlots("08:30", "17:30", 30); }
   }, [settings.workEnd, settings.workStart, settings.slotMinutes]);
   useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人设置", unauthorized: "无权限" }[activeView] || "会议室预约系统");
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setBusinessClockTick(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const handleError = useCallback((error, fallback) => {
     if (error?.code === "SYSTEM_RECOVERY_REQUIRED") {
@@ -886,7 +940,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         return;
       }
       validateAuthenticatedContext(session, value);
+      const receivedAt = Date.now();
       setBootstrap(value);
+      setBusinessClockAnchor({
+        serverDate: value.serverDate,
+        serverTime: value.serverTime,
+        receivedAt,
+      });
+      setBusinessClockTick(receivedAt);
       setRooms(value.rooms || []);
       setUsers(value.users || []);
       setBookingRooms(new Set((value.rooms || []).map((room) => room.id)));
@@ -902,14 +963,28 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [handleError, onAuthenticatedContext, session]);
 
   const loadCalendar = useCallback(async () => {
+    const requestNumber = calendarRequestRef.current + 1;
+    calendarRequestRef.current = requestNumber;
+    calendarAbortRef.current?.abort();
+    const controller = new AbortController();
+    calendarAbortRef.current = controller;
     setLoading((current) => ({ ...current, calendar: true }));
     try {
-      setBookings(await fetchAllReservations(dateKey(currentDate)));
+      const nextBookings = await fetchAllReservations(
+        dateKey(currentDate),
+        dateKey(currentDate),
+        { signal: controller.signal },
+      );
+      if (calendarRequestRef.current !== requestNumber) return;
+      setBookings(nextBookings);
       setNetworkOffline(false);
     } catch (error) {
+      if (error?.name === "AbortError" || calendarRequestRef.current !== requestNumber) return;
       handleError(error, "无法读取预约日历");
     } finally {
-      setLoading((current) => ({ ...current, calendar: false }));
+      if (calendarRequestRef.current === requestNumber) {
+        setLoading((current) => ({ ...current, calendar: false }));
+      }
     }
   }, [currentDate, handleError]);
 
@@ -984,6 +1059,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     refresh();
     const timer = window.setInterval(() => Promise.all([loadSystem(true), loadAudit({ silent: true, preserveLoaded: true }), loadTokens(true)]), 30000);
     return () => window.clearInterval(timer);
+  // The local refresh functions consume exactly the filter fields below.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, permissions.manageSystem, auditFilters.action, auditFilters.outcome, auditFilters.actorId, auditFilters.targetType, auditFilters.targetId, auditFilters.dateFrom, auditFilters.dateTo]);
   useEffect(() => {
     if (mainRef.current) {
@@ -1014,13 +1091,20 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setBookingErrors({});
     setSaveState("idle");
     setConflict(null);
+    const desiredDuration = Number(preservedDraft?.duration || bootstrap.preferences?.defaultDuration || 60);
     setBookingForm({
       ...EMPTY_BOOKING,
       ...(preservedDraft || {}),
       roomId,
       start,
       date: bookingDate,
-      duration: Number(preservedDraft?.duration || bootstrap.preferences?.defaultDuration || 60),
+      duration: clampDurationToWorkday({
+        desired: desiredDuration,
+        start,
+        workEnd: settings.workEnd,
+        maxDuration: settings.maxDurationMinutes,
+        slotMinutes: settings.slotMinutes,
+      }),
       tagId: preservedDraft?.tagId || tags[0]?.id || "",
     });
     setPreservedDraft(null);
@@ -1033,8 +1117,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (!preferredRoom) return;
     setLoading((current) => ({ ...current, calendar: true }));
     try {
-      const now = new Date();
-      const currentTime = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+      const now = new Date(businessDate);
+      const currentTime = businessClock.time.slice(0, 5);
       for (let offset = 0; offset < 14; offset += 1) {
         const day = shiftDate(now, offset);
         const dayKey = dateKey(day);
@@ -1120,7 +1204,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       errors.tagId = "无法确认原预约者的个人标签含义，请改选单位标签或重新读取工作台";
     }
     setBookingErrors(errors);
-    if (Object.keys(errors).length) return;
+    if (Object.keys(errors).length) {
+      window.requestAnimationFrame(() => document.querySelector('.booking-drawer [aria-invalid="true"]')?.focus());
+      return;
+    }
     setSaveState("saving");
     setConflict(null);
     try {
@@ -1138,6 +1225,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       } else if (error.code === "SLOT_CONFLICT") {
         setConflict({ type: "slot", conflicts: error.conflicts });
         setDrawer((current) => ({ ...current, type: "slot-conflict" }));
+        await loadCalendar();
       } else if (error.code === "REVISION_CONFLICT") {
         const rebased = rebaseBookingEdit(bookingForm, error.current);
         setBookingForm(rebased.draft);
@@ -1147,6 +1235,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       } else if (error.code === "VALIDATION_ERROR") {
         setBookingErrors(error.fields || {});
         setSaveState("idle");
+        window.requestAnimationFrame(() => document.querySelector('.booking-drawer [aria-invalid="true"]')?.focus());
       } else {
         if (error.status === 401) setSessionExpired(true);
         setSaveState("failed");
@@ -1159,6 +1248,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       await api.cancelReservation(drawer.booking.id, drawer.booking.revision);
       setDrawer(null);
+      setSuccessNotice(null);
       setToast("预约已取消");
       await Promise.all([loadCalendar(), loadUpcoming(), loadHistory()]);
     } catch (error) {
@@ -1171,20 +1261,57 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }
 
-  async function saveTags() {
+  function tagPayload(section) {
     try {
-      if (role === "admin") {
-        await api.updateGlobalTags(tags.filter((tag) => tag.slot <= 2).map((tag) => ({ id: tag.id, slot: tag.slot, label: tagDrafts[tag.id]?.trim() })));
-      }
-      await api.updatePreferences({
-        ...bootstrap.preferences,
-        personalTags: tags.filter((tag) => tag.slot >= 3).map((tag) => ({ slot: tag.slot, label: tagDrafts[tag.id]?.trim() })),
-      });
-      await loadBootstrap();
-      setTagEditing(false);
-      setToast("标签名称已保存");
+      return buildTagSectionPayload(tags, tagDrafts, section);
+    } catch {
+      setToast(`${section === "global" ? "单位" : "个人"}标签名称不能为空`);
+      return null;
+    }
+  }
+
+  async function saveGlobalTags() {
+    if (role !== "admin") return;
+    const payload = tagPayload("global");
+    if (!payload) return;
+    setTagSaving("global");
+    try {
+      const saved = await api.updateGlobalTags(payload);
+      setBootstrap((current) => ({ ...current, globalTags: unwrapItems(saved) }));
+      setToast("单位标签已保存；个人标签草稿未受影响");
     } catch (error) {
-      handleError(error, "保存标签失败");
+      handleError(error, "保存单位标签失败；个人标签草稿仍保留");
+    } finally {
+      setTagSaving("");
+    }
+  }
+
+  async function savePersonalTags() {
+    const payload = tagPayload("personal");
+    if (!payload) return;
+    setTagSaving("personal");
+    try {
+      const saved = await api.updatePreferences({
+        ...bootstrap.preferences,
+        personalTags: payload,
+      });
+      setBootstrap((current) => ({
+        ...current,
+        currentUser: saved.profile || current.currentUser,
+        personalTags: saved.personalTags || current.personalTags,
+        preferences: {
+          ...current.preferences,
+          defaultDuration: saved.defaultDuration,
+          defaultRoomId: saved.defaultRoomId,
+          bookingChangeNotifications: saved.bookingChangeNotifications,
+          bookingReminder: saved.bookingReminder,
+        },
+      }));
+      setToast("个人标签已保存；单位标签草稿未受影响");
+    } catch (error) {
+      handleError(error, "保存个人标签失败；单位标签草稿仍保留");
+    } finally {
+      setTagSaving("");
     }
   }
 
@@ -1257,10 +1384,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function renderCalendar() {
     return <main className="main-canvas calendar-canvas">
       <header className="page-header calendar-header"><div><h1>预约日历</h1><p>{dateLabel(currentDate)}</p></div>
-        <div className="header-actions"><button className="icon-button" aria-label="前一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="today-button" disabled={networkOffline} onClick={() => setCurrentDate(new Date())}>今天</button><button className="icon-button" aria-label="后一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button>
+        <div className="header-actions"><button className="icon-button" aria-label="前一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="today-button" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button className="icon-button" aria-label="后一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button>
           <div className="filter-wrap"><button className={"icon-button calendar-filter-trigger " + (calendarFilterOpen ? "pressed" : "") + (calendarTagFilter ? " filtered" : "")} aria-label="查看标签颜色并筛选" aria-expanded={calendarFilterOpen} onClick={() => setCalendarFilterOpen((open) => !open)}><FunnelSimple size={20} /></button>
-            {calendarFilterOpen && <div className="tag-palette-popover" role="group"><div className="popover-heading"><span>{tagEditing ? "编辑标签名称" : "标签颜色"}</span><button onClick={() => setTagEditing((editing) => !editing)}>{tagEditing ? "取消" : <><PencilSimple size={13} />编辑</>}</button></div>
-              {tagEditing ? <div className="tag-edit-panel">{tags.map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input value={tagDrafts[tag.id] || ""} readOnly={tag.slot <= 2 && role !== "admin"} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}<button className="tag-edit-save" onClick={saveTags}>完成</button></div> :
+            {calendarFilterOpen && <div className="tag-palette-popover" role="group"><div className="popover-heading"><span>{tagEditing ? "编辑标签名称" : "标签颜色"}</span><button onClick={() => setTagEditing((editing) => !editing)}>{tagEditing ? "完成编辑" : <><PencilSimple size={13} />编辑</>}</button></div>
+              {tagEditing ? <div className="tag-edit-panel tag-edit-list"><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>单位标签</span><small>{role === "admin" ? "全单位通用" : "仅管理员可修改"}</small></div>{tags.filter((tag) => tag.slot <= 2).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`单位标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} readOnly={role !== "admin"} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}{role === "admin" && <button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={saveGlobalTags}>{tagSaving === "global" ? "正在保存单位标签…" : "保存单位标签"}</button>}</section><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>个人标签</span><small>仅影响你的预约</small></div>{tags.filter((tag) => tag.slot >= 3).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`个人标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}<button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={savePersonalTags}>{tagSaving === "personal" ? "正在保存个人标签…" : "保存个人标签"}</button></section></div> :
                 <div className="tag-palette-list"><button className={"tag-filter-option " + (!calendarTagFilter ? "active" : "")} onClick={() => setCalendarTagFilter("")}>全部</button>{tags.map((tag) => <button className={"tag-filter-option " + (calendarTagFilter === tag.id ? "active" : "")} style={tagStyle(tag)} key={tag.id} onClick={() => setCalendarTagFilter((current) => current === tag.id ? "" : tag.id)}><i /><span>{tag.label}</span></button>)}</div>}
             </div>}
           </div>
@@ -1308,7 +1435,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setHistoryQuery("");
     };
     const historyMonths = Array.from({ length: 12 }, (_, index) => {
-      const [year, month] = monthKey(new Date()).split("-").map(Number);
+      const [year, month] = monthKey(businessDate).split("-").map(Number);
       const date = new Date(year, month - 1 - index, 1);
       const id = monthKey(date);
       return { id, label: `${date.getFullYear()}年${date.getMonth() + 1}月` };
@@ -1327,7 +1454,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       <section className={`history-filter-section history-tag-section ${!effectiveHistoryUserId ? "disabled" : ""}`} aria-labelledby="history-personal-tags-heading"><h2 id="history-personal-tags-heading">个人标签 <small>{personalTagOwnerLabel}</small></h2>{personalHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={!historyTag || historyTag === tag.id} disabled={!effectiveHistoryUserId} onChange={() => setHistoryTag((current) => current === tag.id ? "" : tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}{!effectiveHistoryUserId && <p className="history-personal-helper">筛选个人标签前，请先<button type="button" onClick={() => historyUserSelectRef.current?.focus()}>选择用户</button></p>}</section>
       <footer className="history-filter-footer"><button type="button" onClick={resetHistoryFilters}><ArrowClockwise size={16} />重置筛选</button><span>共 {historyPage.total} 条记录</span></footer>
     </div>}</div></div></header>
-      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= monthKey(new Date())} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); setHistoryMonthOpen(false); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
+      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= monthKey(businessDate)} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); setHistoryMonthOpen(false); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
         <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{history.map((booking) => <button className="history-row" key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className="history-row-end" style={tagStyle(tagFor(booking))}><i aria-hidden="true" /><CaretRight size={23} /></span></button>)}{historyPage.nextCursor && <button className="history-more" type="button" disabled={historyLoadingMore} onClick={loadMoreHistory}>{historyLoadingMore ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${history.length} / ${historyPage.total}`}</button>}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
         {!loading.history && <button className="more-bookings-button history-more" type="button" onClick={() => setHistoryMonth(previousHistoryMonth.id)}><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></button>}
       </div>
@@ -1335,17 +1462,39 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openRoom(room = null) {
-    setDrawer({ type: room ? "room-edit" : "room-create", room, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true } });
+    setDrawer({ type: room ? "room-edit" : "room-create", room, errors: {}, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true } });
+  }
+
+  function updateDrawerField(field, value) {
+    setDrawer((current) => {
+      if (!current) return current;
+      const errors = { ...(current.errors || {}) };
+      delete errors[field];
+      return { ...current, errors, form: { ...current.form, [field]: value } };
+    });
+  }
+
+  function showDrawerErrors(errors) {
+    setDrawer((current) => current ? { ...current, errors } : current);
+    window.requestAnimationFrame(() => document.querySelector('.booking-drawer [aria-invalid="true"]')?.focus());
   }
 
   async function saveRoom(event) {
     event.preventDefault();
-    if (!drawer.form.name.trim()) return;
+    const errors = validateRoomAdminForm(drawer.form);
+    if (Object.keys(errors).length) {
+      showDrawerErrors(errors);
+      return;
+    }
     try {
       if (drawer.type === "room-edit") await api.updateRoom(drawer.room.id, drawer.form);
       else await api.createRoom(drawer.form);
       setDrawer(null); setToast("笔录室已保存"); await loadBootstrap();
-    } catch (error) { handleError(error, "保存笔录室失败"); }
+    } catch (error) {
+      const fields = adminApiFieldErrors(error);
+      if (fields) showDrawerErrors(fields);
+      else handleError(error, "保存笔录室失败");
+    }
   }
 
   async function deleteRoom() {
@@ -1367,20 +1516,34 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openUser(user = null) {
-    setDrawer({ type: user ? "user-edit" : "user-create", user, form: user ? { name: user.name, username: user.username, department: user.department, role: user.role, enabled: user.enabled !== false, password: "" } : { name: "", username: "", department: "", role: "employee", enabled: true, password: "" } });
+    setDrawer({ type: user ? "user-edit" : "user-create", user, errors: {}, form: user ? { name: user.name, username: user.username, department: user.department, role: user.role, enabled: user.enabled !== false, password: "" } : { name: "", username: "", department: "", role: "employee", enabled: true, password: "" } });
   }
 
   async function saveUser(event) {
     event.preventDefault();
+    const errors = validateUserAdminForm(drawer.form, { creating: drawer.type === "user-create" });
+    if (Object.keys(errors).length) {
+      showDrawerErrors(errors);
+      return;
+    }
     try {
       if (drawer.type === "user-edit") await api.updateUser(drawer.user.id, { name: drawer.form.name.trim(), department: drawer.form.department.trim(), role: drawer.form.role, enabled: drawer.form.enabled });
       else await api.createUser({ ...drawer.form, name: drawer.form.name.trim(), username: drawer.form.username.trim(), department: drawer.form.department.trim() });
       setDrawer(null); setToast("用户已保存"); await loadBootstrap();
-    } catch (error) { handleError(error, error.code === "LAST_ADMIN_REQUIRED" ? "必须保留至少一名启用管理员" : "保存用户失败"); }
+    } catch (error) {
+      const fields = adminApiFieldErrors(error);
+      if (fields) showDrawerErrors(fields);
+      else handleError(error, error.code === "LAST_ADMIN_REQUIRED" ? "必须保留至少一名启用管理员" : "保存用户失败");
+    }
   }
 
   async function resetPassword(event) {
     event.preventDefault();
+    const errors = validatePasswordReset(drawer.form.password);
+    if (Object.keys(errors).length) {
+      showDrawerErrors(errors);
+      return;
+    }
     try {
       const result = await api.resetUserPassword(drawer.user.id, drawer.form.password);
       setDrawer(null);
@@ -1391,7 +1554,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         setToast("密码已重置");
       }
     }
-    catch (error) { handleError(error, "重置密码失败"); }
+    catch (error) {
+      if (error.fields) showDrawerErrors(error.fields);
+      else handleError(error, "重置密码失败");
+    }
   }
 
   function renderUsers() {
@@ -1553,22 +1719,37 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       && drawer.user.role === "admin"
       && drawer.user.enabled !== false
       && enabledAdminCount <= 1;
-    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} onSubmit={saveBooking} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => setConflict(null)} onUseLatest={() => {
+    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} onSubmit={saveBooking} onFieldChange={(field) => setBookingErrors((current) => { if (!current[field]) return current; const next = { ...current }; delete next[field]; return next; })} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => setConflict(null)} onUseLatest={() => {
       const latest = conflict?.current;
       if (!latest) return;
       setBookingForm({ roomId: latest.roomId, date: latest.date, start: latest.start, duration: durationFromRange(latest.start, latest.end), partyName: latest.partyName, caseNumber: latest.caseNumber, purpose: latest.purpose, notes: latest.notes || "", tagId: latest.tagId });
       setDrawer({ type: "edit", booking: latest }); setConflict(null);
     }} />;
-    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、标签和备注都已保留。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" onClick={loadCalendar}><ArrowClockwise size={16} />重新检查这个时段</button></div></div>;
+    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" onClick={loadCalendar}><ArrowClockwise size={16} />重新检查这个时段</button></div></div>;
     if (drawer.type === "details") {
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";
       return <BookingDetails booking={booking} tag={tagFor(booking)} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onEdit={() => openEdit(booking)} onCancel={() => setDrawer({ type: "cancel", booking })} onClose={() => setDrawer(null)} />;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {dateLabel(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking)}>返回</button></div></div>;
-    if (drawer.type === "room-create" || drawer.type === "room-edit") return <form className="room-form" onSubmit={saveRoom}><label className="field"><span>名称</span><input data-initial-focus value={drawer.form.name} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><label className="field"><span>排序号</span><input type="number" min="1" value={drawer.form.sortOrder} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, sortOrder: Number(event.target.value) } }))} /><small className="field-hint">数字越小，在预约日历中越靠前</small></label><label className="room-availability-toggle"><span><strong>在预约日历中启用</strong><small>停用后隐藏，已有预约不会自动取消。</small></span><input type="checkbox" checked={drawer.form.isActive} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, isActive: event.target.checked } }))} /></label><div className="room-form-actions"><button className="submit-button" type="submit">{drawer.type === "room-edit" ? "保存修改" : "创建笔录室"}</button><button className="secondary-button" type="button" onClick={() => setDrawer(null)}>取消</button></div>{drawer.type === "room-edit" && <div className="room-delete-zone"><button type="button" onClick={deleteRoom}>删除笔录室</button><p>删除后，历史预约仍保留笔录室名称</p></div>}</form>;
-    if (drawer.type === "user-create" || drawer.type === "user-edit") return <form className="user-form" onSubmit={saveUser}><div className="user-form-scroll"><section className="user-form-section"><h2>账户信息</h2><label className="field"><span>用户名</span><input data-initial-focus={drawer.type === "user-create" || undefined} readOnly={drawer.type === "user-edit"} className={drawer.type === "user-edit" ? "readonly" : ""} autoComplete="username" value={drawer.form.username} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, username: event.target.value } }))} />{drawer.type === "user-edit" && <small className="field-hint">用户名创建后不可修改</small>}</label><label className="field"><span>姓名</span><input data-initial-focus={drawer.type === "user-edit" || undefined} value={drawer.form.name} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><label className="field"><span>所属部门</span><input value={drawer.form.department} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, department: event.target.value } }))} /></label>{drawer.type === "user-create" && <label className="field"><span>初始密码</span><input type="password" autoComplete="new-password" value={drawer.form.password} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, password: event.target.value } }))} /></label>}</section><section className="user-form-section user-permissions-section"><h2>权限与状态</h2><fieldset className="user-role-options"><legend>角色</legend><label className={lastAdminProtected ? "blocked" : ""}><input type="radio" name="user-role" value="admin" checked={drawer.form.role === "admin"} disabled={lastAdminProtected} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, role: event.target.value } }))} /><span><strong>管理员</strong><small>可管理用户、笔录室与全单位预约</small></span></label><label className={lastAdminProtected ? "blocked" : ""}><input type="radio" name="user-role" value="employee" checked={drawer.form.role === "employee"} disabled={lastAdminProtected} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, role: event.target.value } }))} /><span><strong>普通员工</strong><small>仅管理本人的预约与偏好</small></span></label></fieldset><label className={`user-enabled-toggle ${lastAdminProtected ? "blocked" : ""}`}><span><strong>启用账户</strong><small>停用后无法登录，历史记录仍保留。</small></span><input type="checkbox" disabled={lastAdminProtected} checked={drawer.form.enabled} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, enabled: event.target.checked } }))} /></label>{drawer.type === "user-edit" && <button className="user-reset-link" type="button" onClick={() => setDrawer({ type: "user-reset", user: drawer.user, form: { password: "" } })}><Key size={18} /><span>重置密码</span><CaretRight size={15} /></button>}</section></div><div className="user-form-footer"><button className="submit-button" type="submit">{drawer.type === "user-edit" ? "保存修改" : "创建用户"}</button></div>{lastAdminProtected && <div className="user-protection-note blocking" role="note"><WarningCircle size={18} /><p><strong>当前账户是最后一名启用管理员</strong><span>请先启用或创建另一名管理员，再更改角色或停用。</span></p></div>}</form>;
-    if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword}><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" value={drawer.form.password} onChange={(event) => setDrawer((current) => ({ ...current, form: { password: event.target.value } }))} /></label><div className="password-reset-actions"><button className="submit-button" type="submit">确认重置</button><button className="secondary-button" type="button" onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
+    if (drawer.type === "room-create" || drawer.type === "room-edit") return <form className="room-form" onSubmit={saveRoom} noValidate>
+      <label className="field"><span>名称</span><input data-initial-focus value={drawer.form.name} aria-invalid={Boolean(drawer.errors?.name)} aria-describedby={drawer.errors?.name ? "room-name-error" : undefined} onChange={(event) => updateDrawerField("name", event.target.value)} />{drawer.errors?.name && <small id="room-name-error" role="alert">{drawer.errors.name}</small>}</label>
+      <label className="field"><span>排序号</span><input type="number" min="1" max="10000" value={drawer.form.sortOrder} aria-invalid={Boolean(drawer.errors?.sortOrder)} aria-describedby={drawer.errors?.sortOrder ? "room-sort-error" : undefined} onChange={(event) => updateDrawerField("sortOrder", Number(event.target.value))} />{drawer.errors?.sortOrder ? <small id="room-sort-error" role="alert">{drawer.errors.sortOrder}</small> : <small className="field-hint">数字越小，在预约日历中越靠前</small>}</label>
+      <label className="room-availability-toggle"><span><strong>在预约日历中启用</strong><small>停用后隐藏，已有预约不会自动取消。</small></span><input type="checkbox" checked={drawer.form.isActive} onChange={(event) => updateDrawerField("isActive", event.target.checked)} /></label>
+      <div className="room-form-actions"><button className="submit-button" type="submit">{drawer.type === "room-edit" ? "保存修改" : "创建笔录室"}</button><button className="secondary-button" type="button" onClick={() => setDrawer(null)}>取消</button></div>
+      {drawer.type === "room-edit" && <div className="room-delete-zone"><button type="button" onClick={deleteRoom}>删除笔录室</button><p>删除后，历史预约仍保留笔录室名称</p></div>}
+    </form>;
+    if (drawer.type === "user-create" || drawer.type === "user-edit") return <form className="user-form" onSubmit={saveUser} noValidate>
+      <div className="user-form-scroll"><section className="user-form-section"><h2>账户信息</h2>
+        <label className="field"><span>用户名</span><input data-initial-focus={drawer.type === "user-create" || undefined} readOnly={drawer.type === "user-edit"} className={drawer.type === "user-edit" ? "readonly" : ""} autoComplete="username" value={drawer.form.username} aria-invalid={Boolean(drawer.errors?.username)} aria-describedby={drawer.errors?.username ? "user-username-error" : undefined} onChange={(event) => updateDrawerField("username", event.target.value)} />{drawer.errors?.username ? <small id="user-username-error" role="alert">{drawer.errors.username}</small> : drawer.type === "user-edit" && <small className="field-hint">用户名创建后不可修改</small>}</label>
+        <label className="field"><span>姓名</span><input data-initial-focus={drawer.type === "user-edit" || undefined} value={drawer.form.name} aria-invalid={Boolean(drawer.errors?.name)} aria-describedby={drawer.errors?.name ? "user-name-error" : undefined} onChange={(event) => updateDrawerField("name", event.target.value)} />{drawer.errors?.name && <small id="user-name-error" role="alert">{drawer.errors.name}</small>}</label>
+        <label className="field"><span>所属部门</span><input value={drawer.form.department} aria-invalid={Boolean(drawer.errors?.department)} aria-describedby={drawer.errors?.department ? "user-department-error" : undefined} onChange={(event) => updateDrawerField("department", event.target.value)} />{drawer.errors?.department && <small id="user-department-error" role="alert">{drawer.errors.department}</small>}</label>
+        {drawer.type === "user-create" && <label className="field"><span>初始密码</span><input type="password" autoComplete="new-password" value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "user-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="user-password-error" role="alert">{drawer.errors.password}</small>}</label>}
+      </section><section className="user-form-section user-permissions-section"><h2>权限与状态</h2><fieldset className="user-role-options" aria-invalid={Boolean(drawer.errors?.role)}><legend>角色</legend><label className={lastAdminProtected ? "blocked" : ""}><input type="radio" name="user-role" value="admin" checked={drawer.form.role === "admin"} disabled={lastAdminProtected} onChange={(event) => updateDrawerField("role", event.target.value)} /><span><strong>管理员</strong><small>可管理用户、笔录室与全单位预约</small></span></label><label className={lastAdminProtected ? "blocked" : ""}><input type="radio" name="user-role" value="employee" checked={drawer.form.role === "employee"} disabled={lastAdminProtected} onChange={(event) => updateDrawerField("role", event.target.value)} /><span><strong>普通员工</strong><small>仅管理本人的预约与偏好</small></span></label>{drawer.errors?.role && <small role="alert">{drawer.errors.role}</small>}</fieldset><label className={`user-enabled-toggle ${lastAdminProtected ? "blocked" : ""}`}><span><strong>启用账户</strong><small>停用后无法登录，历史记录仍保留。</small></span><input type="checkbox" disabled={lastAdminProtected} checked={drawer.form.enabled} onChange={(event) => updateDrawerField("enabled", event.target.checked)} /></label>{drawer.type === "user-edit" && <button className="user-reset-link" type="button" onClick={() => setDrawer({ type: "user-reset", user: drawer.user, errors: {}, form: { password: "" } })}><Key size={18} /><span>重置密码</span><CaretRight size={15} /></button>}</section></div>
+      <div className="user-form-footer"><button className="submit-button" type="submit">{drawer.type === "user-edit" ? "保存修改" : "创建用户"}</button></div>
+      {lastAdminProtected && <div className="user-protection-note blocking" role="note"><WarningCircle size={18} /><p><strong>当前账户是最后一名启用管理员</strong><span>请先启用或创建另一名管理员，再更改角色或停用。</span></p></div>}
+    </form>;
+    if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword} noValidate><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "reset-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="reset-password-error" role="alert">{drawer.errors.password}</small>}</label><div className="password-reset-actions"><button className="submit-button" type="submit">确认重置</button><button className="secondary-button" type="button" onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
     if (drawer.type === "backup") return <div className="system-backup-details"><div className="system-backup-summary"><Database size={30} /><div><h2>{system?.backupCaughtUp ? "备份已追平" : "需要创建新备份"}</h2><p>{system?.lastBackupAt ? formatLocalDateTime(system.lastBackupAt) : "尚未创建备份"}</p></div></div><dl><div><dt>数据序列</dt><dd>{system?.dataSequence ?? "—"}</dd></div><div><dt>备份序列</dt><dd>{system?.backupSequence ?? "—"}</dd></div><div><dt>追平状态</dt><dd>{system?.backupCaughtUp ? "已追平" : "待备份"}</dd></div></dl><div className="system-backup-privacy"><LockSimple size={18} /><p>备份保留在服务器电脑；诊断导出不包含预约内容或凭据。</p></div><button className="primary-button system-backup-close" onClick={createBackup}>立即备份</button></div>;
     if (drawer.type === "token-create") return <form className="system-token-form" onSubmit={createIntegrationToken}><label><span>令牌名称</span><input data-initial-focus value={drawer.form.name} placeholder="例如 只读数据看板" onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><fieldset><legend>只读权限</legend>{[["rooms:read", "笔录室"], ["availability:read", "可用时段"], ["health:read", "服务健康"]].map(([scope, label]) => <label key={scope}><input type="checkbox" checked={drawer.form.scopes.includes(scope)} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, scopes: event.target.checked ? [...current.form.scopes, scope] : current.form.scopes.filter((item) => item !== scope) } }))} />{label}</label>)}</fieldset><label><span>到期时间（可选）</span><input type="datetime-local" value={drawer.form.expiresAt} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, expiresAt: event.target.value } }))} /></label><p>集成令牌仅开放所选读取接口，不可写入预约数据。</p><div className="drawer-fixed-footer"><button className="primary-button" type="submit">创建令牌</button></div></form>;
     if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await navigator.clipboard.writeText(drawer.token.token); setToast("令牌已复制"); } catch { setToast("无法自动复制，请手动选择令牌"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
@@ -1655,7 +1836,10 @@ export function App() {
     }
   }, [acceptAuthenticatedContext, publicRoute]);
 
-  useEffect(() => { start(); }, [start]);
+  useEffect(() => {
+    const timer = window.setTimeout(start, 0);
+    return () => window.clearTimeout(timer);
+  }, [start]);
   if (phase === "public") return <PublicDisplay />;
   if (phase === "loading") return <LoadingScreen />;
   if (phase === "recovery") return <RecoveryScreen error={recoveryError} onRetry={start} />;

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, Optional
 
 from flask import current_app
@@ -23,6 +23,7 @@ from ..common import (
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
+from ..invariants import ApplicationInvariantError
 from ..security import current_user, locked_actor
 
 
@@ -50,7 +51,9 @@ def _tag_slot(value: Any) -> int:
 def _tag_label(db: sqlite3.Connection, owner_id: str, slot: int) -> str:
     if slot in (1, 2):
         row = db.execute("SELECT label FROM global_tags WHERE slot = ?", (slot,)).fetchone()
-        return row[0] if row else f"标签 {slot}"
+        if row is None:
+            raise ApplicationInvariantError("单位标签记录缺失")
+        return row[0]
     row = db.execute(
         """
         SELECT personal_tag_3_label, personal_tag_4_label
@@ -59,7 +62,7 @@ def _tag_label(db: sqlite3.Connection, owner_id: str, slot: int) -> str:
         (owner_id,),
     ).fetchone()
     if row is None:
-        return f"标签 {slot}"
+        raise ApplicationInvariantError("预约所有者的个人偏好记录缺失")
     return row[0] if slot == 3 else row[1]
 
 

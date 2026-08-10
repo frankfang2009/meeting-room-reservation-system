@@ -29,6 +29,15 @@ export function validateAuthenticatedContext(session, bootstrap) {
   if (["manageRooms", "manageUsers", "manageSystem"].some((key) => Boolean(permissions[key]) !== expectedAdmin)) {
     throw new TypeError("登录角色与工作台权限不一致");
   }
+  try {
+    projectServerClock({
+      serverDate: bootstrap.serverDate,
+      serverTime: bootstrap.serverTime,
+      receivedAt: 0,
+    }, 0);
+  } catch {
+    throw new TypeError("工作台缺少可信的服务端时间");
+  }
   return {
     session,
     bootstrap,
@@ -199,6 +208,45 @@ export function durationFromRange(start, end) {
 
 export function endFromDuration(start, duration) {
   return formatTime(parseTime(start) + Number(duration));
+}
+
+export function clampDurationToWorkday({
+  desired,
+  start,
+  workEnd,
+  maxDuration = 180,
+  slotMinutes = 30,
+} = {}) {
+  const step = Number(slotMinutes) || 30;
+  const configuredMaximum = Number(maxDuration) || 180;
+  const requested = Number(desired) || step;
+  if (!start || !workEnd) return Math.max(step, Math.min(requested, configuredMaximum));
+  const remaining = durationFromRange(start, workEnd);
+  const availableMaximum = Math.floor(Math.min(configuredMaximum, remaining) / step) * step;
+  return availableMaximum >= step ? Math.min(Math.max(step, requested), availableMaximum) : 0;
+}
+
+export function reservationConflictDifferences(draft, latest, { rooms = [], tags = [] } = {}) {
+  if (!draft || !latest) return [];
+  const roomName = (id) => rooms.find((room) => room.id === id)?.name || id || "未选择";
+  const tagName = (id) => tags.find((tag) => tag.id === id)?.label || id || "未选择";
+  const latestDuration = latest.start && latest.end
+    ? durationFromRange(latest.start, latest.end)
+    : Number(latest.duration || 0);
+  const fields = [
+    ["笔录室", roomName(draft.roomId), roomName(latest.roomId)],
+    ["日期", draft.date || "未选择", latest.date || "未选择"],
+    ["开始时间", draft.start || "未选择", latest.start || "未选择"],
+    ["预约时长", `${Number(draft.duration) || 0} 分钟`, `${latestDuration} 分钟`],
+    ["预约对象", draft.partyName || "未填写", latest.partyName || "未填写"],
+    ["案号", draft.caseNumber || "未填写", latest.caseNumber || "未填写"],
+    ["事项", draft.purpose || "未填写", latest.purpose || "未填写"],
+    ["标签", tagName(draft.tagId), tagName(latest.tagId)],
+    ["备注", draft.notes || "未填写", latest.notes || "未填写"],
+  ];
+  return fields
+    .filter(([, localValue, serverValue]) => localValue !== serverValue)
+    .map(([label, localValue, serverValue]) => ({ label, localValue, serverValue }));
 }
 
 export function overlaps(booking, start, end) {

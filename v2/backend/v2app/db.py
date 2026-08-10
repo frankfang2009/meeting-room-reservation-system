@@ -8,6 +8,8 @@ from typing import Any, Iterator, Optional
 
 from flask import Flask, current_app, g
 
+from .invariants import ApplicationInvariantError, validate_application_invariants
+
 
 PRODUCT_GENERATION = 2
 SCHEMA_VERSION = 1
@@ -391,6 +393,14 @@ def prepare_database(
                     )
                 )
             )
+            invariant_error = None
+            try:
+                validate_application_invariants(
+                    db,
+                    setup_complete=setup_complete,
+                )
+            except ApplicationInvariantError as error:
+                invariant_error = str(error)
         finally:
             db.close()
     except DatabaseGenerationError:
@@ -409,6 +419,11 @@ def prepare_database(
         return _recovery(
             "DATABASE_FOREIGN_KEY_FAILED",
             "数据库关联完整性检查失败，已进入恢复模式",
+        )
+    if invariant_error:
+        return _recovery(
+            "DATABASE_APPLICATION_INVARIANT_FAILED",
+            "数据库业务完整性检查失败，已进入恢复模式",
         )
     if mirror_setup_complete is True and not setup_complete:
         return _recovery(

@@ -124,12 +124,12 @@ export const api = {
   logout: () => request("/session", { method: "DELETE" }),
   getBootstrap: () => request("/bootstrap"),
 
-  getReservations: (dateFrom, dateTo = dateFrom, { pageSize, cursor } = {}) => request(query("/reservations", {
+  getReservations: (dateFrom, dateTo = dateFrom, { pageSize, cursor, signal } = {}) => request(query("/reservations", {
     dateFrom,
     dateTo,
     pageSize,
     cursor,
-  })),
+  }), { signal }),
   getUpcoming: () => request("/reservations/upcoming"),
   createReservation: (input) => request("/reservations", { method: "POST", body: input }),
   updateReservation: (id, input) => request(`/reservations/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),

@@ -171,6 +171,10 @@ def run_backup():
                 sequence=sequence,
                 source_data_sequence=data_sequence,
             )
+    except ApiError:
+        # Preserve product-defined authorization and validation responses.  The
+        # broad fallback below is only for an actual backup pipeline failure.
+        raise
     except Exception:
         current_app.logger.exception("backup failed sequence=%s", sequence)
         with transaction(db, track_change=False):

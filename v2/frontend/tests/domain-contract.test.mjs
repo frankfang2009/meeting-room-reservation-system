@@ -5,12 +5,14 @@ import {
   bookingPayload,
   canManageBooking,
   canViewBookingDetails,
+  clampDurationToWorkday,
   findFirstAvailableStart,
   generateTimeSlots,
   isDrawerAllowed,
   isSameBooking,
   projectServerClock,
   rebaseBookingEdit,
+  reservationConflictDifferences,
   reminderDisplayMessage,
   reservationEventLabel,
   mapSetupFieldErrors,
@@ -29,6 +31,23 @@ test("generates adjacent working-hour slots", () => {
   assert.throws(() => generateTimeSlots("08:30", "09:10"), /divide evenly/);
 });
 
+test("clamps the default duration to the remaining working day", () => {
+  assert.equal(clampDurationToWorkday({ desired: 60, start: "17:00", workEnd: "17:30" }), 30);
+  assert.equal(clampDurationToWorkday({ desired: 180, start: "16:00", workEnd: "17:30" }), 90);
+  assert.equal(clampDurationToWorkday({ desired: 60, start: "09:00", workEnd: "17:30" }), 60);
+});
+
+test("revision conflicts expose field-level draft and server differences", () => {
+  const differences = reservationConflictDifferences(
+    { roomId: "room-1", date: "2026-08-10", start: "09:00", duration: 60, partyName: "张三", caseNumber: "A-1", purpose: "询问", notes: "", tagId: "tag-1" },
+    { roomId: "room-2", date: "2026-08-10", start: "09:30", end: "10:00", partyName: "张三", caseNumber: "A-1", purpose: "询问", notes: "已更新", tagId: "tag-2" },
+    { rooms: [{ id: "room-1", name: "一室" }, { id: "room-2", name: "二室" }], tags: [{ id: "tag-1", label: "初审" }, { id: "tag-2", label: "复核" }] },
+  );
+  assert.deepEqual(differences.map((item) => item.label), ["笔录室", "开始时间", "预约时长", "标签", "备注"]);
+  assert.equal(differences[0].localValue, "一室");
+  assert.equal(differences[0].serverValue, "二室");
+});
+
 test("shares authenticated details while mutation follows owner identity", () => {
   const own = { id: "booking-own", ownerId: "user-1" };
   const other = { id: "booking-other", ownerId: "user-2" };
@@ -44,30 +63,44 @@ test("reauthentication validates the complete user scope before remounting", () 
   const adminBootstrap = {
     currentUser: { id: "admin-1", role: "admin" },
     permissions: { manageRooms: true, manageUsers: true, manageSystem: true },
+    serverDate: "2026-08-10",
+    serverTime: "08:00:00",
   };
   assert.equal(validateAuthenticatedContext(adminSession, adminBootstrap).scopeKey, "admin-1:admin");
   const employeeSession = { authenticated: true, currentUser: { id: "employee-1", role: "employee" } };
   const employeeBootstrap = {
     currentUser: { id: "employee-1", role: "employee" },
     permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    serverDate: "2026-08-10",
+    serverTime: "08:00:00",
   };
   assert.equal(validateAuthenticatedContext(employeeSession, employeeBootstrap).scopeKey, "employee-1:employee");
   const downgradedSession = { authenticated: true, currentUser: { id: "admin-1", role: "employee" } };
   const downgradedBootstrap = {
     currentUser: { id: "admin-1", role: "employee" },
     permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    serverDate: "2026-08-10",
+    serverTime: "08:00:00",
   };
   assert.equal(validateAuthenticatedContext(downgradedSession, downgradedBootstrap).scopeKey, "admin-1:employee");
   assert.notEqual("admin-1:admin", validateAuthenticatedContext(downgradedSession, downgradedBootstrap).scopeKey);
   assert.throws(() => validateAuthenticatedContext(adminSession, {
     currentUser: { id: "employee-1", role: "employee" },
     permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    serverDate: "2026-08-10",
+    serverTime: "08:00:00",
   }), /身份/);
   assert.throws(() => validateAuthenticatedContext(adminSession, {
     currentUser: { id: "admin-1", role: "employee" },
     permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    serverDate: "2026-08-10",
+    serverTime: "08:00:00",
   }), /身份/);
   assert.throws(() => validateAuthenticatedContext({ authenticated: false }, adminBootstrap), /身份/);
+  assert.throws(() => validateAuthenticatedContext(adminSession, {
+    ...adminBootstrap,
+    serverDate: "2026-02-30",
+  }), /服务端时间/);
 });
 
 test("administrator drawers are denied again at render time", () => {

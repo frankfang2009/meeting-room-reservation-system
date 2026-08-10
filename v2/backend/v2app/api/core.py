@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ipaddress
-import re
 import secrets
 import time
 from pathlib import Path
@@ -524,6 +523,7 @@ def logout():
 def bootstrap():
     db = get_db()
     user = current_user()
+    now = local_now()
     room_query = "SELECT * FROM rooms"
     if user["role"] != "admin":
         room_query += " WHERE is_active = 1"
@@ -556,6 +556,8 @@ def bootstrap():
     return jsonify(
         {
             "productVersion": current_app.config["PRODUCT_VERSION"],
+            "serverDate": now.date().isoformat(),
+            "serverTime": now.strftime("%H:%M:%S"),
             "currentUser": serialize_user(user),
             "rooms": rooms,
             "users": users,

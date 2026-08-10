@@ -16,7 +16,7 @@ from ..common import (
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
-from ..security import admin_required, current_user, locked_actor, serialize_user
+from ..security import admin_required, locked_actor, serialize_user
 from ..services.audit import write_security_audit
 from .core import serialize_room_with_metrics, serialize_rooms_with_metrics
 
@@ -76,7 +76,12 @@ def create_room():
     name = clean_text(payload.get("name"), field="name", label="笔录室名称", maximum=80)
     sort_order = parse_int(payload.get("sortOrder", 1), field="sortOrder")
     if not 1 <= sort_order <= 10000:
-        raise ApiError(422, "VALIDATION_ERROR", "排序值必须在 1–10000 之间")
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "请检查输入内容",
+            fields={"sortOrder": "排序值必须在 1–10000 之间"},
+        )
     is_active = (
         parse_bool(payload["isActive"], field="isActive")
         if "isActive" in payload
@@ -136,7 +141,12 @@ def update_room(room_id: str):
                 else room["sort_order"]
             )
             if not 1 <= sort_order <= 10000:
-                raise ApiError(422, "VALIDATION_ERROR", "排序值必须在 1–10000 之间")
+                raise ApiError(
+                    422,
+                    "VALIDATION_ERROR",
+                    "请检查输入内容",
+                    fields={"sortOrder": "排序值必须在 1–10000 之间"},
+                )
             db.execute(
                 """
                 UPDATE rooms SET name = ?, is_active = ?, sort_order = ?,

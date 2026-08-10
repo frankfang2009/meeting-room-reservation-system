@@ -26,10 +26,11 @@ function clientFor(session, bootstrap, { failLogin = null } = {}) {
 }
 
 const employeePermissions = { manageRooms: false, manageUsers: false, manageSystem: false };
+const serverClock = { serverDate: "2026-08-10", serverTime: "08:00:00" };
 
 test("administrator to employee reauthentication validates bootstrap before changing remount key", async () => {
   const session = { authenticated: true, currentUser: { id: "employee-1", role: "employee" } };
-  const client = clientFor(session, { currentUser: session.currentUser, permissions: employeePermissions });
+  const client = clientFor(session, { currentUser: session.currentUser, permissions: employeePermissions, ...serverClock });
   const context = await reauthenticateContext(client, { username: " employee ", password: "secret" });
   assert.deepEqual(client.calls, ["session:0", "login:employee:secret", "session:1", "bootstrap"]);
   assert.equal(context.scopeKey, "employee-1:employee");
@@ -38,7 +39,7 @@ test("administrator to employee reauthentication validates bootstrap before chan
 
 test("same user id role downgrade produces a different authenticated scope and remount key", async () => {
   const session = { authenticated: true, currentUser: { id: "admin-1", role: "employee" } };
-  const client = clientFor(session, { currentUser: session.currentUser, permissions: employeePermissions });
+  const client = clientFor(session, { currentUser: session.currentUser, permissions: employeePermissions, ...serverClock });
   const context = await reauthenticateContext(client, { username: "admin", password: "new-secret" });
   assert.equal(context.scopeKey, "admin-1:employee");
   assert.notEqual(scopedAppKey({ currentUser: { id: "admin-1", role: "admin" } }, 7), scopedAppKey(context.session, 8));

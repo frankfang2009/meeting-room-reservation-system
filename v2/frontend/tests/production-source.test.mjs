@@ -16,7 +16,8 @@ test("production entry contains no demo credentials or query-state router", () =
 });
 
 test("production entry does not generate business ids in the browser", () => {
-  assert.equal(app.includes("Date.now()"), false);
+  assert.equal(app.includes("crypto.randomUUID"), false);
+  assert.doesNotMatch(app, /(?:booking|reservation)Id\s*:\s*[^\n]*Date\.now\(\)/);
   assert.equal(app.includes("booking-${"), false);
 });
 

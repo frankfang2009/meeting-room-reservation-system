@@ -15,6 +15,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from .invariants import ApplicationInvariantError, validate_application_invariants
+
 
 BACKUP_KIND = "meeting-room-v2-backup"
 BACKUP_SIDECAR_SCHEMA = 1
@@ -437,7 +439,15 @@ def _verify_sqlite(path: Path) -> dict[str, Any]:
                 raise RuntimeError("备份完整性检查失败")
             if db.execute("PRAGMA foreign_key_check").fetchall():
                 raise RuntimeError("备份外键检查失败")
-            return _database_metadata(db)
+            metadata = _database_metadata(db)
+            try:
+                validate_application_invariants(
+                    db,
+                    setup_complete=metadata["setupComplete"],
+                )
+            except ApplicationInvariantError as error:
+                raise RuntimeError("备份业务完整性检查失败") from error
+            return metadata
         finally:
             db.close()
     except sqlite3.Error as error:
