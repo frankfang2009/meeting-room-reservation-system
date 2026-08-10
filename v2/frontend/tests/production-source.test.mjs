@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const app = fs.readFileSync(path.join(root, "src/App.jsx"), "utf8");
+const productionSource = fs.readdirSync(path.join(root, "src"), { recursive: true })
+  .filter((relative) => /\.(?:js|jsx)$/.test(relative))
+  .map((relative) => fs.readFileSync(path.join(root, "src", relative), "utf8"))
+  .join("\n");
 const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
 
@@ -126,7 +130,7 @@ test("logout only leaves the authenticated shell after server confirmation", () 
 
 test("production drawers and history reuse the frozen visual contract classes", () => {
   for (const className of ["booking-form-scroll", "booking-create-summary", "booking-schedule-fields", "booking-information-section", "tag-choice-grid", "booking-form-footer", "history-date-anchor", "history-booking-summary", "history-row-end", "user-form", "room-form-actions"]) {
-    assert.ok(app.includes(className), `missing frozen class ${className}`);
+    assert.ok(productionSource.includes(className), `missing frozen class ${className}`);
   }
   assert.match(app, /drawer\?\.type\?\.startsWith\("user"\) \? "user-drawer-open"/);
 });
