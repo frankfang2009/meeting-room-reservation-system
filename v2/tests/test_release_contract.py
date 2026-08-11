@@ -251,6 +251,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('"missing-launcher"', gate)
         self.assertIn('"missing-python"', gate)
         self.assertIn('"missing-product"', gate)
+        self.assertIn('"④ 停止本次后台系统.bat"', gate)
+        self.assertIn("Invoke-CandidateBat $installRoot", gate)
+        self.assertIn("formal candidate cleanup", gate)
         self.assertIn("actions/download-artifact@v4", workflow)
         self.assertIn("v2-windows-candidate-gate.ps1", workflow)
         reproducible = (V2_ROOT.parent / ".github/scripts/v2-reproducible-build.sh").read_text(

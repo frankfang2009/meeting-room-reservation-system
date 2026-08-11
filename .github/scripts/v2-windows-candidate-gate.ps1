@@ -14,9 +14,10 @@ $toolName = "_V2安装工具"
 function Invoke-CandidateBat {
     param(
         [Parameter(Mandatory = $true)] [string]$Root,
-        [string]$InputText = ""
+        [string]$InputText = "",
+        [string]$EntryName = $launcherName
     )
-    $launcher = Join-Path $Root $launcherName
+    $launcher = Join-Path $Root $EntryName
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
         return @{ Code = 10; Output = "MRV2_GATE=MISSING_LAUNCHER" }
     }
@@ -136,11 +137,17 @@ if (-not $health.ok -or $health.product_generation -ne 2 -or $health.bind_mode -
 Write-Host "formal candidate health => generation 2 / loopback"
 
 $installRoot = Join-Path $env:ProgramFiles "会议室预约系统V2"
-$servicePython = Join-Path $installRoot "_程序文件\runtime\python.exe"
-$serviceEntry = Join-Path $installRoot "_程序文件\app\service.py"
-if ((Test-Path -LiteralPath $servicePython) -and (Test-Path -LiteralPath $serviceEntry)) {
-    & $servicePython $serviceEntry --stop
-    if ($LASTEXITCODE -ne 0) {
-        throw "installed service cleanup stop failed: $LASTEXITCODE"
-    }
+$stopEntryName = "④ 停止本次后台系统.bat"
+$stopEntry = Join-Path $installRoot $stopEntryName
+if (-not (Test-Path -LiteralPath $stopEntry -PathType Leaf)) {
+    throw "installed service cleanup entry is missing: $stopEntry"
 }
+$stopped = Invoke-CandidateBat $installRoot " " $stopEntryName
+if ($stopped.Code -ne 0) {
+    $serviceLog = Join-Path $installRoot "_程序文件\logs\service.log"
+    if (Test-Path -LiteralPath $serviceLog -PathType Leaf) {
+        Write-Host (Get-Content -LiteralPath $serviceLog -Raw -Encoding UTF8)
+    }
+    throw "installed service cleanup stop failed: code=$($stopped.Code), output=$($stopped.Output)"
+}
+Write-Host "formal candidate cleanup => customer stop entry returned code 0"
