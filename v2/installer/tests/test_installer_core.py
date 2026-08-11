@@ -421,7 +421,7 @@ class InstallerCoreTests(unittest.TestCase):
             "$registryKey = Get-Item -LiteralPath $env:MRV2_REGISTRY_KEY",
             verify,
         )
-        self.assertIn("Get-Acl -InputObject $registryKey", verify)
+        self.assertIn("$registryKey.GetAccessControl()", verify)
         self.assertNotIn(
             "Get-Acl -LiteralPath $env:MRV2_REGISTRY_KEY",
             verify,

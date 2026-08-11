@@ -1455,7 +1455,7 @@ if (
     [string]$registered.BackgroundFirewallName -ne $env:MRV2_FW_BACKGROUND -or
     [int]$registered.SecurityDescriptorVersion -ne 1
 ) { throw 'V2 注册表身份或安全描述符版本不一致。' }
-$registryAcl = Get-Acl -InputObject $registryKey
+$registryAcl = $registryKey.GetAccessControl()
 if (-not $registryAcl.AreAccessRulesProtected) { throw 'V2 注册表 ACL 仍允许继承。' }
 $registryOwner = $registryAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
 if ($registryOwner -ne $adminSid) { throw 'V2 注册表所有者不是 Administrators。' }
