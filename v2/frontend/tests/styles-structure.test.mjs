@@ -30,7 +30,7 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "cfa93077d853d750017e64d1ac9dd757cfc415abd63af120be016c4da7ce0b7f";
+const frozenSourceSha256 = "8f3f66da5fad977d64d8fa8fba77df0230ffbb98cc09e36bf9d9e216d71a65f6";
 
 function importedFiles() {
   const manifest = fs.readFileSync(manifestPath, "utf8");

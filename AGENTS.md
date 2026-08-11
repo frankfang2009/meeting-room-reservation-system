@@ -37,3 +37,8 @@
 - Deleting a room starts with a read-only server preflight and is confirmed only when no active
   unended bookings remain. Otherwise list the server-returned bookings, support direct adjustment,
   and preserve a visible back path to that blocking list; DELETE must still recheck transactionally.
+- The bottom account action opens Personal Center rather than adding another main-navigation item.
+  Its activity tab is strictly current-user scoped and counts only active reservations that have
+  ended according to server-local time. Keep the approved heatmap free of a low-to-high legend;
+  the lower-left overview stays unchanged and the lower-right area contains the four summary metrics
+  instead of a recent-completions list. Preferences remain a separate tab in the same page.

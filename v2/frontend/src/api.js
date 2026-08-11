@@ -139,6 +139,8 @@ export const api = {
   }),
   getReservationEvents: (id) => request(`/reservations/${encodeURIComponent(id)}/events`),
   getHistory: (filters) => request(query("/reservations/history", filters)),
+  getActivity: () => request("/activity"),
+  getActivityDay: (day) => request(`/activity/days/${encodeURIComponent(day)}`),
 
   getRooms: () => request("/rooms"),
   createRoom: (input) => request("/rooms", { method: "POST", body: input }),

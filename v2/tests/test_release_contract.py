@@ -40,12 +40,29 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('API_BASE = "/api/v1"', frontend)
         self.assertIn("('admin', 'employee')", backend)
         self.assertNotRegex(frontend + backend, r"(?<![A-Za-z])staff(?![A-Za-z])")
+        self.assertIn('getActivity: () => request("/activity")', frontend)
+        self.assertIn('getActivityDay: (day) => request(`/activity/days/${encodeURIComponent(day)}`)', frontend)
+        self.assertIn('url_prefix="/api/v1/activity"', backend)
+
+    def test_personal_activity_is_server_aggregated_and_current_user_scoped(self) -> None:
+        activity = read("backend/v2app/api/activity.py")
+        frontend = read("frontend/src/features/profile/PersonalCenter.jsx")
+        self.assertIn('actor = current_user()', activity)
+        self.assertIn("owner_user_id = ? AND status = 'active'", activity)
+        self.assertIn("end_time <= ?", activity)
+        self.assertIn("currentMonthCompleted", activity)
+        self.assertIn('SELECT *', activity)
+        self.assertIn('serialize_reservation(row, actor)', activity)
+        self.assertNotIn("ownerId", activity)
+        self.assertIn("活动数据", frontend)
+        self.assertNotIn("最近完成", frontend)
+        self.assertNotIn("profile-heatmap-legend", frontend)
 
     def test_production_frontend_has_no_synthetic_business_state(self) -> None:
         source = "\n".join(
             path.read_text(encoding="utf-8")
             for path in sorted((V2_ROOT / "frontend" / "src").rglob("*"))
-            if path.is_file()
+            if path.is_file() and path.suffix in {".css", ".html", ".js", ".jsx", ".json", ".mjs"}
         )
         for forbidden in (
             "demo123",

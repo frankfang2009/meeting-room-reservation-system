@@ -174,6 +174,7 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         return None
 
     from .api.admin import bp as admin_bp
+    from .api.activity import bp as activity_bp
     from .api.core import bp as core_bp
     from .api.display import bp as display_bp
     from .api.preferences import bp as preferences_bp
@@ -185,6 +186,7 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         core_bp,
         reservations_bp,
         admin_bp,
+        activity_bp,
         preferences_bp,
         reminders_bp,
         display_bp,

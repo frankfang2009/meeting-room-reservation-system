@@ -152,6 +152,14 @@ slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
 - `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、两项网页通知和个人标签 3、4。
+- `GET /api/v1/activity` 返回当前登录用户的只读活动聚合。服务端按本地时间只统计
+  `status=active` 且已经结束的本人预约，响应包含十二个月显示范围、四项汇总、
+  平均时长/常用笔录室/常用标签概览，以及按日完成场次。响应不得接受或返回
+  `ownerId`，不得暴露他人预约或预约明细。
+- `GET /api/v1/activity/days/{YYYY-MM-DD}` 返回当前登录用户在指定日期已完成的预约
+  明细，复用登录后私有预约对象投影；服务端固定按当前用户 `owner_user_id` 过滤，
+  不接受客户端提供的用户标识，已取消、尚未结束和他人预约均不返回。非法日期稳定
+  返回 `422 VALIDATION_ERROR`。
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及

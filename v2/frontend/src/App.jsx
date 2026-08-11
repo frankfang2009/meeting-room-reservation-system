@@ -44,6 +44,8 @@ import {
   validateUserAdminForm,
 } from "./features/admin/validation.js";
 import { RoomAdminForm, RoomDeleteBlocked, RoomDeleteConfirmation, UserAdminForm } from "./features/admin/AdminForms.jsx";
+import { PersonalCenter } from "./features/profile/PersonalCenter.jsx";
+import { readUiPreferences, writeUiPreferences } from "./features/profile/ui-preferences.js";
 import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
 import {
   dateLabel,
@@ -836,8 +838,9 @@ function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState,
 function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOut, onRecovery }) {
   const initialReceivedAt = useRef(Date.now()).current;
   const initialBusinessDate = parseDate(initialBootstrap.serverDate);
+  const initialUiPreferences = useRef(readUiPreferences(initialBootstrap?.currentUser?.id || session.currentUser?.id)).current;
   const [bootstrap, setBootstrap] = useState(initialBootstrap || null);
-  const [activeView, setActiveView] = useState("mine");
+  const [activeView, setActiveView] = useState(initialUiPreferences.defaultView);
   const [businessClockAnchor, setBusinessClockAnchor] = useState(() => ({
     serverDate: initialBootstrap.serverDate,
     serverTime: initialBootstrap.serverTime,
@@ -900,10 +903,18 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingEvents, setBookingEvents] = useState([]);
   const [bookingEventsState, setBookingEventsState] = useState("idle");
   const [preferencesDraft, setPreferencesDraft] = useState(() => initialBootstrap?.preferences || null);
+  const [uiPreferences, setUiPreferences] = useState(initialUiPreferences);
+  const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
+  const [profileTab, setProfileTab] = useState("activity");
+  const [activity, setActivity] = useState(null);
+  const [activityState, setActivityState] = useState("idle");
+  const [activityDay, setActivityDay] = useState(null);
+  const [activityDayState, setActivityDayState] = useState("idle");
   const [dueReminder, setDueReminder] = useState(null);
   const [preservedDraft, setPreservedDraft] = useState(null);
   const mainRef = useRef(null);
   const eventRequestRef = useRef(0);
+  const activityDayRequestRef = useRef(0);
   const calendarRequestRef = useRef(0);
   const calendarAbortRef = useRef(null);
   const historyRequestRef = useRef(0);
@@ -937,7 +948,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try { return generateTimeSlots(settings.workStart, settings.workEnd, settings.slotMinutes || 30); }
     catch { return generateTimeSlots("08:30", "17:30", 30); }
   }, [settings.workEnd, settings.workStart, settings.slotMinutes]);
-  useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人设置", unauthorized: "无权限" }[activeView] || "会议室预约系统");
+  useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
 
   useEffect(() => {
     const timer = window.setInterval(() => setBusinessClockTick(Date.now()), 30000);
@@ -1084,10 +1095,47 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     loadHistory({ append: true, cursor: historyPage.nextCursor });
   }, [historyLoadingMore, historyPage.nextCursor, loadHistory]);
 
+  const loadActivity = useCallback(async () => {
+    setActivityState("loading");
+    try {
+      const result = await api.getActivity();
+      setActivity(result);
+      setActivityState("ready");
+    } catch (error) {
+      setActivityState("failed");
+      handleError(error, "无法读取预约活动");
+    }
+  }, [handleError]);
+
+  const loadActivityDay = useCallback(async (day) => {
+    const requestNumber = activityDayRequestRef.current + 1;
+    activityDayRequestRef.current = requestNumber;
+    if (!day) {
+      setActivityDay(null);
+      setActivityDayState("idle");
+      return;
+    }
+    setActivityDay({ date: day, items: [] });
+    setActivityDayState("loading");
+    try {
+      const result = await api.getActivityDay(day);
+      if (activityDayRequestRef.current !== requestNumber) return;
+      setActivityDay({ date: result.date || day, items: unwrapItems(result) });
+      setActivityDayState("ready");
+    } catch (error) {
+      if (activityDayRequestRef.current !== requestNumber) return;
+      setActivityDayState("failed");
+      handleError(error, "无法读取当天预约活动");
+    }
+  }, [handleError]);
+
   useEffect(() => { if (!initialBootstrap) loadBootstrap(); }, [initialBootstrap, loadBootstrap]);
   useEffect(() => { if (bootstrap) loadCalendar(); }, [bootstrap, loadCalendar]);
   useEffect(() => { if (bootstrap) loadUpcoming(); }, [bootstrap, loadUpcoming]);
   useEffect(() => { if (bootstrap) loadHistory(); }, [bootstrap, loadHistory]);
+  useEffect(() => {
+    if (activeView === "settings" && profileTab === "activity") loadActivity();
+  }, [activeView, loadActivity, profileTab]);
   useEffect(() => {
     if (activeView !== "rooms" || !permissions.manageRooms) return undefined;
     loadRooms();
@@ -1164,6 +1212,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setDrawer(null);
     setUnauthorizedMessage("");
     setActiveView(view);
+  }
+
+  function openPersonalCenter() {
+    setProfileTab("activity");
+    navigate("settings");
   }
 
   function openCreate(roomId, start, bookingDate = dateKey(currentDate)) {
@@ -1897,6 +1950,20 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         personalTags: saved.personalTags || current.personalTags,
       }));
       setPreferencesDraft(saved.preferences || saved);
+      if (saved.personalTags) {
+        setTagDrafts((current) => ({
+          ...current,
+          ...Object.fromEntries(saved.personalTags.map((tag) => [tag.id, tag.label])),
+        }));
+      }
+      const nextUiPreferences = writeUiPreferences(currentUser.id, uiPreferencesDraft);
+      if (nextUiPreferences.activityMonths !== uiPreferences.activityMonths) {
+        activityDayRequestRef.current += 1;
+        setActivityDay(null);
+        setActivityDayState("idle");
+      }
+      setUiPreferences(nextUiPreferences);
+      setUiPreferencesDraft(nextUiPreferences);
       setToast("个人设置已保存");
     } catch (error) { handleError(error, "保存个人设置失败"); }
   }
@@ -1904,13 +1971,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function renderSettings() {
     const draft = preferencesDraft || {};
     const update = (field, value) => setPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <main className="main-canvas settings-canvas"><header className="page-header settings-header"><div><h1>个人设置</h1><p>管理你的工作资料与预约偏好</p></div><div className="settings-header-actions"><button className="settings-logout-button" type="button" onClick={logout}>退出登录</button><button className="settings-save-button" type="submit" form="personal-settings-form">保存更改</button></div></header>
-      <form id="personal-settings-form" className="settings-layout" onSubmit={savePreferences}>
-        <section className="settings-section settings-profile-section"><h2>个人资料</h2><div className="settings-field-grid"><label className="settings-field"><span>姓名</span><input value={draft.name ?? currentUser.name ?? ""} onChange={(event) => update("name", event.target.value)} /></label><label className="settings-field"><span>所属部门</span><input value={draft.department ?? currentUser.department ?? ""} onChange={(event) => update("department", event.target.value)} /></label></div></section>
-        <section className="settings-section settings-preferences-section"><h2>预约偏好</h2><div className="settings-choice-list"><label className="settings-choice-row"><span>默认预约时长</span><span className="settings-select-wrap"><select value={draft.defaultDuration || 60} onChange={(event) => update("defaultDuration", Number(event.target.value))}>{DURATION_STEPS.map((value) => <option value={value} key={value}>{value}分钟</option>)}</select><CaretRight size={18} /></span></label><label className="settings-choice-row"><span>默认笔录室</span><span className="settings-select-wrap"><select value={draft.defaultRoomId || ""} onChange={(event) => update("defaultRoomId", event.target.value)}><option value="">不指定</option>{activeRooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select><CaretRight size={18} /></span></label></div></section>
-        <section className="settings-section settings-notifications-section"><h2>通知</h2><div className="settings-notification-list"><label className="settings-notification-row"><span><strong>预约变更</strong><small>页面打开时，修改或取消预约会通知我</small></span><input className="settings-switch" type="checkbox" checked={Boolean(draft.bookingChangeNotifications)} onChange={(event) => update("bookingChangeNotifications", event.target.checked)} /></label><label className="settings-notification-row"><span><strong>预约提醒</strong><small>页面打开时，开始前30分钟提醒我</small></span><input className="settings-switch" type="checkbox" checked={Boolean(draft.bookingReminder)} onChange={(event) => update("bookingReminder", event.target.checked)} /></label></div></section>
-      </form>
-    </main>;
+    const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
+    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityDay={activityDay} activityDayState={activityDayState} activityMonths={uiPreferences.activityMonths} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} onActivityReload={loadActivity} onChange={update} onLogout={logout} onOpenBooking={(booking) => openDetails(booking, true)} onSave={savePreferences} onSelectActivityDay={loadActivityDay} onTabChange={setProfileTab} onUiChange={updateUi} tab={profileTab} uiDraft={uiPreferencesDraft} />;
   }
 
   function renderUnauthorized() {
@@ -1976,7 +2038,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
           const upcoming = id === "mine" && dueReminder?.kind === "upcoming";
           return <button className={"rail-button tooltip-right " + (activeView === id ? "active" : "") + (upcoming ? " has-upcoming-reminder" : "")} data-tooltip={upcoming ? `${label} · 有预约即将开始` : label} aria-label={upcoming ? `${label}，有预约即将开始` : label} aria-current={activeView === id ? "page" : undefined} key={id} onClick={id === "mine" ? openMineAndAcknowledgeReminder : () => navigate(id)}><Icon size={25} />{upcoming && <span className="rail-reminder-badge" aria-hidden="true"><Clock size={11} weight="fill" /></span>}</button>;
         })}</nav>
-        <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人设置"} aria-label={itemName(currentUser) + "，个人设置"} onClick={() => navigate("settings")}><UserCircle size={42} weight="thin" /></button>
+        <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人中心"} aria-label={itemName(currentUser) + "，个人中心"} onClick={openPersonalCenter}><UserCircle size={42} weight="thin" /></button>
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
     </div>

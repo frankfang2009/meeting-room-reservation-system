@@ -365,6 +365,31 @@
     column-gap: 28px;
   }
 
+  .profile-activity-heatmap {
+    overflow-x: auto;
+  }
+
+  .profile-activity-lower {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .profile-activity-overview {
+    padding-right: 30px;
+  }
+
+  .profile-activity-data {
+    padding-left: 32px;
+  }
+
+  .profile-activity-data dl > div:nth-child(even) {
+    padding-left: 24px;
+  }
+
+  .profile-activity-day-item {
+    grid-template-columns: minmax(150px, 0.7fr) minmax(200px, 1.3fr) 24px;
+    gap: 18px;
+  }
+
   .next-booking,
   .bookings-empty {
     margin-top: 126px;
@@ -476,6 +501,49 @@
     gap: 18px;
   }
 
+  .personal-center-header {
+    align-items: flex-start;
+  }
+
+  .personal-center-identity {
+    margin-top: 28px;
+    gap: 20px;
+  }
+
+  .personal-center-avatar {
+    width: 64px;
+    height: 64px;
+    font-size: 28px;
+  }
+
+  .personal-center-tab-row {
+    margin-top: 18px;
+  }
+
+  .personal-center-preference-link {
+    display: none;
+  }
+
+  .profile-activity-heatmap {
+    min-height: 300px;
+    padding-top: 28px;
+  }
+
+  .profile-activity-lower {
+    display: block;
+  }
+
+  .profile-activity-overview {
+    padding-right: 0;
+  }
+
+  .profile-activity-data {
+    margin-top: 24px;
+    padding: 28px 0 0;
+    border-top: 1px solid var(--hairline-strong);
+    border-left: 0;
+  }
+
   .settings-header p {
     max-width: 210px;
     font-size: 13px;
@@ -508,6 +576,25 @@
   .settings-field-grid {
     grid-template-columns: 1fr;
     gap: 18px;
+  }
+
+  .settings-tag-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .profile-activity-day-item {
+    grid-template-columns: 1fr 24px;
+    gap: 8px 16px;
+  }
+
+  .profile-activity-day-item > span:nth-child(2) {
+    grid-column: 1;
+  }
+
+  .profile-activity-day-item > svg {
+    grid-row: 1 / span 2;
+    grid-column: 2;
   }
 
   .settings-choice-row,

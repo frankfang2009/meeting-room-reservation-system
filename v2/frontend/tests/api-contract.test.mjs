@@ -44,6 +44,42 @@ test("room metrics use the dedicated administrator refresh endpoint", async () =
   }
 });
 
+test("personal activity uses the current-user aggregate endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response(JSON.stringify({ range: {}, summary: {}, overview: {}, days: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await api.getActivity();
+    assert.equal(captured, "/api/v1/activity");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("personal activity day details use the authenticated day endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response(JSON.stringify({ date: "2026-08-01", items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await api.getActivityDay("2026-08-01");
+    assert.equal(captured, "/api/v1/activity/days/2026-08-01");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("room deletion preflight uses a read-only impact endpoint", async () => {
   const previousFetch = globalThis.fetch;
   let captured = "";

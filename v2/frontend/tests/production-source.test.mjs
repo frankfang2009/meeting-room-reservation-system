@@ -34,8 +34,33 @@ test("public display consumes the dedicated server projection", () => {
 });
 
 test("shared-computer users have a visible logout action in personal settings", () => {
-  assert.match(app, /className="settings-logout-button"[^>]*onClick=\{logout\}/);
+  assert.match(productionSource, /className="settings-logout-button"[^>]*onClick=\{onLogout\}/);
   assert.equal(app.includes('className="sr-only" onClick={logout}'), false);
+});
+
+test("personal center keeps activity and preferences separate without recent-booking clutter", () => {
+  assert.match(app, /api\.getActivity\(\)/);
+  assert.match(app, /activeView === "settings" && profileTab === "activity"/);
+  assert.match(productionSource, /<h1>个人中心<\/h1>/);
+  assert.match(productionSource, />我的活动<\/button>/);
+  assert.match(productionSource, />偏好设置<\/button>/);
+  assert.match(productionSource, /<h2 id="profile-activity-heading">预约活动<\/h2>/);
+  assert.match(productionSource, /<h2 id="profile-overview-heading">活动概览<\/h2>/);
+  assert.match(productionSource, /<h2 id="profile-data-heading">活动数据<\/h2>/);
+  assert.match(productionSource, /api\.getActivityDay\(day\)/);
+  assert.match(productionSource, /onOpenBooking\(booking\)/);
+  assert.match(productionSource, /本人当天已完成的预约/);
+  assert.doesNotMatch(productionSource, /profile-activity[^\n]{0,240}最近完成/);
+  assert.doesNotMatch(productionSource, /profile-heatmap-legend/);
+});
+
+test("personal preferences expose real scoped defaults and server-backed personal tags", () => {
+  assert.match(app, /readUiPreferences\(initialBootstrap\?\.currentUser\?\.id \|\| session\.currentUser\?\.id\)/);
+  assert.match(app, /writeUiPreferences\(currentUser\.id, uiPreferencesDraft\)/);
+  assert.match(productionSource, />登录后默认打开</);
+  assert.match(productionSource, />活动图显示范围</);
+  assert.match(productionSource, />个人标签</);
+  assert.match(productionSource, /onChange\("personalTags"/);
 });
 
 test("revision conflicts rebase the drawer baseline while preserving the draft", () => {
