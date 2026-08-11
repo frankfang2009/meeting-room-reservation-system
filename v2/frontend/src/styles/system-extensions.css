@@ -33,6 +33,7 @@
 }
 
 .system-section-heading > button,
+.system-audit-heading-actions button,
 .system-audit-reset {
   min-height: 38px;
   display: inline-flex;
@@ -45,6 +46,44 @@
   border-radius: 8px;
   background: transparent;
   cursor: pointer;
+}
+
+.system-audit-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system-audit-heading-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.system-audit-heading h2 {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.system-audit-unread {
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  color: #fff;
+  border-radius: 999px;
+  background: var(--terracotta-text);
+  box-shadow: 0 0 0 2px var(--paper);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.system-audit-group.is-hidden .system-section-heading {
+  border-bottom-color: transparent;
 }
 
 .system-token-list,

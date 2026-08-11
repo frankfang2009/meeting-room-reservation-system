@@ -15,3 +15,25 @@
   separate external requirement.
 - Do not modify V1 directories while working on V2. Do not reset, clean, or overwrite unrelated
   working-tree changes.
+- Keep the booking-duration slider on one fixed 30–180 minute visual scale. Its interactive ceiling
+  is the earliest of the configured maximum, workday end, and the next active booking in that room.
+- Calendar time labels share the horizontal-rule coordinate, and the today view shows a restrained
+  server-time line only while the current time is inside configured working hours.
+- Calendar and room-management layouts adapt deliberately for one, two, or three active rooms;
+  do not leave one- and two-room views occupying only a three-column fraction of the canvas.
+- Administrators can jump directly to a calendar date. Room-management metrics refresh from the
+  dedicated admin rooms endpoint after booking changes and while the room page remains open.
+- Security-audit UI copy is Chinese. Collapsing the audit list never stops polling or changes server
+  records; newly received rows accumulate a user-facing unread badge until the list is shown again.
+- Upcoming-booking reminders use a small clock badge on the My Reservations rail action instead of
+  a persistent bottom toast; opening My Reservations acknowledges that reminder. Change notices
+  remain distinct and must not be mislabeled as an upcoming-booking clock.
+- Reservation status codes are never rendered directly. History keeps cancelled records visible
+  with a restrained `已取消` treatment, while active records retain their tag-color marker.
+- Keep the calendar header visually quiet: previous/today/next form one segmented navigation group,
+  a compact adjacent date picker supports long jumps, and tag filtering remains separate.
+- On a configured LAN service, show a copy action beside the real LAN URL. Clipboard fallback must
+  still work over trusted HTTP; never render a copy action for a missing or loopback-only address.
+- Deleting a room starts with a read-only server preflight and is confirmed only when no active
+  unended bookings remain. Otherwise list the server-returned bookings, support direct adjustment,
+  and preserve a visible back path to that blocking list; DELETE must still recheck transactionally.

@@ -659,6 +659,45 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(room["futureCount"], 2)
         self.assertEqual(room["nextBooking"], "今天 09:00")
 
+    def test_room_delete_conflict_lists_bookings_for_direct_admin_action(self):
+        room_id = self.bootstrap()["rooms"][0]["id"]
+        created = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, date="2026-08-10", start="09:00"),
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
+        impact = self.client.get(f"/api/v1/rooms/{room_id}/deletion-impact")
+        self.assertEqual(impact.status_code, 200, impact.get_json())
+        self.assertEqual(impact.get_json()["room"]["id"], room_id)
+        self.assertEqual(impact.get_json()["total"], 1)
+        self.assertEqual(impact.get_json()["items"][0]["id"], created.get_json()["id"])
+        blocked = self.write("DELETE", f"/api/v1/rooms/{room_id}")
+        payload = blocked.get_json()
+        self.assertEqual(blocked.status_code, 409, payload)
+        self.assertEqual(payload["error"]["code"], "ROOM_HAS_FUTURE_BOOKINGS")
+        self.assertEqual(payload["error"]["current"]["roomId"], room_id)
+        self.assertEqual(payload["error"]["current"]["total"], 1)
+        self.assertEqual(len(payload["error"]["conflicts"]), 1)
+        blocker = payload["error"]["conflicts"][0]
+        self.assertEqual(blocker["id"], created.get_json()["id"])
+        self.assertEqual(blocker["partyName"], "张晓燕")
+        self.assertTrue(blocker["canEdit"])
+
+        clear_room = self.write(
+            "POST",
+            "/api/v1/rooms",
+            {"name": "无预约测试室", "sortOrder": 99, "isActive": True},
+        )
+        self.assertEqual(clear_room.status_code, 201, clear_room.get_json())
+        clear_room_id = clear_room.get_json()["id"]
+        clear_impact = self.client.get(
+            f"/api/v1/rooms/{clear_room_id}/deletion-impact"
+        )
+        self.assertEqual(clear_impact.status_code, 200, clear_impact.get_json())
+        self.assertEqual(clear_impact.get_json()["total"], 0)
+        self.assertEqual(clear_impact.get_json()["items"], [])
+
     def test_personal_history_filter_requires_selected_owner(self):
         room_id = self.bootstrap()["rooms"][0]["id"]
         created = self.write(
@@ -1056,6 +1095,20 @@ class ReservationTests(AuthenticatedReservationTestCase):
         with closing(sqlite3.connect(self.database)) as db, db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_slots").fetchone()[0], 0)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM reservation_events").fetchone()[0], 2)
+        active_booking = self.create_booking(start="10:00", caseNumber="ACTIVE-STATUS")
+        cancelled_history = self.client.get(
+            "/api/v1/reservations/history?month=2026-08&status=cancelled"
+        ).get_json()["items"]
+        self.assertEqual([item["id"] for item in cancelled_history], [booking["id"]])
+        active_history = self.client.get(
+            "/api/v1/reservations/history?month=2026-08&status=active"
+        ).get_json()["items"]
+        self.assertEqual([item["id"] for item in active_history], [active_booking["id"]])
+        invalid_status = self.client.get(
+            "/api/v1/reservations/history?month=2026-08&status=pending"
+        )
+        self.assertEqual(invalid_status.status_code, 422)
+        self.assertEqual(invalid_status.get_json()["error"]["code"], "VALIDATION_ERROR")
 
     def test_tag_snapshot_survives_rename_and_history_room_filter(self):
         booking = self.create_booking(tagId="tag-1")

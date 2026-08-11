@@ -319,6 +319,14 @@
   height: 7px;
 }
 
+.drawer-status.cancelled {
+  color: #8a6960;
+}
+
+.drawer-status.cancelled i {
+  background: #a95741;
+}
+
 .field {
   display: block;
   margin-top: 25px;
@@ -521,36 +529,184 @@
   margin-top: 10px;
 }
 
-.room-delete-zone {
-  margin-top: 34px;
-  padding-top: 25px;
-  border-top: 1px solid var(--hairline);
-}
-
-.room-delete-zone button {
-  min-height: 44px;
+.room-delete-button {
+  min-height: 42px;
+  margin-top: 28px;
   display: inline-flex;
   align-items: center;
-  padding: 0;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0 16px;
   color: #9f513d;
-  border: 0;
-  border-bottom: 1px solid rgba(159, 81, 61, 0.24);
+  border: 1px solid rgba(159, 81, 61, 0.24);
+  border-radius: 10px;
   background: transparent;
   cursor: pointer;
   font-size: 13px;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.room-delete-zone button:disabled {
-  color: var(--faint);
-  border-bottom-color: transparent;
-  cursor: not-allowed;
+.room-delete-button:hover {
+  border-color: rgba(159, 81, 61, 0.42);
+  background: rgba(159, 81, 61, 0.045);
 }
 
-.room-delete-zone p {
-  margin: 8px 0 0;
-  color: var(--faint);
+.room-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.room-delete-confirmation,
+.room-delete-blocked {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  padding: 34px 32px 40px;
+}
+
+.room-delete-confirmation-copy,
+.room-delete-blocked-copy {
+  padding: 12px 0 27px;
+}
+
+.room-delete-confirmation-copy .room-delete-kicker,
+.room-delete-blocked-copy .room-delete-kicker {
+  display: block;
+  margin-bottom: 12px;
+  color: #a95741;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.room-delete-confirmation-copy h2,
+.room-delete-blocked-copy h2 {
+  margin: 0 0 11px;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.room-delete-confirmation-copy p,
+.room-delete-blocked-copy p,
+.room-delete-more {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.room-delete-confirmation-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 16px 0;
+  color: var(--muted);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.55;
+}
+
+.room-delete-confirmation-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #a95741;
+}
+
+.room-delete-confirmation-actions {
+  margin-top: auto;
+  padding-top: 30px;
+}
+
+.room-delete-confirmation-actions .secondary-button {
+  margin-top: 10px;
+}
+
+.room-delete-booking-list {
+  display: grid;
+  gap: 9px;
+}
+
+.room-delete-booking-list > button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 9px 12px;
+  padding: 15px 16px;
+  text-align: left;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.26);
+  cursor: pointer;
+}
+
+.room-delete-booking-list > button:hover {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.room-delete-booking-date,
+.room-delete-booking-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.room-delete-booking-date {
+  gap: 7px;
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+
+.room-delete-booking-date strong {
+  font-weight: 560;
+}
+
+.room-delete-booking-date small {
+  color: var(--muted);
+}
+
+.room-delete-booking-summary {
+  grid-column: 1 / 2;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.room-delete-booking-summary strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 580;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-delete-booking-summary small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.room-delete-booking-action {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.room-delete-more {
+  margin-top: 14px;
+}
+
+.room-delete-blocked-back {
+  margin-top: 24px;
 }
 
 .tag-field {

@@ -82,6 +82,44 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.room-overview.room-count-2 {
+  width: min(1000px, 100%);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.room-overview.room-count-1 {
+  width: min(920px, 100%);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.room-overview.room-count-1 .room-column {
+  min-height: 430px;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(280px, 1fr);
+  grid-template-areas:
+    "heading metrics"
+    "next next";
+  align-items: center;
+  gap: 30px 76px;
+  padding: 44px 0 30px;
+  border-left: 0;
+}
+
+.room-count-1 .room-column-heading {
+  grid-area: heading;
+}
+
+.room-count-1 .room-metrics {
+  grid-area: metrics;
+  margin: 0;
+}
+
+.room-count-1 .room-next-booking {
+  grid-area: next;
+  margin: 0;
+  padding-top: 28px;
+}
+
 .room-column {
   min-width: 0;
   display: flex;

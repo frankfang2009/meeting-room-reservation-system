@@ -94,12 +94,12 @@ DNS rebinding 夺取首次管理员：
 `GET /api/v1/reservations?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&pageSize=...&cursor=...`
 返回认证用户可见的共享日历完整详情。
 
-`GET /api/v1/reservations/history?month=YYYY-MM&ownerId=...&tagId=...&query=...&pageSize=...&cursor=...`：
+`GET /api/v1/reservations/history?month=YYYY-MM&ownerId=...&status=active|cancelled&tagId=...&query=...&pageSize=...&cursor=...`：
 员工始终由服务端收窄为本人，忽略或拒绝扩权参数。
 
 日期接受 `0001-01-01` 至 `9999-12-31`，但查询跨度最多 366 天。历史月份接受
 `0001-01` 至 `9999-11`；`9999-12` 无法安全形成右开区间，稳定返回 422 JSON，
-不得进入 500。游标与首次请求的日期/月、owner、room、tag 和 query 筛选绑定；
+不得进入 500。历史状态筛选只接受 `active` 或 `cancelled`；游标与首次请求的日期/月、owner、room、status、tag 和 query 筛选绑定；
 把旧游标用于不同筛选会返回 `422 INVALID_CURSOR`。
 
 两个列表都返回：

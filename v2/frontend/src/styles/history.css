@@ -101,32 +101,40 @@
   font-weight: 400;
 }
 
-.history-filter-popover .history-scope-options {
+.history-filter-popover .history-choice-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-bottom: 12px;
 }
 
-.history-filter-popover .history-scope-options label {
+.history-filter-popover .history-scope-options {
+  grid-template-columns: 1fr 1fr;
+}
+
+.history-filter-popover .history-status-options {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 0;
+}
+
+.history-filter-popover .history-choice-options label {
   min-height: 44px;
   gap: 9px;
   padding: 8px 10px;
   border: 1px solid transparent;
 }
 
-.history-filter-popover .history-scope-options label:has(input:checked) {
+.history-filter-popover .history-choice-options label:has(input:checked) {
   border-color: color-mix(in srgb, var(--terracotta) 36%, var(--hairline));
   background: color-mix(in srgb, var(--terracotta) 7%, transparent);
 }
 
-.history-filter-popover .history-scope-options input[type="radio"] {
+.history-filter-popover .history-choice-options input[type="radio"] {
   width: 18px;
   height: 18px;
   border-radius: 50%;
 }
 
-.history-filter-popover .history-scope-options input[type="radio"]::before {
+.history-filter-popover .history-choice-options input[type="radio"]::before {
   width: 8px;
   height: 8px;
   clip-path: none;
@@ -134,7 +142,7 @@
   background: var(--terracotta);
 }
 
-.history-filter-popover .history-scope-options input[type="radio"]:checked {
+.history-filter-popover .history-choice-options input[type="radio"]:checked {
   border-color: var(--terracotta);
   background: transparent;
 }
@@ -491,6 +499,26 @@
   height: 10px;
   border-radius: 50%;
   background: var(--tag-color);
+}
+
+.history-row-end.cancelled {
+  grid-template-columns: auto 28px;
+  gap: 12px;
+}
+
+.history-cancelled-status {
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 7px;
+  color: #8a6960;
+  border: 1px solid rgba(138, 105, 96, 0.28);
+  border-radius: 999px;
+  background: rgba(169, 87, 65, 0.035);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .history-row-end svg {

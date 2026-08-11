@@ -646,6 +646,12 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
     if room_id:
         clauses.append("r.room_id = ?")
         params.append(room_id)
+    status_value = str(args.get("status") or "").strip() or None
+    if status_value and status_value not in {"active", "cancelled"}:
+        raise ApiError(422, "VALIDATION_ERROR", "预约状态无效")
+    if status_value:
+        clauses.append("r.status = ?")
+        params.append(status_value)
     if tag_slot:
         clauses.append("r.tag_slot = ?")
         params.append(tag_slot)
@@ -664,6 +670,7 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
             "month": month,
             "ownerId": owner_id,
             "roomId": room_id,
+            "status": status_value,
             "tagSlot": tag_slot,
             "query": query,
         }

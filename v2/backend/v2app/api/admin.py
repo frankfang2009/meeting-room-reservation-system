@@ -16,8 +16,9 @@ from ..common import (
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
-from ..security import admin_required, locked_actor, serialize_user
+from ..security import admin_required, current_user, locked_actor, serialize_user
 from ..services.audit import write_security_audit
+from ..services.reservations import serialize_reservation
 from .core import serialize_room_with_metrics, serialize_rooms_with_metrics
 
 
@@ -67,6 +68,47 @@ def list_rooms():
         "SELECT * FROM rooms ORDER BY sort_order, name"
     ).fetchall()
     return jsonify({"items": serialize_rooms_with_metrics(db, rows)})
+
+
+def _room_deletion_impact(db, room_id: str, actor: dict[str, Any]):
+    room = db.execute("SELECT * FROM rooms WHERE id = ?", (room_id,)).fetchone()
+    if room is None:
+        raise ApiError(404, "NOT_FOUND", "笔录室不存在")
+    now = local_now().replace(tzinfo=None)
+    boundary = (room_id, now.date().isoformat(), now.date().isoformat(), now.strftime("%H:%M"))
+    total = db.execute(
+        """
+        SELECT COUNT(*) FROM reservations
+        WHERE room_id = ? AND status = 'active'
+          AND (booking_date > ? OR (booking_date = ? AND end_time > ?))
+        """,
+        boundary,
+    ).fetchone()[0]
+    rows = []
+    if total:
+        rows = db.execute(
+            """
+            SELECT r.* FROM reservations r
+            WHERE r.room_id = ? AND r.status = 'active'
+              AND (r.booking_date > ? OR (r.booking_date = ? AND r.end_time > ?))
+            ORDER BY r.booking_date, r.start_time, r.id
+            LIMIT 50
+            """,
+            boundary,
+        ).fetchall()
+    return room, {
+        "room": {"id": room_id, "name": room["name"]},
+        "total": total,
+        "items": [serialize_reservation(row, actor) for row in rows],
+    }
+
+
+@bp.get("/rooms/<room_id>/deletion-impact")
+@admin_required
+def room_deletion_impact(room_id: str):
+    actor = current_user()
+    _, impact = _room_deletion_impact(get_db(), room_id, actor)
+    return jsonify(impact)
 
 
 @bp.post("/rooms")
@@ -177,22 +219,21 @@ def update_room(room_id: str):
 @admin_required
 def delete_room(room_id: str):
     db = get_db()
-    now = local_now().replace(tzinfo=None)
     with transaction(db):
         actor = locked_actor(db, admin=True)
-        room = db.execute("SELECT * FROM rooms WHERE id = ?", (room_id,)).fetchone()
-        if room is None:
-            raise ApiError(404, "NOT_FOUND", "笔录室不存在")
-        future_count = db.execute(
-            """
-            SELECT COUNT(*) FROM reservations
-            WHERE room_id = ? AND status = 'active'
-              AND (booking_date > ? OR (booking_date = ? AND end_time > ?))
-            """,
-            (room_id, now.date().isoformat(), now.date().isoformat(), now.strftime("%H:%M")),
-        ).fetchone()[0]
-        if future_count:
-            raise ApiError(409, "ROOM_HAS_FUTURE_BOOKINGS", "该笔录室仍有未结束预约，不能删除")
+        room, impact = _room_deletion_impact(db, room_id, actor)
+        if impact["total"]:
+            raise ApiError(
+                409,
+                "ROOM_HAS_FUTURE_BOOKINGS",
+                "该笔录室仍有未结束预约，不能删除",
+                conflicts=impact["items"],
+                current={
+                    "roomId": room_id,
+                    "roomName": room["name"],
+                    "total": impact["total"],
+                },
+            )
         db.execute("DELETE FROM rooms WHERE id = ?", (room_id,))
         write_security_audit(
             db,

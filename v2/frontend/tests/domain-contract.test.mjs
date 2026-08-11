@@ -3,13 +3,16 @@ import test from "node:test";
 import {
   bookingTagContext,
   bookingPayload,
+  calendarTimeLineOffset,
   canManageBooking,
   canViewBookingDetails,
   clampDurationToWorkday,
   findFirstAvailableStart,
   generateTimeSlots,
+  hasBookingStarted,
   isDrawerAllowed,
   isSameBooking,
+  maximumAvailableDuration,
   projectServerClock,
   rebaseBookingEdit,
   reservationConflictDifferences,
@@ -23,6 +26,13 @@ import {
   validateSetupUsername,
   waitForSetupRestart,
 } from "../src/domain.js";
+import { reservationStatusLabel } from "../src/ui/presentation.js";
+
+test("reservation statuses are always projected as Chinese UI copy", () => {
+  assert.equal(reservationStatusLabel("active"), "已预约");
+  assert.equal(reservationStatusLabel("cancelled"), "已取消");
+  assert.equal(reservationStatusLabel("unexpected"), "状态未知");
+});
 
 test("generates adjacent working-hour slots", () => {
   assert.deepEqual(generateTimeSlots("08:30", "10:00"), [
@@ -35,6 +45,40 @@ test("clamps the default duration to the remaining working day", () => {
   assert.equal(clampDurationToWorkday({ desired: 60, start: "17:00", workEnd: "17:30" }), 30);
   assert.equal(clampDurationToWorkday({ desired: 180, start: "16:00", workEnd: "17:30" }), 90);
   assert.equal(clampDurationToWorkday({ desired: 60, start: "09:00", workEnd: "17:30" }), 60);
+});
+
+test("treats the current and earlier server-local slots as already started", () => {
+  const clock = { serverDate: "2026-08-10", serverTime: "15:20:45" };
+  assert.equal(hasBookingStarted({ date: "2026-08-09", start: "17:00", ...clock }), true);
+  assert.equal(hasBookingStarted({ date: "2026-08-10", start: "15:00", ...clock }), true);
+  assert.equal(hasBookingStarted({ date: "2026-08-10", start: "15:20", ...clock }), true);
+  assert.equal(hasBookingStarted({ date: "2026-08-10", start: "15:30", ...clock }), false);
+  assert.equal(hasBookingStarted({ date: "2026-08-11", start: "08:30", ...clock }), false);
+  assert.equal(hasBookingStarted({ date: "0001-01-01", start: "00:00", ...clock }), true);
+  assert.equal(hasBookingStarted({ date: "9999-12-31", start: "23:59", ...clock }), false);
+  assert.throws(() => hasBookingStarted({ date: "2026-02-30", start: "09:00", ...clock }), /out of range/);
+});
+
+test("caps duration at the next active booking in the selected room", () => {
+  const bookings = [
+    { id: "next", roomId: "room-1", date: "2026-08-11", start: "09:30", end: "10:30", status: "active" },
+    { id: "other-room", roomId: "room-2", date: "2026-08-11", start: "09:00", end: "12:00", status: "active" },
+    { id: "cancelled", roomId: "room-1", date: "2026-08-11", start: "09:00", end: "09:30", status: "cancelled" },
+  ];
+  const input = { bookings, roomId: "room-1", date: "2026-08-11", workEnd: "17:30" };
+  assert.equal(maximumAvailableDuration({ ...input, start: "09:00" }), 30);
+  assert.equal(maximumAvailableDuration({ ...input, start: "10:30" }), 180);
+  assert.equal(maximumAvailableDuration({ ...input, start: "09:00", excludeBookingId: "next" }), 180);
+  assert.equal(maximumAvailableDuration({ ...input, start: "17:00" }), 30);
+});
+
+test("positions the current-time line from the server-local working-day scale", () => {
+  const input = { selectedDate: "2026-08-11", serverDate: "2026-08-11", workStart: "08:30", workEnd: "17:30", slotMinutes: 30, rowHeight: 76 };
+  assert.equal(calendarTimeLineOffset({ ...input, serverTime: "08:30:00" }), 0);
+  assert.equal(calendarTimeLineOffset({ ...input, serverTime: "09:00:00" }), 76);
+  assert.equal(calendarTimeLineOffset({ ...input, serverTime: "09:15:00" }), 114);
+  assert.equal(calendarTimeLineOffset({ ...input, selectedDate: "2026-08-12", serverTime: "09:00:00" }), null);
+  assert.equal(calendarTimeLineOffset({ ...input, serverTime: "18:00:00" }), null);
 });
 
 test("revision conflicts expose field-level draft and server differences", () => {
@@ -108,6 +152,8 @@ test("administrator drawers are denied again at render time", () => {
   assert.equal(isDrawerAllowed("details", employee), true);
   assert.equal(isDrawerAllowed("token-created", employee), false);
   assert.equal(isDrawerAllowed("user-edit", employee), false);
+  assert.equal(isDrawerAllowed("room-delete-blocked", employee), false);
+  assert.equal(isDrawerAllowed("room-delete-confirm", { manageRooms: true }), true);
   assert.equal(isDrawerAllowed("token-created", { manageSystem: true }), true);
 });
 

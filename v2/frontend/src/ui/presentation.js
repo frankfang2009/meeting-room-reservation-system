@@ -44,6 +44,10 @@ export function itemName(user) {
   return user?.name || user?.username || "当前用户";
 }
 
+export function reservationStatusLabel(status) {
+  return { active: "已预约", cancelled: "已取消" }[status] || "状态未知";
+}
+
 export function formatLocalDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);

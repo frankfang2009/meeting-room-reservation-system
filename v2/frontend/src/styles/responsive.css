@@ -394,8 +394,15 @@
     margin-top: 48px;
   }
 
+  .room-overview.room-count-1,
+  .room-overview.room-count-2 {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
   .room-column,
-  .room-column:first-child {
+  .room-column:first-child,
+  .room-overview.room-count-1 .room-column {
     min-height: 260px;
     display: grid;
     grid-template-columns: 190px minmax(0, 1fr);
@@ -681,7 +688,8 @@
   }
 
   .room-column,
-  .room-column:first-child {
+  .room-column:first-child,
+  .room-overview.room-count-1 .room-column {
     min-height: 300px;
     grid-template-columns: 1fr;
     grid-template-areas:

@@ -69,6 +69,26 @@
   background: var(--terracotta);
 }
 
+.rail-reminder-badge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  color: var(--paper-raised);
+  border: 2px solid rgba(240, 238, 230, 0.98);
+  border-radius: 50%;
+  background: var(--terracotta);
+  box-shadow: 0 1px 5px rgba(20, 20, 19, 0.16);
+  pointer-events: none;
+}
+
+.rail-button.has-upcoming-reminder:hover .rail-reminder-badge {
+  background: #a94f38;
+}
+
 .avatar-button {
   margin-top: auto;
   margin-bottom: 23px;

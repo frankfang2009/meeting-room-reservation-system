@@ -12,6 +12,7 @@ import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from http.cookiejar import CookieJar
+from http.client import RemoteDisconnected
 from pathlib import Path
 from time import monotonic, sleep
 from unittest import mock
@@ -359,6 +360,12 @@ class PaginationAndReservationHardeningTests(BackendTestCase):
         )
         self.assertEqual(mismatched_filter.status_code, 422)
         self.assertEqual(mismatched_filter.get_json()["error"]["code"], "INVALID_CURSOR")
+        mismatched_status = self.client.get(
+            "/api/v1/reservations/history?month=2026-08&status=active&pageSize=1&cursor="
+            + history_page["nextCursor"]
+        )
+        self.assertEqual(mismatched_status.status_code, 422)
+        self.assertEqual(mismatched_status.get_json()["error"]["code"], "INVALID_CURSOR")
 
         for path in (
             "/api/v1/admin/audit?dateFrom=0001-01-01T00:00:00Z&dateTo=0001-01-01T00:00:00Z",
@@ -892,7 +899,13 @@ class SetupListenerProcessTests(unittest.TestCase):
                             and health.get("bind_mode") == "lan"
                         )
                         stable = stable + 1 if ready else 0
-                    except (URLError, TimeoutError, json.JSONDecodeError):
+                    except (
+                        URLError,
+                        TimeoutError,
+                        RemoteDisconnected,
+                        ConnectionResetError,
+                        json.JSONDecodeError,
+                    ):
                         stable = 0
                     sleep(0.05)
                 self.assertEqual(stable, 2, "replacement LAN listener never stabilized")

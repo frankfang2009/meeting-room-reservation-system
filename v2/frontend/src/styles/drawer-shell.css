@@ -46,6 +46,37 @@
   font-size: 13px;
 }
 
+.drawer-topline-leading {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.drawer-back {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin-left: -10px;
+  padding: 0;
+  color: var(--ink-secondary);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.drawer-back:hover {
+  color: var(--ink);
+  background: rgba(20, 20, 19, 0.05);
+}
+
+.drawer-back:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.28);
+  outline-offset: 2px;
+}
+
 .drawer-close {
   width: 44px;
   height: 44px;

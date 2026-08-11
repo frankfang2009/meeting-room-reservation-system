@@ -136,10 +136,46 @@
   color: var(--ink-secondary);
 }
 
-.system-status-row > strong {
+.system-status-row > strong,
+.system-status-value > strong {
   color: var(--ink-secondary);
   font-weight: 400;
   font-variant-numeric: tabular-nums;
+}
+
+.system-status-value {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.system-lan-address > strong {
+  overflow-wrap: anywhere;
+}
+
+.system-copy-address {
+  min-width: 62px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 130ms ease, border-color 130ms ease, background 130ms ease;
+}
+
+.system-copy-address:hover {
+  color: var(--ink);
+  border-color: rgba(20, 20, 19, 0.3);
+  background: var(--paper-raised);
 }
 
 .system-backup-row {

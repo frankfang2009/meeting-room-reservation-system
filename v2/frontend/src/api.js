@@ -140,8 +140,10 @@ export const api = {
   getReservationEvents: (id) => request(`/reservations/${encodeURIComponent(id)}/events`),
   getHistory: (filters) => request(query("/reservations/history", filters)),
 
+  getRooms: () => request("/rooms"),
   createRoom: (input) => request("/rooms", { method: "POST", body: input }),
   updateRoom: (id, input) => request(`/rooms/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),
+  getRoomDeletionImpact: (id) => request(`/rooms/${encodeURIComponent(id)}/deletion-impact`),
   deleteRoom: (id) => request(`/rooms/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   createUser: (input) => request("/users", { method: "POST", body: input }),

@@ -2,6 +2,8 @@ const VALID_ROLES = new Set(["admin", "employee"]);
 const ADMIN_DRAWER_PERMISSIONS = new Map([
   ["room-create", "manageRooms"],
   ["room-edit", "manageRooms"],
+  ["room-delete-confirm", "manageRooms"],
+  ["room-delete-blocked", "manageRooms"],
   ["user-create", "manageUsers"],
   ["user-edit", "manageUsers"],
   ["user-reset", "manageUsers"],
@@ -210,6 +212,32 @@ export function endFromDuration(start, duration) {
   return formatTime(parseTime(start) + Number(duration));
 }
 
+export function hasBookingStarted({ date, start, serverDate, serverTime } = {}) {
+  const parseDay = (value) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+    if (!match) throw new TypeError("A valid booking date is required");
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(0);
+    parsed.setUTCFullYear(year, month - 1, day);
+    parsed.setUTCHours(0, 0, 0, 0);
+    if (
+      parsed.getUTCFullYear() !== year
+      || parsed.getUTCMonth() !== month - 1
+      || parsed.getUTCDate() !== day
+    ) {
+      throw new RangeError("Booking date is out of range");
+    }
+    return parsed.getTime();
+  };
+
+  const bookingDay = parseDay(date);
+  const currentDay = parseDay(serverDate);
+  if (bookingDay !== currentDay) return bookingDay < currentDay;
+  return parseTime(start) <= parseTime(String(serverTime || "").slice(0, 5));
+}
+
 export function clampDurationToWorkday({
   desired,
   start,
@@ -224,6 +252,57 @@ export function clampDurationToWorkday({
   const remaining = durationFromRange(start, workEnd);
   const availableMaximum = Math.floor(Math.min(configuredMaximum, remaining) / step) * step;
   return availableMaximum >= step ? Math.min(Math.max(step, requested), availableMaximum) : 0;
+}
+
+export function maximumAvailableDuration({
+  bookings = [],
+  roomId,
+  date,
+  start,
+  workEnd,
+  maxDuration = 180,
+  slotMinutes = 30,
+  excludeBookingId = "",
+} = {}) {
+  const step = Number(slotMinutes) || 30;
+  const configuredMaximum = Number(maxDuration) || 180;
+  if (!roomId || !date || !start || !workEnd) return configuredMaximum;
+  const startMinutes = parseTime(start);
+  let boundary = Math.min(startMinutes + configuredMaximum, parseTime(workEnd));
+
+  for (const booking of bookings) {
+    if (
+      booking?.id === excludeBookingId
+      || booking?.status === "cancelled"
+      || booking?.roomId !== roomId
+      || booking?.date !== date
+      || !booking?.start
+      || !booking?.end
+    ) continue;
+    const bookingStart = parseTime(booking.start);
+    const bookingEnd = parseTime(booking.end);
+    if (bookingStart < startMinutes && bookingEnd > startMinutes) return 0;
+    if (bookingStart >= startMinutes) boundary = Math.min(boundary, bookingStart);
+  }
+
+  return Math.max(0, Math.floor((boundary - startMinutes) / step) * step);
+}
+
+export function calendarTimeLineOffset({
+  selectedDate,
+  serverDate,
+  serverTime,
+  workStart,
+  workEnd,
+  slotMinutes = 30,
+  rowHeight = 76,
+} = {}) {
+  if (selectedDate !== serverDate) return null;
+  const current = parseTime(String(serverTime || "").slice(0, 5));
+  const start = parseTime(workStart);
+  const end = parseTime(workEnd);
+  if (current < start || current > end) return null;
+  return ((current - start) / Number(slotMinutes || 30)) * Number(rowHeight || 76);
 }
 
 export function reservationConflictDifferences(draft, latest, { rooms = [], tags = [] } = {}) {

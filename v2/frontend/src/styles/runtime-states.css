@@ -1,6 +1,5 @@
 
-.icon-button:disabled,
-.today-button:disabled {
+.icon-button:disabled {
   color: var(--faint);
   border-color: var(--hairline);
   background: rgba(20, 20, 19, 0.018);

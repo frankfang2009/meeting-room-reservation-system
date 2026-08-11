@@ -24,8 +24,41 @@ test("service readiness probes the root health endpoint", async () => {
 });
 
 test("unused bootstrap-duplicating API helpers stay removed", () => {
-  for (const name of ["getReservation", "getRooms", "getUsers", "getPreferences"]) {
+  for (const name of ["getReservation", "getUsers", "getPreferences"]) {
     assert.equal(Object.hasOwn(api, name), false, name);
+  }
+});
+
+test("room metrics use the dedicated administrator refresh endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  try {
+    await api.getRooms();
+    assert.equal(captured, "/api/v1/rooms");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("room deletion preflight uses a read-only impact endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response(JSON.stringify({ room: { id: "room-1", name: "笔录室 1" }, total: 0, items: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await api.getRoomDeletionImpact("room/1");
+    assert.equal(captured, "/api/v1/rooms/room%2F1/deletion-impact");
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });
 
@@ -135,7 +168,7 @@ test("sends opaque pagination cursors for reservation and history pages", async 
   try {
     const cursor = "signed+/opaque=value";
     await api.getReservations("2026-08-10", "2026-08-16", { pageSize: 200, cursor });
-    await api.getHistory({ month: "2026-08", ownerId: "user-1", pageSize: 25, cursor });
+    await api.getHistory({ month: "2026-08", ownerId: "user-1", status: "cancelled", pageSize: 25, cursor });
 
     const reservations = new URL(urls[0], "http://localhost");
     assert.equal(reservations.pathname, "/api/v1/reservations");
@@ -148,6 +181,7 @@ test("sends opaque pagination cursors for reservation and history pages", async 
     assert.equal(history.pathname, "/api/v1/reservations/history");
     assert.equal(history.searchParams.get("month"), "2026-08");
     assert.equal(history.searchParams.get("ownerId"), "user-1");
+    assert.equal(history.searchParams.get("status"), "cancelled");
     assert.equal(history.searchParams.get("pageSize"), "25");
     assert.equal(history.searchParams.get("cursor"), cursor);
   } finally {

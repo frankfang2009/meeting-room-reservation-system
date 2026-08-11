@@ -12,6 +12,8 @@ const productionSource = fs.readdirSync(path.join(root, "src"), { recursive: tru
   .join("\n");
 const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
+const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
+const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
   for (const forbidden of ["demo123", "demo1234", "URLSearchParams", "loginState=", "bookingState=", "feedbackState=", "displayState=", "dataState="]) {
@@ -48,9 +50,18 @@ test("change notifications start the same due-reminder poller", () => {
 
 test("acknowledging a change refreshes affected views and fetches the next notice", () => {
   assert.match(app, /acknowledged\.kind === "change"/);
-  assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\)\]\)/);
+  assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)\]\)/);
   assert.match(app, /const result = await api\.getDueReminders\(\)/);
   assert.match(app, /reminderDisplayMessage\(dueReminder\)/);
+});
+
+test("upcoming reminders use the mine navigation clock badge instead of a bottom toast", () => {
+  assert.match(app, /id === "mine" && dueReminder\?\.kind === "upcoming"/);
+  assert.match(app, /className="rail-reminder-badge"/);
+  assert.match(app, /<Clock size=\{11\} weight="fill"/);
+  assert.match(app, /openMineAndAcknowledgeReminder/);
+  assert.match(app, /dueReminder\?\.kind === "change" && <div className="toast visible reminder-toast"/);
+  assert.doesNotMatch(app, /\{dueReminder && <div className="toast visible reminder-toast"/);
 });
 
 test("the frozen empty-state action consumes a valid default room", () => {
@@ -148,7 +159,8 @@ test("mine, history, and users expose the frozen visual tools", () => {
   assert.match(app, /className="history-search-popover"/);
   assert.match(app, /className="history-month-button"/);
   assert.match(app, /className="history-filter-section history-scope-section"/);
-  assert.match(app, /className="history-scope-options"/);
+  assert.match(app, /className="history-choice-options history-scope-options"/);
+  assert.match(app, /className="history-choice-options history-status-options"/);
   assert.match(app, /className="history-personal-helper"/);
   assert.match(app, /historyUserSelectRef\.current\?\.focus\(\)/);
   assert.match(app, /加载\{previousHistoryMonth\.label\}的记录/);
@@ -204,4 +216,94 @@ test("editing another user's booking resolves personal tags from the owner", () 
 
 test("resetting the signed-in administrator password enters reauthentication immediately", () => {
   assert.match(app, /result\?\.reauthenticate[\s\S]*setSessionExpired\(true\)/);
+});
+
+test("duration slider visual thumb shares the inset track coordinate system", () => {
+  assert.match(app, /duration-slider-track[\s\S]{0,240}duration-slider-knob[\s\S]{0,160}<\/div><input className="duration-range-input"/);
+});
+
+test("room deletion is confirmed and blocking bookings lead directly to adjustment", () => {
+  assert.match(adminForms, /className="room-delete-button"/);
+  assert.match(adminForms, /先调整预约，再删除/);
+  assert.match(adminForms, /调整预约/);
+  assert.match(app, /useFocusTrap\(ref, open, onClose, true, heading\)/);
+  assert.match(app, /api\.getRoomDeletionImpact\(room\.id\)/);
+  assert.match(app, /roomDeletionDrawer\(room, impact\)/);
+  assert.match(app, /error\.code === "ROOM_HAS_FUTURE_BOOKINGS"/);
+  assert.match(app, /bookings: error\.conflicts/);
+  assert.match(app, /booking\.canEdit \? openEdit\(booking, returnTo\) : openDetails\(booking, false, returnTo\)/);
+  assert.match(app, /aria-label="返回待处理预约"/);
+  assert.match(app, /onBack=\{drawer\?\.returnTo \? \(\) => setDrawer\(drawer\.returnTo\) : null\}/);
+  assert.match(app, /refreshRoomDeletionFlow\(returnTo\.room, returnTo\)/);
+});
+
+test("past server-local slots cannot open or submit a create flow", () => {
+  assert.match(app, /hasBookingStarted\(\{[\s\S]{0,180}serverDate: businessClock\.date/);
+  assert.match(app, /disabled=\{networkOffline \|\| slotStarted\}/);
+  assert.match(app, /error\.code === "BOOKING_STARTED"[\s\S]{0,500}setPreservedDraft\(bookingForm\)/);
+  assert.match(app, /drawer\.type === "edit"[\s\S]{0,180}预约已经开始，不能再修改/);
+  assert.match(app, /预约内容已保留。请选择当前时间之后的空白时段/);
+});
+
+test("duration availability stops at the next room booking without shrinking the visual scale", () => {
+  assert.match(app, /maximumAvailableDuration\(\{[\s\S]{0,260}excludeBookingId/);
+  assert.match(app, /max=\{scaleMaximum\}/);
+  assert.match(app, /Math\.min\(maximum, Number\(event\.target\.value\)\)/);
+  assert.match(app, /--duration-available-progress/);
+});
+
+test("calendar time labels and the server-time line share the schedule coordinate system", () => {
+  assert.match(app, /calendarTimeLineOffset\(\{/);
+  assert.match(app, /className="current-time-line"/);
+  assert.match(app, /aria-label=\{`当前时间/);
+});
+
+test("calendar supports direct date jumps and adaptive room-count layouts", () => {
+  assert.match(app, /type="date"[^>]*aria-label="跳转到日期"/);
+  assert.match(app, /value=\{dateKey\(currentDate\)\}/);
+  assert.match(app, /className="calendar-day-navigation" role="group" aria-label="日期导航"/);
+  assert.match(app, /className=\{`calendar-date-picker/);
+  assert.match(app, /dateKey\(currentDate\)\.replaceAll\("-", "\/"\)/);
+  assert.match(app, /calendar-room-count-\$\{activeRooms\.length\}/);
+  assert.match(app, /room-count-\$\{orderedRooms\.length\}/);
+});
+
+test("cancelled history rows and details use a restrained Chinese status projection", () => {
+  assert.match(app, /history-row \$\{booking\.status === "cancelled" \? "cancelled" : ""\}/);
+  assert.match(app, /className="history-cancelled-status">已取消/);
+  assert.match(app, /reservationStatusLabel\(booking\.status\)/);
+  assert.doesNotMatch(app, /booking\.status === "active" \? "已预约" : booking\.status/);
+  assert.doesNotMatch(historyStyles, /\.history-row\.cancelled\s*\{/);
+  assert.doesNotMatch(historyStyles, /\.history-row\.cancelled \.history-(?:date-anchor|time|room|booking-summary)/);
+  assert.match(app, /historyStatus === "active"/);
+  assert.match(app, /setHistoryStatus\("cancelled"\)/);
+  assert.match(app, /预约状态/);
+  assert.match(app, /正常预约/);
+});
+
+test("configured LAN address has a trusted-HTTP copy fallback", () => {
+  assert.match(app, /system\?\.bindMode === "lan" && Boolean\(system\?\.lanAddress\)/);
+  assert.match(app, /aria-label="复制局域网地址"/);
+  assert.match(app, /await copyText\(system\.lanAddress\)/);
+  assert.match(app, /document\.execCommand\("copy"\)/);
+  assert.match(app, /局域网地址已复制，可以直接发送给员工/);
+});
+
+test("administrator room metrics refresh after booking changes and while visible", () => {
+  assert.match(app, /unwrapItems\(await api\.getRooms\(\)\)/);
+  assert.match(app, /activeView !== "rooms"[\s\S]{0,260}window\.setInterval\(\(\) => loadRooms\(\{ silent: true \}\), 30000\)/);
+  assert.match(app, /loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)/);
+});
+
+test("security audit is Chinese, collapsible, and counts newly received rows", () => {
+  assert.match(app, /"room\.created": "创建笔录室"/);
+  assert.match(app, /auditOutcomeLabel\(outcome\)/);
+  assert.doesNotMatch(app, /title=\{item\.action\}/);
+  assert.doesNotMatch(app, /<small>\{item\.action\}<\/small>/);
+  assert.match(app, /auditHidden \? "显示" : "隐藏"/);
+  assert.match(app, /setAuditUnreadCount\(\(current\) => current \+ newlyReceived\.length\)/);
+  assert.match(app, /action: hidden \? "" : auditFilters\.action\.trim\(\)/);
+  assert.match(app, /auditHiddenRef\.current = nextHidden/);
+  assert.match(app, /if \(!nextHidden\) \{[\s\S]{0,120}setAuditUnreadCount\(0\);[\s\S]{0,80}loadAudit\(\)/);
+  assert.match(app, /system-audit-unread/);
 });
