@@ -83,7 +83,9 @@ class RuntimeBuilderTests(unittest.TestCase):
         self.assertEqual(
             tuple(
                 line.strip()
-                for line in (output / "python313._pth").read_text().splitlines()
+                for line in (output / "python313._pth").read_text(
+                    encoding="utf-8"
+                ).splitlines()
                 if line.strip()
             ),
             RUNTIME_PTH_LINES,
@@ -95,9 +97,13 @@ class RuntimeBuilderTests(unittest.TestCase):
         provenance = validate_runtime_supply_chain(output, _test_fixture=True)
         self.assertEqual(provenance["python"]["source_sha256"], embed_sha)
         self.assertEqual(len(provenance["components"]), 2)
-        sbom = json.loads((output / "supply-chain" / "sbom.cdx.json").read_text())
+        sbom = json.loads(
+            (output / "supply-chain" / "sbom.cdx.json").read_text(encoding="utf-8")
+        )
         self.assertEqual(len(sbom["components"]), 3)
-        notices = (output / "supply-chain" / "THIRD-PARTY-NOTICES.txt").read_text()
+        notices = (output / "supply-chain" / "THIRD-PARTY-NOTICES.txt").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("Synthetic CPython license", notices)
         self.assertIn("Synthetic MIT license", notices)
 

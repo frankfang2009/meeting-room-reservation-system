@@ -33,10 +33,12 @@ class AssemblePayloadTests(unittest.TestCase):
         (self.backend / "requirements.txt").write_text(
             "Flask==3.1.3\nwaitress==3.0.2\n", encoding="utf-8"
         )
-        (self.backend / "requirements-win-amd64.lock").write_text(
-            "Flask==3.1.3 --hash=sha256:" + "1" * 64 + "\n"
-            "waitress==3.0.2 --hash=sha256:" + "2" * 64 + "\n",
-            encoding="utf-8",
+        (self.backend / "requirements-win-amd64.lock").write_bytes(
+            b"Flask==3.1.3 --hash=sha256:"
+            + b"1" * 64
+            + b"\nwaitress==3.0.2 --hash=sha256:"
+            + b"2" * 64
+            + b"\n"
         )
         (self.backend / "v2app" / "__init__.py").write_text("# app\n", encoding="utf-8")
         (runtime_code / "identity.py").write_text("# identity\n", encoding="utf-8")
@@ -85,6 +87,12 @@ class AssemblePayloadTests(unittest.TestCase):
         fixture = self.root / "runtime-fixture"
         fixture.mkdir()
         _, runtime = create_inputs(fixture)
+        payload_lock = payload / "_程序文件" / "app" / "requirements-win-amd64.lock"
+        runtime_lock = runtime / "supply-chain" / "requirements.lock"
+        self.assertEqual(
+            payload_lock.read_bytes(),
+            runtime_lock.read_bytes(),
+        )
         output = self.root / "out"
         output.mkdir()
         result = build_package(payload, runtime, output / ARTIFACT_NAME)
