@@ -417,6 +417,15 @@ class InstallerCoreTests(unittest.TestCase):
         self.assertIn("-band (-bnot $allowed)", verify)
         self.assertIn("私有目录向 Users 暴露", verify)
         self.assertIn("受保护身份文件与当前 install_id 不一致", verify)
+        self.assertIn(
+            "$registryKey = Get-Item -LiteralPath $env:MRV2_REGISTRY_KEY",
+            verify,
+        )
+        self.assertIn("Get-Acl -InputObject $registryKey", verify)
+        self.assertNotIn(
+            "Get-Acl -LiteralPath $env:MRV2_REGISTRY_KEY",
+            verify,
+        )
 
     def test_windows_tasks_use_one_daily_backup_bound_to_install_id(self) -> None:
         configure = inspect.getsource(WindowsSystemController.configure_disabled)

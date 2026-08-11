@@ -1442,6 +1442,7 @@ if (
     [string]$installInfo.install_id -ne $env:MRV2_INSTALL_ID -or
     [int]$installInfo.product_generation -ne 2
 ) { throw 'V2 受保护身份文件与当前 install_id 不一致。' }
+$registryKey = Get-Item -LiteralPath $env:MRV2_REGISTRY_KEY -ErrorAction Stop
 $registered = Get-ItemProperty -LiteralPath $env:MRV2_REGISTRY_KEY -ErrorAction Stop
 if (
     [string]$registered.TransactionInstallId -ne $env:MRV2_INSTALL_ID -or
@@ -1454,7 +1455,7 @@ if (
     [string]$registered.BackgroundFirewallName -ne $env:MRV2_FW_BACKGROUND -or
     [int]$registered.SecurityDescriptorVersion -ne 1
 ) { throw 'V2 注册表身份或安全描述符版本不一致。' }
-$registryAcl = Get-Acl -LiteralPath $env:MRV2_REGISTRY_KEY
+$registryAcl = Get-Acl -InputObject $registryKey
 if (-not $registryAcl.AreAccessRulesProtected) { throw 'V2 注册表 ACL 仍允许继承。' }
 $registryOwner = $registryAcl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
 if ($registryOwner -ne $adminSid) { throw 'V2 注册表所有者不是 Administrators。' }
