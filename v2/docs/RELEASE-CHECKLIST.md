@@ -8,10 +8,10 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 
 | 编号 | 命令或证据 | 实际结果 |
 | --- | --- | --- |
-| E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 64 通过；独立用例 64；继承重复 0；含当前用户已完成预约活动聚合及按日本人明细边界、笔录室删除阻断预约投影、历史状态服务端筛选与游标绑定；真实 Waitress handoff 通过且无 ResourceWarning |
+| E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 64 通过；独立用例 64；继承重复 0；含当前用户已完成活动汇总及本人边界、笔录室删除阻断预约投影、历史状态服务端筛选与游标绑定；真实 Waitress handoff 通过且无 ResourceWarning |
 | E2 | `v2/backend/.venv/bin/python -m unittest discover -s v2/installer/tests -v` | runner 60 通过；独立用例 60；继承重复 0 |
 | E3 | `v2/backend/.venv/bin/python -m unittest discover -s v2/tests -v` | runner 18 通过；独立用例 18；继承重复 0；含个人活动服务端聚合/本人边界与损坏或迁移后虚拟环境重建契约 |
-| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；105/105 通过；含个人中心活动按日下钻/详情入口、6/12 个月范围、账号隔离默认首页、服务端个人标签保存、无最近完成/热力图图例、滑块端点坐标、下一条同室预约动态上限、服务端时间下的过期时段禁用、日历刻度与当前时间线、紧凑日期导航、单/双/多房间布局、房间统计刷新、笔录室删除预检/阻断预约直达调整与返回、临近预约导航时钟徽标、取消记录中文状态/克制标签/正常与已取消筛选、真实 LAN 地址复制及 HTTP fallback、安全审计中文化/隐藏/未读提醒回归；全局 CSS 拆分契约和更新后的源码 SHA 通过；Vite 6.4.3 生产构建成功（CSS 125.75 kB，JS 428.60 kB） |
+| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；102/102 通过；含个人中心真实活动概览/四项统计、热力图及按日下钻删除、账号隔离默认首页、服务端个人标签保存、滑块端点坐标、下一条同室预约动态上限、服务端时间下的过期时段禁用、日历刻度与当前时间线、紧凑日期导航、单/双/多房间布局、房间统计刷新、笔录室删除预检/阻断预约直达调整与返回、临近预约导航时钟徽标、取消记录中文状态/克制标签/正常与已取消筛选、真实 LAN 地址复制及 HTTP fallback、安全审计中文化/隐藏/未读提醒回归；全局 CSS 拆分契约和更新后的源码 SHA 通过；Vite 6.4.3 生产构建成功（CSS 122.03 kB，JS 422.74 kB） |
 | E5 | `v2/backend/.venv/bin/python -m ruff check --no-cache v2/backend v2/installer v2/tests`、`v2/backend/.venv/bin/python -m compileall -q v2/backend v2/installer v2/tests`、`git diff --check` | 全部通过 |
 | E6（已作废） | `PYTHON_BIN="$PWD/v2/backend/.venv/bin/python" .github/scripts/v2-reproducible-build.sh "$PWD" /private/tmp/meeting-room-v2-css-split-repro-20260810-2 /private/tmp/meeting-room-v2-runtime-materials/python-3.13.14-embed-amd64.zip /private/tmp/meeting-room-v2-runtime-materials/wheels /private/tmp/meeting-room-v2-css-split-repro-20260810-2-export` | 此前 CSS 拆分版本曾逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；后续滑块与过期时段修复改变生产源代码，此证据及其 ZIP SHA 只保留为历史记录，不再代表当前源码 |
 | E7 | `cd v2/backend && .venv/bin/python -m unittest tests.test_hardening.SetupListenerProcessTests.test_real_waitress_setup_handoff_has_no_bad_file_descriptor -v` | 真实 Waitress 子进程收到 setup 201，连续两次确认 `bind_mode=lan`；无 `Bad file descriptor`/`Errno 9` |
@@ -41,7 +41,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 - [x] CI 定义为两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload 与六件套，并比较每层结果。（E3、E8；当前源码的实际双构建仍待执行）
 - [x] Windows BAT 与候选门禁对 launcher 缺失、工具目录缺失、runtime Python 缺失/启动失败、产品拒绝和产品成功使用独立码或精确 marker。（E2、E3）
 - [x] 未使用的 `getReservation/getUsers/getPreferences` 已删除；`getRooms` 作为预约变更后的房间统计刷新接口保留并有调用；变更记录、审计和提醒接口保留。（E4）
-- [x] 个人活动热力图只让有记录日期进入本人已完成预约明细，服务端再次按 session 用户过滤；偏好中的个人标签由服务端保存，默认首页与 6/12 个月范围按账号隔离在当前浏览器并明确标注存储边界。（E1、E3、E4；真实浏览器证据见 `v2/frontend/design-qa.md`）
+- [x] 个人活动页只保留服务端按 session 用户聚合的本人概览与四项统计；热力图、日期范围、月份标记、按日明细接口和活动范围偏好已一并删除。个人标签由服务端保存，默认首页按账号隔离在当前浏览器并明确标注存储边界。（E1、E3、E4；真实浏览器证据见 `v2/frontend/design-qa.md`）
 - [x] 日历头部把日期跳转合并到日期标题，并将前一天/今天/后一天收为一个分段控件；正式 LAN 模式只在真实地址存在时提供复制操作，普通 HTTP 浏览器有安全 fallback。（E4）
 - [x] 笔录室删除先由只读服务端预检分流；无未结束预约才确认删除，有阻断预约则返回最多 50 条管理员可操作投影及总数，前端列出并直达调整/详情且可返回原清单；DELETE 仍在事务中复检。（E1、E4）
 - [x] `update_core.py` 明确标记为不进入 V2.0.0 payload 的非生产未来基线，未宣称在线升级可用。（E2、E3）

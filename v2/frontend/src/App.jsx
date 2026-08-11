@@ -903,18 +903,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingEvents, setBookingEvents] = useState([]);
   const [bookingEventsState, setBookingEventsState] = useState("idle");
   const [preferencesDraft, setPreferencesDraft] = useState(() => initialBootstrap?.preferences || null);
-  const [uiPreferences, setUiPreferences] = useState(initialUiPreferences);
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
   const [profileTab, setProfileTab] = useState("activity");
   const [activity, setActivity] = useState(null);
   const [activityState, setActivityState] = useState("idle");
-  const [activityDay, setActivityDay] = useState(null);
-  const [activityDayState, setActivityDayState] = useState("idle");
   const [dueReminder, setDueReminder] = useState(null);
   const [preservedDraft, setPreservedDraft] = useState(null);
   const mainRef = useRef(null);
   const eventRequestRef = useRef(0);
-  const activityDayRequestRef = useRef(0);
   const calendarRequestRef = useRef(0);
   const calendarAbortRef = useRef(null);
   const historyRequestRef = useRef(0);
@@ -1103,29 +1099,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setActivityState("ready");
     } catch (error) {
       setActivityState("failed");
-      handleError(error, "无法读取预约活动");
-    }
-  }, [handleError]);
-
-  const loadActivityDay = useCallback(async (day) => {
-    const requestNumber = activityDayRequestRef.current + 1;
-    activityDayRequestRef.current = requestNumber;
-    if (!day) {
-      setActivityDay(null);
-      setActivityDayState("idle");
-      return;
-    }
-    setActivityDay({ date: day, items: [] });
-    setActivityDayState("loading");
-    try {
-      const result = await api.getActivityDay(day);
-      if (activityDayRequestRef.current !== requestNumber) return;
-      setActivityDay({ date: result.date || day, items: unwrapItems(result) });
-      setActivityDayState("ready");
-    } catch (error) {
-      if (activityDayRequestRef.current !== requestNumber) return;
-      setActivityDayState("failed");
-      handleError(error, "无法读取当天预约活动");
+      handleError(error, "无法读取活动概览");
     }
   }, [handleError]);
 
@@ -1957,12 +1931,6 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         }));
       }
       const nextUiPreferences = writeUiPreferences(currentUser.id, uiPreferencesDraft);
-      if (nextUiPreferences.activityMonths !== uiPreferences.activityMonths) {
-        activityDayRequestRef.current += 1;
-        setActivityDay(null);
-        setActivityDayState("idle");
-      }
-      setUiPreferences(nextUiPreferences);
       setUiPreferencesDraft(nextUiPreferences);
       setToast("个人设置已保存");
     } catch (error) { handleError(error, "保存个人设置失败"); }
@@ -1972,7 +1940,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     const draft = preferencesDraft || {};
     const update = (field, value) => setPreferencesDraft((current) => ({ ...current, [field]: value }));
     const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityDay={activityDay} activityDayState={activityDayState} activityMonths={uiPreferences.activityMonths} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} onActivityReload={loadActivity} onChange={update} onLogout={logout} onOpenBooking={(booking) => openDetails(booking, true)} onSave={savePreferences} onSelectActivityDay={loadActivityDay} onTabChange={setProfileTab} onUiChange={updateUi} tab={profileTab} uiDraft={uiPreferencesDraft} />;
+    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} tab={profileTab} uiDraft={uiPreferencesDraft} />;
   }
 
   function renderUnauthorized() {

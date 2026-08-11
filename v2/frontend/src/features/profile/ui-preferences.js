@@ -2,13 +2,11 @@ const STORAGE_PREFIX = "meeting-room-v2:ui-preferences:";
 
 export const DEFAULT_UI_PREFERENCES = Object.freeze({
   defaultView: "mine",
-  activityMonths: 12,
 });
 
 export function sanitizeUiPreferences(value) {
   return {
     defaultView: value?.defaultView === "calendar" ? "calendar" : "mine",
-    activityMonths: Number(value?.activityMonths) === 6 ? 6 : 12,
   };
 }
 

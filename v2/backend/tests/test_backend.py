@@ -977,7 +977,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
         self.create_booking(date="2025-09-01", start="09:00", duration=60)
 
         self.now = datetime(2026, 8, 1, 8, 0, tzinfo=timezone(timedelta(hours=8)))
-        completed = self.create_booking(date="2026-08-01", start="09:00", duration=90)
+        self.create_booking(date="2026-08-01", start="09:00", duration=90)
         cancelled = self.create_booking(date="2026-08-02", start="09:00", duration=30)
         cancelled_response = self.write(
             "POST",
@@ -1002,7 +1002,7 @@ class ReservationTests(AuthenticatedReservationTestCase):
         response = self.client.get("/api/v1/activity")
         self.assertEqual(response.status_code, 200, response.get_json())
         payload = response.get_json()
-        self.assertEqual(payload["range"], {"start": "2025-09-01", "end": "2026-08-11"})
+        self.assertEqual(set(payload), {"summary", "overview"})
         self.assertEqual(
             payload["summary"],
             {
@@ -1020,29 +1020,8 @@ class ReservationTests(AuthenticatedReservationTestCase):
                 "favoriteTag": "标签 1",
             },
         )
-        self.assertEqual(
-            payload["days"],
-            [
-                {"date": "2025-09-01", "completed": 1},
-                {"date": "2026-08-01", "completed": 1},
-            ],
-        )
-
-        activity_day = self.client.get("/api/v1/activity/days/2026-08-01")
-        self.assertEqual(activity_day.status_code, 200, activity_day.get_json())
-        self.assertEqual(activity_day.get_json()["date"], "2026-08-01")
-        self.assertEqual(len(activity_day.get_json()["items"]), 1)
-        self.assertEqual(activity_day.get_json()["items"][0]["id"], completed["id"])
-        self.assertEqual(activity_day.get_json()["items"][0]["ownerId"], self.bootstrap()["currentUser"]["id"])
-        self.assertEqual(self.client.get("/api/v1/activity/days/2026-08-02").get_json()["items"], [])
-        self.assertEqual(self.client.get("/api/v1/activity/days/2026-08-03").get_json()["items"], [])
-        invalid_day = self.client.get("/api/v1/activity/days/2026-02-30")
-        self.assertEqual(invalid_day.status_code, 422, invalid_day.get_json())
-
         unauthenticated = self.app.test_client().get("/api/v1/activity")
         self.assertEqual(unauthenticated.status_code, 401)
-        unauthenticated_day = self.app.test_client().get("/api/v1/activity/days/2026-08-01")
-        self.assertEqual(unauthenticated_day.status_code, 401)
 
     def test_create_commits_record_slots_and_event_together(self):
         booking = self.create_booking()

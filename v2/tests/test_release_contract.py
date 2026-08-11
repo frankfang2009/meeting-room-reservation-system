@@ -41,7 +41,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("('admin', 'employee')", backend)
         self.assertNotRegex(frontend + backend, r"(?<![A-Za-z])staff(?![A-Za-z])")
         self.assertIn('getActivity: () => request("/activity")', frontend)
-        self.assertIn('getActivityDay: (day) => request(`/activity/days/${encodeURIComponent(day)}`)', frontend)
+        self.assertNotIn("getActivityDay", frontend)
         self.assertIn('url_prefix="/api/v1/activity"', backend)
 
     def test_personal_activity_is_server_aggregated_and_current_user_scoped(self) -> None:
@@ -51,12 +51,12 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("owner_user_id = ? AND status = 'active'", activity)
         self.assertIn("end_time <= ?", activity)
         self.assertIn("currentMonthCompleted", activity)
-        self.assertIn('SELECT *', activity)
-        self.assertIn('serialize_reservation(row, actor)', activity)
+        self.assertNotIn('/days/', activity)
+        self.assertNotIn('daily_rows', activity)
         self.assertNotIn("ownerId", activity)
         self.assertIn("活动数据", frontend)
         self.assertNotIn("最近完成", frontend)
-        self.assertNotIn("profile-heatmap-legend", frontend)
+        self.assertNotIn("profile-heatmap", frontend)
 
     def test_production_frontend_has_no_synthetic_business_state(self) -> None:
         source = "\n".join(

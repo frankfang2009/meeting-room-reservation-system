@@ -365,10 +365,6 @@
     column-gap: 28px;
   }
 
-  .profile-activity-heatmap {
-    overflow-x: auto;
-  }
-
   .profile-activity-lower {
     grid-template-columns: 1fr 1fr;
   }
@@ -383,11 +379,6 @@
 
   .profile-activity-data dl > div:nth-child(even) {
     padding-left: 24px;
-  }
-
-  .profile-activity-day-item {
-    grid-template-columns: minmax(150px, 0.7fr) minmax(200px, 1.3fr) 24px;
-    gap: 18px;
   }
 
   .next-booking,
@@ -524,11 +515,6 @@
     display: none;
   }
 
-  .profile-activity-heatmap {
-    min-height: 300px;
-    padding-top: 28px;
-  }
-
   .profile-activity-lower {
     display: block;
   }
@@ -581,20 +567,6 @@
   .settings-tag-grid {
     grid-template-columns: 1fr;
     gap: 16px;
-  }
-
-  .profile-activity-day-item {
-    grid-template-columns: 1fr 24px;
-    gap: 8px 16px;
-  }
-
-  .profile-activity-day-item > span:nth-child(2) {
-    grid-column: 1;
-  }
-
-  .profile-activity-day-item > svg {
-    grid-row: 1 / span 2;
-    grid-column: 2;
   }
 
   .settings-choice-row,

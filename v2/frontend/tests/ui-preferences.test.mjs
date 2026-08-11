@@ -17,14 +17,14 @@ function memoryStorage() {
 
 test("stores interface preferences separately for each authenticated user", () => {
   const storage = memoryStorage();
-  writeUiPreferences("admin", { defaultView: "calendar", activityMonths: 6 }, storage);
-  assert.deepEqual(readUiPreferences("admin", storage), { defaultView: "calendar", activityMonths: 6 });
+  writeUiPreferences("admin", { defaultView: "calendar" }, storage);
+  assert.deepEqual(readUiPreferences("admin", storage), { defaultView: "calendar" });
   assert.deepEqual(readUiPreferences("employee", storage), { ...DEFAULT_UI_PREFERENCES });
 });
 
 test("sanitizes unknown interface preference values and damaged storage", () => {
-  assert.deepEqual(sanitizeUiPreferences({ defaultView: "system", activityMonths: 24 }), { defaultView: "mine", activityMonths: 12 });
+  assert.deepEqual(sanitizeUiPreferences({ defaultView: "system", activityMonths: 24 }), { defaultView: "mine" });
   const broken = { getItem: () => "{not-json", setItem: () => { throw new Error("blocked"); } };
   assert.deepEqual(readUiPreferences("user", broken), { ...DEFAULT_UI_PREFERENCES });
-  assert.deepEqual(writeUiPreferences("user", { defaultView: "calendar", activityMonths: 6 }, broken), { defaultView: "calendar", activityMonths: 6 });
+  assert.deepEqual(writeUiPreferences("user", { defaultView: "calendar" }, broken), { defaultView: "calendar" });
 });
