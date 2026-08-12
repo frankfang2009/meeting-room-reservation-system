@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
   Asterisk,
@@ -213,18 +213,21 @@ function useDocumentTitle(title) {
   }, [title]);
 }
 
-function useFocusTrap(ref, active, onClose, dismissable = true, focusKey = "") {
+function useFocusTrap(ref, active, onClose, dismissable = true, focusKey = "", backgroundRef = null) {
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active || !ref.current) return undefined;
     const node = ref.current;
     const previous = document.activeElement;
+    const background = backgroundRef?.current;
     const selector = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
     const first = node.querySelector("[data-initial-focus]") || node.querySelector(selector);
-    window.requestAnimationFrame(() => first?.focus());
+    background?.setAttribute("inert", "");
+    background?.setAttribute("aria-hidden", "true");
+    const focusFrame = window.requestAnimationFrame(() => first?.focus({ preventScroll: true }));
     const handleKey = (event) => {
       if (event.key === "Escape" && dismissable) {
         event.preventDefault();
@@ -246,10 +249,13 @@ function useFocusTrap(ref, active, onClose, dismissable = true, focusKey = "") {
     };
     node.addEventListener("keydown", handleKey);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       node.removeEventListener("keydown", handleKey);
-      previous?.focus?.();
+      background?.removeAttribute("inert");
+      background?.removeAttribute("aria-hidden");
+      if (previous?.isConnected) previous.focus?.({ preventScroll: true });
     };
-  }, [active, dismissable, focusKey, ref]);
+  }, [active, backgroundRef, dismissable, focusKey, ref]);
 }
 
 function LoadingScreen({ label = "正在连接系统" }) {
@@ -716,9 +722,9 @@ function PublicDisplay() {
   );
 }
 
-function Drawer({ open, heading, onBack, onClose, children, className = "" }) {
+function Drawer({ open, heading, onBack, onClose, children, className = "", backgroundRef = null }) {
   const ref = useRef(null);
-  useFocusTrap(ref, open, onClose, true, heading);
+  useFocusTrap(ref, open, onClose, true, heading, backgroundRef);
   return (
     <>
       <button className={"drawer-backdrop " + (open ? "visible" : "")} aria-label="关闭侧栏" aria-hidden={!open} tabIndex={-1} onClick={onClose} />
@@ -1145,13 +1151,6 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   // The local refresh functions consume exactly the filter fields below.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, permissions.manageSystem, auditFilters.action, auditFilters.outcome, auditFilters.actorId, auditFilters.targetType, auditFilters.targetId, auditFilters.dateFrom, auditFilters.dateTo]);
-  useEffect(() => {
-    if (mainRef.current) {
-      if (drawer || sessionExpired) { mainRef.current.setAttribute("inert", ""); mainRef.current.setAttribute("aria-hidden", "true"); }
-      else { mainRef.current.removeAttribute("inert"); mainRef.current.removeAttribute("aria-hidden"); }
-    }
-  }, [drawer, sessionExpired]);
-
   if (loading.bootstrap && !bootstrap) return <LoadingScreen label="正在读取工作台" />;
   if (!bootstrap) return <FatalScreen error="无法读取系统配置" onRetry={loadBootstrap} />;
 
@@ -2010,7 +2009,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
     </div>
-    <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""}>{!sessionExpired && renderDrawer()}</Drawer>
+    <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>
     {toast && <div className="toast visible" role="status" aria-live="polite"><CheckCircle size={20} weight="fill" /><span>{toast}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
     {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
   </div></SessionIsolationBoundary>;

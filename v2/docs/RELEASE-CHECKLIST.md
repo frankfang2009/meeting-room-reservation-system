@@ -4,24 +4,25 @@
 Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
 完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
 
-## 本轮可复跑证据（2026-08-10 至 2026-08-11）
+## 本轮可复跑证据（2026-08-10 至 2026-08-12）
 
 | 编号 | 命令或证据 | 实际结果 |
 | --- | --- | --- |
-| E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 64 通过；独立用例 64；继承重复 0；含当前用户已完成活动汇总及本人边界、笔录室删除阻断预约投影、历史状态服务端筛选与游标绑定；真实 Waitress handoff 通过且无 ResourceWarning |
+| E1 | `cd v2/backend && PYTHONWARNINGS=error::ResourceWarning .venv/bin/python -m unittest discover -s tests -v` | runner 64 通过；独立用例 64；继承重复 0；含无有效备份时系统总体告警、备份追平后恢复正常、当前用户已完成活动汇总及本人边界、笔录室删除阻断预约投影、历史状态服务端筛选与游标绑定；真实 Waitress handoff 通过且无 ResourceWarning |
 | E2 | `v2/backend/.venv/bin/python -m unittest discover -s v2/installer/tests -v` | runner 60 通过；独立用例 60；继承重复 0 |
 | E3 | `v2/backend/.venv/bin/python -m unittest discover -s v2/tests -v` | runner 18 通过；独立用例 18；继承重复 0；含个人活动服务端聚合/本人边界与损坏或迁移后虚拟环境重建契约 |
-| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；102/102 通过；含个人中心真实活动概览/四项统计、热力图及按日下钻删除、账号隔离默认首页、服务端个人标签保存、滑块端点坐标、下一条同室预约动态上限、服务端时间下的过期时段禁用、日历刻度与当前时间线、紧凑日期导航、单/双/多房间布局、房间统计刷新、笔录室删除预检/阻断预约直达调整与返回、临近预约导航时钟徽标、取消记录中文状态/克制标签/正常与已取消筛选、真实 LAN 地址复制及 HTTP fallback、安全审计中文化/隐藏/未读提醒回归；全局 CSS 拆分契约和更新后的源码 SHA 通过；Vite 6.4.3 生产构建成功（CSS 122.03 kB，JS 422.74 kB） |
+| E4 | `cd v2/frontend && npm run check` | ESLint 0 告警；104/104 通过；含抽屉首个可见字段自动聚焦/背景隔离、个人中心偏好设置单入口、个人中心真实活动概览/四项统计、热力图及按日下钻删除、账号隔离默认首页、服务端个人标签保存、滑块端点坐标、下一条同室预约动态上限、服务端时间下的过期时段禁用、日历刻度与当前时间线、紧凑日期导航、单/双/多房间布局、房间统计刷新、笔录室删除预检/阻断预约直达调整与返回、临近预约导航时钟徽标、取消记录中文状态/克制标签/正常与已取消筛选、真实 LAN 地址复制及 HTTP fallback、安全审计中文化/隐藏/未读提醒回归；全局 CSS 拆分契约和更新后的源码 SHA 通过；Vite 6.4.3 生产构建成功（CSS 121.80 kB，JS 422.69 kB） |
 | E5 | `v2/backend/.venv/bin/python -m ruff check --no-cache v2/backend v2/installer v2/tests`、`v2/backend/.venv/bin/python -m compileall -q v2/backend v2/installer v2/tests`、`git diff --check` | 全部通过 |
-| E6（已作废） | `PYTHON_BIN="$PWD/v2/backend/.venv/bin/python" .github/scripts/v2-reproducible-build.sh "$PWD" /private/tmp/meeting-room-v2-css-split-repro-20260810-2 /private/tmp/meeting-room-v2-runtime-materials/python-3.13.14-embed-amd64.zip /private/tmp/meeting-room-v2-runtime-materials/wheels /private/tmp/meeting-room-v2-css-split-repro-20260810-2-export` | 此前 CSS 拆分版本曾逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；后续滑块与过期时段修复改变生产源代码，此证据及其 ZIP SHA 只保留为历史记录，不再代表当前源码 |
+| E6 | `.github/scripts/v2-reproducible-build.sh` 对当前源码执行两次独立 source/frontend/runtime/payload/package 构建并导出六件套 | 两个副本分别完成 `npm ci`，两次构建逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；候选 ZIP SHA-256 为 `48d4b2d52feea9e790cbb069ce3bbafe450ff09f359888b2f1e7de8bf084177b`；本地六件套位于 ignored `v2/out/release-20260812/six-pack-3`，仍待同一提交的 CI、Windows 实机与签名验收 |
 | E7 | `cd v2/backend && .venv/bin/python -m unittest tests.test_hardening.SetupListenerProcessTests.test_real_waitress_setup_handoff_has_no_bad_file_descriptor -v` | 真实 Waitress 子进程收到 setup 201，连续两次确认 `bind_mode=lan`；无 `Bad file descriptor`/`Errno 9` |
 | E8 | `ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/v2-baseline.yml")'` | workflow YAML 解析通过 |
 
-此前本地六件套位于 `/private/tmp/meeting-room-v2-css-split-repro-20260810-2-export`。
-其 ZIP SHA-256
+此前本地候选 ZIP SHA-256
 `e3c371e360beb4fa9242b353cec81236d17b36d5e57fd8d37b5faea9b976c6a8`
-已因后续滑块与过期时段修复明确作废，不得分发。当前源码尚未生成新的六件套；
-清单仍为 `formal_external_release_allowed=false`。下一份候选必须重跑 E1–E8。
+已因后续滑块、过期时段和本次 P1/P2 修复明确作废，不得分发。当前源码的本地六件套
+位于 ignored `v2/out/release-20260812/six-pack-3`，ZIP SHA-256 为
+`48d4b2d52feea9e790cbb069ce3bbafe450ff09f359888b2f1e7de8bf084177b`。
+清单仍为 `formal_external_release_allowed=false`；同一提交仍须完成 CI、Windows 实机和签名验收。
 
 ## 源码、契约与安全自动化
 
@@ -42,6 +43,8 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 - [x] Windows BAT 与候选门禁对 launcher 缺失、工具目录缺失、runtime Python 缺失/启动失败、产品拒绝和产品成功使用独立码或精确 marker。（E2、E3）
 - [x] 未使用的 `getReservation/getUsers/getPreferences` 已删除；`getRooms` 作为预约变更后的房间统计刷新接口保留并有调用；变更记录、审计和提醒接口保留。（E4）
 - [x] 个人活动页只保留服务端按 session 用户聚合的本人概览与四项统计；热力图、日期范围、月份标记、按日明细接口和活动范围偏好已一并删除。个人标签由服务端保存，默认首页按账号隔离在当前浏览器并明确标注存储边界。（E1、E3、E4；真实浏览器证据见 `v2/frontend/design-qa.md`）
+- [x] 系统数据库可用但尚无有效备份时，总体状态与备份服务一致显示告警；完成备份并追平当前序列后才恢复“系统运行正常”。（E1）
+- [x] 抽屉打开时首个可见字段立即获得焦点，主工作台同步进入 `inert`/`aria-hidden` 隔离；关闭后焦点返回原触发控件。个人中心偏好设置只保留标签页单入口。（E4；本轮本地真实浏览器已复核 1024×720 与 1440 宽度，Windows 实机仍按下方门禁执行）
 - [x] 日历头部把日期跳转合并到日期标题，并将前一天/今天/后一天收为一个分段控件；正式 LAN 模式只在真实地址存在时提供复制操作，普通 HTTP 浏览器有安全 fallback。（E4）
 - [x] 笔录室删除先由只读服务端预检分流；无未结束预约才确认删除，有阻断预约则返回最多 50 条管理员可操作投影及总数，前端列出并直达调整/详情且可返回原清单；DELETE 仍在事务中复检。（E1、E4）
 - [x] `update_core.py` 明确标记为不进入 V2.0.0 payload 的非生产未来基线，未宣称在线升级可用。（E2、E3）
@@ -68,8 +71,8 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 
 ## 发布物
 
-- [ ] 为当前源码重新生成 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance 六件套并反向加载。
-- [ ] 为当前源码重新完成两个独立本地构建并确认结果逐字节一致；正式 workflow 定义仍会重复整个构建链。（E8）
+- [x] 为当前源码重新生成 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance 六件套并反向加载。（E6）
+- [x] 为当前源码重新完成两个独立本地构建并确认结果逐字节一致；正式 workflow 仍须在同一提交重复整个构建链。（E6、E8）
 - [ ] 对当前源码的新候选重新确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。（生成逻辑已有 E2、E3）
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 六件套移入受控发布归档。
@@ -83,5 +86,5 @@ ignored `v2/out` 验证目录中的
 `eedee50ece4a198c98e79867b7bf961a36d6432d7aa4a3954ae6f9e967f259d6`，以及 CSS 拆分后但本次 UI 修复前的
 `e3c371e360beb4fa9242b353cec81236d17b36d5e57fd8d37b5faea9b976c6a8`，均已明确撤销，
 不得继续分发或用作验收证据。旧审核只保留问题追踪价值；本清单只承认上方
-2026-08-10 至 2026-08-11 的可复跑结果，
+2026-08-10 至 2026-08-12 的可复跑结果，
 且它仍不是正式外发批准。

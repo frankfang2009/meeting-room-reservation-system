@@ -49,6 +49,20 @@ test("personal center keeps a concise real summary without heatmap clutter", () 
   assert.doesNotMatch(productionSource, /预约活动|profile-heatmap|activityMonths|getActivityDay|本人当天已完成的预约/);
 });
 
+test("personal center exposes preferences through one tab entry", () => {
+  assert.equal(productionSource.match(/>偏好设置<\/button>/g)?.length, 1);
+  assert.doesNotMatch(productionSource, /personal-center-preference-link/);
+});
+
+test("drawers isolate the background and focus their first visible field", () => {
+  assert.match(app, /useLayoutEffect\(\(\) => \{/);
+  assert.match(app, /backgroundRef\?\.current/);
+  assert.match(app, /background\?\.setAttribute\("inert", ""\)/);
+  assert.match(app, /window\.requestAnimationFrame\(\(\) => first\?\.focus/);
+  assert.match(app, /first\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(app, /backgroundRef=\{mainRef\}/);
+});
+
 test("personal preferences expose real scoped defaults and server-backed personal tags", () => {
   assert.match(app, /readUiPreferences\(initialBootstrap\?\.currentUser\?\.id \|\| session\.currentUser\?\.id\)/);
   assert.match(app, /writeUiPreferences\(currentUser\.id, uiPreferencesDraft\)/);
@@ -246,7 +260,7 @@ test("room deletion is confirmed and blocking bookings lead directly to adjustme
   assert.match(adminForms, /className="room-delete-button"/);
   assert.match(adminForms, /先调整预约，再删除/);
   assert.match(adminForms, /调整预约/);
-  assert.match(app, /useFocusTrap\(ref, open, onClose, true, heading\)/);
+  assert.match(app, /useFocusTrap\(ref, open, onClose, true, heading, backgroundRef\)/);
   assert.match(app, /api\.getRoomDeletionImpact\(room\.id\)/);
   assert.match(app, /roomDeletionDrawer\(room, impact\)/);
   assert.match(app, /error\.code === "ROOM_HAS_FUTURE_BOOKINGS"/);

@@ -95,11 +95,18 @@ def system_status():
     )
     checked_at = local_now().isoformat(timespec="seconds")
     healthy = health["quickCheckOk"] and health["foreignKeysOk"]
-    status = "normal" if healthy else "critical"
+    status = "normal" if healthy and caught_up else "warning" if healthy else "critical"
+    label = (
+        "系统运行正常"
+        if status == "normal"
+        else "系统可用，但备份待处理"
+        if status == "warning"
+        else "数据库健康检查失败"
+    )
     return jsonify(
         {
             "status": status,
-            "label": "系统运行正常" if healthy else "数据库健康检查失败",
+            "label": label,
             "lastCheckedAt": checked_at,
             "productVersion": current_app.config["PRODUCT_VERSION"],
             "productGeneration": PRODUCT_GENERATION,
@@ -117,7 +124,13 @@ def system_status():
             "bindMode": "lan" if is_setup_complete(db) else "loopback",
             "apiStatus": "online",
             "displayStatus": "online",
-            "health": "healthy" if healthy else "unhealthy",
+            "health": (
+                "healthy"
+                if status == "normal"
+                else "warning"
+                if status == "warning"
+                else "unhealthy"
+            ),
             "services": [
                 {"id": "api", "label": "预约 API", "status": "normal", "value": "正常"},
                 {"id": "display", "label": "局域网大屏", "status": "normal", "value": "正常"},

@@ -68,8 +68,7 @@
   gap: 34px;
 }
 
-.personal-center-tabs button,
-.personal-center-preference-link {
+.personal-center-tabs button {
   padding: 0;
   border: 0;
   background: transparent;
@@ -103,23 +102,9 @@
 }
 
 .personal-center-tabs button:focus-visible,
-.personal-center-preference-link:focus-visible,
 .profile-activity-error button:focus-visible {
   outline: 2px solid rgba(20, 20, 19, 0.38);
   outline-offset: 4px;
-}
-
-.personal-center-preference-link {
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.personal-center-preference-link:hover {
-  color: var(--ink);
 }
 
 .profile-activity-content {

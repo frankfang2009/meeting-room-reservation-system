@@ -1335,11 +1335,21 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
 
     def test_system_shape_and_spa_fallback(self):
         status = self.client.get("/api/v1/admin/system").get_json()
-        self.assertEqual(status["status"], "normal")
+        self.assertEqual(status["status"], "warning")
+        self.assertEqual(status["health"], "warning")
+        self.assertEqual(status["label"], "系统可用，但备份待处理")
+        self.assertFalse(status["backupCaughtUp"])
         self.assertEqual(
             {service["id"] for service in status["services"]},
             {"api", "display", "database", "backup"},
         )
+        backup = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(backup.status_code, 201, backup.get_json())
+        protected = self.client.get("/api/v1/admin/system").get_json()
+        self.assertEqual(protected["status"], "normal")
+        self.assertEqual(protected["health"], "healthy")
+        self.assertEqual(protected["label"], "系统运行正常")
+        self.assertTrue(protected["backupCaughtUp"])
         dist = self.root / "dist"
         (dist / "assets").mkdir(parents=True)
         (dist / "index.html").write_text("<div id='root'>V2</div>", encoding="utf-8")
