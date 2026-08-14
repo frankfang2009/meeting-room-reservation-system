@@ -599,6 +599,18 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertEqual(body["error"]["code"], "FORBIDDEN")
         self.assertNotEqual(body["error"]["code"], "BACKUP_FAILED")
 
+    def test_backup_failure_code_survives_failure_audit_error(self):
+        with mock.patch(
+            "v2app.api.system.maintenance_lock",
+            side_effect=RuntimeError("backup pipeline failed"),
+        ), mock.patch(
+            "v2app.api.system.write_security_audit",
+            side_effect=RuntimeError("failure audit failed"),
+        ):
+            response = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(response.status_code, 500, response.get_json())
+        self.assertEqual(response.get_json()["error"]["code"], "BACKUP_FAILED")
+
     def test_scheduled_backup_is_due_on_new_local_day_before_exact_24_hours(self):
         backup_dir = self.root / "backups"
         local_zone = timezone(timedelta(hours=8))

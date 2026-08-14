@@ -164,7 +164,8 @@ slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
   `backupSequence/dataSequence/servicePort/bindMode`；`POST /api/v1/admin/backups`
-  返回备份文件、UTC 时间、备份序列与源数据序列；`GET /api/v1/admin/diagnostics`。
+  返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
+  `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。

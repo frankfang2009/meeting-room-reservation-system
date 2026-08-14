@@ -190,13 +190,18 @@ def run_backup():
         raise
     except Exception:
         current_app.logger.exception("backup failed sequence=%s", sequence)
-        with transaction(db, track_change=False):
-            write_security_audit(
-                db,
-                actor_user_id=actor_snapshot["id"],
-                action="backup.failed",
-                target_type="system",
-                details={"sequence": sequence, "result": "failed"},
+        try:
+            with transaction(db, track_change=False):
+                write_security_audit(
+                    db,
+                    actor_user_id=actor_snapshot["id"],
+                    action="backup.failed",
+                    target_type="system",
+                    details={"sequence": sequence, "result": "failed"},
+                )
+        except Exception:
+            current_app.logger.exception(
+                "failed to record backup failure audit sequence=%s", sequence
             )
         raise ApiError(500, "BACKUP_FAILED", "备份未能完成，请查看诊断日志")
     with transaction(db, track_change=False):

@@ -13,6 +13,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E12 | 使用隔离 18080 服务和模拟账号做真实浏览器回归 | 错误登录后焦点回到密码框；并发占用后草稿跨页保留，选择新时段必须确认原/新时段；成功提示离开日历即清除 |
 | E13 | F01 已取消预约详情读取边界；`v2/scripts/check.sh` | 普通员工可读他人 active 详情，读他人 cancelled 稳定返回 `403 FORBIDDEN`；owner/admin 可读 cancelled；全量门禁通过 |
 | E14 | F02 笔录室轮询的空闲会话语义；`v2/scripts/check.sh` | 周期性 `GET /api/v1/rooms` 不更新 `_last_active_at`，主动日历 GET 仍更新；全量门禁通过 |
+| E15 | F03 备份失败与审计双重故障；`v2/scripts/check.sh` | 失败审计写入异常仅记日志，对管理员仍稳定返回 `500 BACKUP_FAILED`；全量门禁通过 |
 
 本轮修复已改变生产源码，因此下方提交
 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 CI 与候选 SHA 只作历史证据；

@@ -48,12 +48,12 @@
 
 ### F03 备份失败时审计写入异常会吞掉 `BACKUP_FAILED` 错误码 【P1 · 可靠性】
 
-- [ ] 位置：`v2/backend/v2app/api/system.py:191-200`。
-- [ ] 现状：`with transaction(...): write_security_audit(...)` 若抛异常，跳到全局 500
+- [x] 位置：`v2/backend/v2app/api/system.py:191-200`。
+- [x] 现状：`with transaction(...): write_security_audit(...)` 若抛异常，跳到全局 500
   `INTERNAL_ERROR`，同一故障呈现两种错误码。
-- [ ] 期望：审计写入包独立 try/except（失败仅 `logger.exception`），
+- [x] 期望：审计写入包独立 try/except（失败仅 `logger.exception`），
   `raise ApiError(500, "BACKUP_FAILED", ...)` 恒定执行。
-- [ ] 验收：测试注入"备份管道失败且审计写入也失败"（用现有 failpoint/mock 机制），
+- [x] 验收：测试注入"备份管道失败且审计写入也失败"（用现有 failpoint/mock 机制），
   断言响应仍是 `BACKUP_FAILED`。
 
 ### F04 slots 唯一约束冲突兜底映射为 409 而非 503 【P1 · 一致性】
