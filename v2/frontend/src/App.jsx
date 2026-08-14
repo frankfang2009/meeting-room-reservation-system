@@ -66,6 +66,7 @@ import {
 import {
   bookingTagContext,
   bookingPayload,
+  calendarFocusTarget,
   calendarTimeLineOffset,
   canManageBooking,
   clampDurationToWorkday,
@@ -1589,19 +1590,27 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   function moveCalendarFocus(event) {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-    const cells = [...event.currentTarget.querySelectorAll("button.slot:not([disabled])")];
-    if (!cells.length) return;
-    const currentIndex = Math.max(0, cells.indexOf(event.target));
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowLeft") nextIndex -= 1;
-    if (event.key === "ArrowRight") nextIndex += 1;
-    if (event.key === "ArrowUp") nextIndex -= activeRooms.length;
-    if (event.key === "ArrowDown") nextIndex += activeRooms.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = cells.length - 1;
-    nextIndex = Math.max(0, Math.min(cells.length - 1, nextIndex));
+    const elements = [...event.currentTarget.querySelectorAll(".slot[data-calendar-row]")];
+    const target = calendarFocusTarget(
+      elements.map((element) => ({
+        row: Number(element.dataset.calendarRow),
+        column: Number(element.dataset.calendarColumn),
+        enabled: element.matches("button:not([disabled])"),
+      })),
+      event.target?.dataset?.calendarRow === undefined ? null : {
+        row: Number(event.target.dataset.calendarRow),
+        column: Number(event.target.dataset.calendarColumn),
+      },
+      event.key,
+    );
+    if (!target) return;
+    const next = elements.find(
+      (element) => Number(element.dataset.calendarRow) === target.row
+        && Number(element.dataset.calendarColumn) === target.column,
+    );
+    if (!(next instanceof HTMLButtonElement) || next.disabled) return;
     event.preventDefault();
-    cells[nextIndex].focus();
+    next.focus();
   }
 
   function renderCalendar() {
@@ -1626,15 +1635,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
           !activeRooms.length ? <div className="calendar-zero-state"><DoorOpen size={48} weight="thin" /><div><h2>当前没有可预约的笔录室</h2><p>{permissions.manageRooms ? "请先启用或创建至少一个笔录室。" : "请联系管理员启用笔录室。"}</p>{permissions.manageRooms && <button onClick={() => navigate("rooms")}>前往笔录室管理</button>}</div></div> :
           <div className="schedule-viewport"><div className="schedule" style={{ "--room-count": activeRooms.length }} role="grid" tabIndex={0} onKeyDown={moveCalendarFocus} aria-label={dateLabel(currentDate) + "预约日历；使用方向键在时段间移动"}>
             <div className="schedule-head"><div />{activeRooms.map((room) => <div className="room-heading" key={room.id}>{room.name}</div>)}</div>
-            <div className="schedule-body">{currentTimeOffset !== null && <div className="current-time-line" style={{ top: currentTimeOffset + "px" }} role="separator" aria-label={`当前时间 ${businessClock.time.slice(0, 5)}`} />}{timeSlots.map(([start, end]) => <div className="schedule-row" key={start}><div className="time-label">{start}</div>{activeRooms.map((room) => {
+            <div className="schedule-body">{currentTimeOffset !== null && <div className="current-time-line" style={{ top: currentTimeOffset + "px" }} role="separator" aria-label={`当前时间 ${businessClock.time.slice(0, 5)}`} />}{timeSlots.map(([start, end], rowIndex) => <div className="schedule-row" key={start}><div className="time-label">{start}</div>{activeRooms.map((room, columnIndex) => {
               const booking = bookingFor(room.id, start, end);
-              if (booking && booking.start !== start) return <div className="slot occupied-slot" aria-hidden="true" key={room.id + start} />;
+              if (booking && booking.start !== start) return <div className="slot occupied-slot" data-calendar-row={rowIndex} data-calendar-column={columnIndex} aria-hidden="true" key={room.id + start} />;
               if (booking) {
                 const tag = tagFor(booking);
-                return <button className={"slot booked-slot " + (calendarTagFilter && calendarTagFilter !== booking.tagId ? "tag-muted" : "")} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationFromRange(booking.start, booking.end) / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={room.name + " " + booking.start + "至" + booking.end + "，预约者" + (booking.owner?.name || "未知用户") + "，当事人" + booking.partyName + "，案号" + booking.caseNumber}><span className="booking-title"><i />{booking.owner?.name || "未知用户"} · 已预约</span><span className="booking-case">案号 {booking.caseNumber}</span></button>;
+                return <button className={"slot booked-slot " + (calendarTagFilter && calendarTagFilter !== booking.tagId ? "tag-muted" : "")} data-calendar-row={rowIndex} data-calendar-column={columnIndex} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationFromRange(booking.start, booking.end) / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={room.name + " " + booking.start + "至" + booking.end + "，预约者" + (booking.owner?.name || "未知用户") + "，当事人" + booking.partyName + "，案号" + booking.caseNumber}><span className="booking-title"><i />{booking.owner?.name || "未知用户"} · 已预约</span><span className="booking-case">案号 {booking.caseNumber}</span></button>;
               }
               const slotStarted = hasBookingStarted({ date: dateKey(currentDate), start, serverDate: businessClock.date, serverTime: businessClock.time });
-              return <button className={`slot available-slot ${slotStarted ? "past-slot" : ""}`} disabled={networkOffline || slotStarted} key={room.id + start} tabIndex={-1} onClick={() => openCreate(room.id, start)} aria-label={room.name + " " + start + "至" + end + (slotStarted ? " 已开始，不可预约" : " 可预约")}><span className="slot-affordance">{slotStarted ? <span>{start} · 已开始</span> : <><Plus size={18} /><span>{start} · 新建预约</span></>}</span></button>;
+              return <button className={`slot available-slot ${slotStarted ? "past-slot" : ""}`} data-calendar-row={rowIndex} data-calendar-column={columnIndex} disabled={networkOffline || slotStarted} key={room.id + start} tabIndex={-1} onClick={() => openCreate(room.id, start)} aria-label={room.name + " " + start + "至" + end + (slotStarted ? " 已开始，不可预约" : " 可预约")}><span className="slot-affordance">{slotStarted ? <span>{start} · 已开始</span> : <><Plus size={18} /><span>{start} · 新建预约</span></>}</span></button>;
             })}</div>)}</div>
           </div></div>}
       </section>

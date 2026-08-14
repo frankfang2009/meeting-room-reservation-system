@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   bookingTagContext,
   bookingPayload,
+  calendarFocusTarget,
   calendarTimeLineOffset,
   canManageBooking,
   canViewBookingDetails,
@@ -39,6 +40,53 @@ test("generates adjacent working-hour slots", () => {
     ["08:30", "09:00"], ["09:00", "09:30"], ["09:30", "10:00"],
   ]);
   assert.throws(() => generateTimeSlots("08:30", "09:10"), /divide evenly/);
+});
+
+test("calendar arrow navigation preserves grid coordinates around disabled cells", () => {
+  const cells = [
+    { row: 0, column: 0, enabled: false },
+    { row: 0, column: 1, enabled: false },
+    { row: 0, column: 2, enabled: false },
+    { row: 1, column: 0, enabled: false },
+    { row: 1, column: 1, enabled: true },
+    { row: 1, column: 2, enabled: true },
+    { row: 2, column: 0, enabled: true },
+    { row: 2, column: 1, enabled: true },
+    { row: 2, column: 2, enabled: true },
+  ];
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 1, column: 1 }, "ArrowDown"),
+    { row: 2, column: 1, enabled: true },
+  );
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 2, column: 1 }, "ArrowUp"),
+    { row: 1, column: 1, enabled: true },
+  );
+  assert.deepEqual(calendarFocusTarget(cells, null, "ArrowDown"), {
+    row: 1,
+    column: 1,
+    enabled: true,
+  });
+});
+
+test("calendar navigation skips occupied continuations without wrapping rows", () => {
+  const cells = [
+    { row: 0, column: 0, enabled: true },
+    { row: 0, column: 1, enabled: true },
+    { row: 0, column: 2, enabled: true },
+    { row: 1, column: 0, enabled: false },
+    { row: 1, column: 1, enabled: true },
+    { row: 1, column: 2, enabled: true },
+  ];
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 1, column: 1 }, "ArrowLeft"),
+    { row: 1, column: 1, enabled: true },
+  );
+  assert.deepEqual(calendarFocusTarget(cells, null, "End"), {
+    row: 1,
+    column: 2,
+    enabled: true,
+  });
 });
 
 test("clamps the default duration to the remaining working day", () => {

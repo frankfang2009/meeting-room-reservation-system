@@ -101,11 +101,11 @@
 
 ### F08 日历方向键导航在禁用格存在时坐标错位 【P1 · 无障碍】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:1553-1568`（`moveCalendarFocus`）。
-- [ ] 现状：剔除 disabled 格后按 `indexOf + activeRooms.length` 步进，行不等长时上下键跳错
+- [x] 位置：`v2/frontend/src/App.jsx:1553-1568`（`moveCalendarFocus`）。
+- [x] 现状：剔除 disabled 格后按 `indexOf + activeRooms.length` 步进，行不等长时上下键跳错
   （下午大量 past-slot 被禁用时必现），违背 DESIGN-CONTRACT:127 的方向键承诺。
-- [ ] 期望：按 (row, col) 网格坐标计算相邻格（每房间一列），或为禁用格保留等长占位。
-- [ ] 验收：把移动逻辑抽成纯函数进 `domain.js` 并加单测（含禁用格混合场景）；浏览器验证下午时段。
+- [x] 期望：按 (row, col) 网格坐标计算相邻格（每房间一列），或为禁用格保留等长占位。
+- [x] 验收：把移动逻辑抽成纯函数进 `domain.js` 并加单测（含禁用格混合场景）；浏览器验证下午时段。
 
 ### F09 时长滑块缺 4 个内部刻度点 【P2 · 契约漂移】
 

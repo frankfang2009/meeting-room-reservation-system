@@ -176,6 +176,47 @@ export function generateTimeSlots(start, end, step = 30) {
   return slots;
 }
 
+export function calendarFocusTarget(cells = [], current = null, key = "") {
+  const normalized = cells
+    .map((cell) => ({
+      row: Number(cell?.row),
+      column: Number(cell?.column),
+      enabled: Boolean(cell?.enabled),
+    }))
+    .filter((cell) => Number.isInteger(cell.row) && Number.isInteger(cell.column));
+  const enabled = normalized
+    .filter((cell) => cell.enabled)
+    .sort((left, right) => left.row - right.row || left.column - right.column);
+  if (!enabled.length) return null;
+  if (key === "Home") return enabled[0];
+  if (key === "End") return enabled.at(-1);
+  if (!current || !Number.isInteger(current.row) || !Number.isInteger(current.column)) {
+    return enabled[0];
+  }
+  const direction = {
+    ArrowLeft: { row: 0, column: -1 },
+    ArrowRight: { row: 0, column: 1 },
+    ArrowUp: { row: -1, column: 0 },
+    ArrowDown: { row: 1, column: 0 },
+  }[key];
+  if (!direction) return null;
+  const maximumRow = Math.max(...normalized.map((cell) => cell.row));
+  const maximumColumn = Math.max(...normalized.map((cell) => cell.column));
+  let row = current.row + direction.row;
+  let column = current.column + direction.column;
+  while (row >= 0 && row <= maximumRow && column >= 0 && column <= maximumColumn) {
+    const candidate = normalized.find(
+      (cell) => cell.row === row && cell.column === column,
+    );
+    if (candidate?.enabled) return candidate;
+    row += direction.row;
+    column += direction.column;
+  }
+  return enabled.find(
+    (cell) => cell.row === current.row && cell.column === current.column,
+  ) || null;
+}
+
 export function canManageBooking({ role, currentUserId, booking } = {}) {
   if (!VALID_ROLES.has(role) || !booking) return false;
   if (role === "admin") return true;

@@ -18,6 +18,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E17 | F05 恢复码回环边界；`v2/scripts/check.sh` | recovery 状态下回环 `/healthz` 可见 `install_id/recovery_code`，局域网来源不返回两字段；全量门禁通过 |
 | E18 | F06 长页面键盘滚动；源码测试、真实浏览器与 `v2/scripts/check.sh` | 所有 `.main-canvas` 可聚焦且有可见焦点/滚动条，PageDown 能推动长页滚动；冻结样式 SHA 已同步；全量门禁通过 |
 | E19 | F07 会话过期草稿保护；纯函数、源码、真实浏览器与 `v2/scripts/check.sh` | 草稿字段按用户 ID 写入 `sessionStorage`，同账号重登后恢复并提示，异账号不可见，主动退出清除；全量门禁通过 |
+| E20 | F08 日历方向键坐标导航；纯函数、真实浏览器与 `v2/scripts/check.sh` | 混合禁用格与预约跨时段占位下，上下键保持笔录室列、左右键保持时段行；全量门禁通过 |
 
 本轮修复已改变生产源码，因此下方提交
 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 CI 与候选 SHA 只作历史证据；
