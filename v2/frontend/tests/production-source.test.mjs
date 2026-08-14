@@ -171,8 +171,17 @@ test("reservation and history views consume opaque cursor pages", () => {
   assert.match(app, /fetchAllReservations/);
   assert.match(app, /page\?\.nextCursor/);
   assert.match(app, /pageSize: 100, cursor/);
-  assert.match(app, /loadHistory\(\{ append: true, cursor: historyPage\.nextCursor \}\)/);
+  assert.match(app, /loadHistory\(\{ append: true, cursor: section\.nextCursor, month: section\.id \}\)/);
   assert.match(app, /history-count">\{historyPage\.total\} 场/);
+});
+
+test("history appends older months in place with the same filters and dividers", () => {
+  assert.match(app, /api\.getHistory\(\{ month, ownerId:[\s\S]{0,260}roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery\.trim\(\), pageSize: 50, cursor \}\)/);
+  assert.match(app, /loadHistory\(\{ append: true, month: monthKey\(new Date\(year, month - 2, 1\)\) \}\)/);
+  assert.match(app, /className="history-month-divider" role="separator">\{section\.label\}/);
+  assert.match(app, /historySections\.map\(\(section, sectionIndex\)/);
+  assert.match(app, /onClick=\{loadPreviousHistoryMonth\}/);
+  assert.doesNotMatch(app, /onClick=\{\(\) => setHistoryMonth\(previousHistoryMonth\.id\)\}/);
 });
 
 test("reservation details separate edit and cancellation capabilities", () => {

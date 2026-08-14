@@ -137,12 +137,12 @@
 
 ### F12 历史"加载更早月份"应原地追加而非整表跳转 【P2 · 契约漂移】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:1651`（按钮直接 setHistoryMonth → loadHistory append=false）、
+- [x] 位置：`v2/frontend/src/App.jsx:1651`（按钮直接 setHistoryMonth → loadHistory append=false）、
   `App.jsx:1079-1103`（loadHistory/loadMoreHistory 已有 append 参数与游标）。
-- [ ] 契约：DESIGN-CONTRACT:77 要求底部原地追加上一月 + 淡月份分隔线（`.history-month-divider`
+- [x] 契约：DESIGN-CONTRACT:77 要求底部原地追加上一月 + 淡月份分隔线（`.history-month-divider`
   样式已存在未用），月份步进器/下拉仍回到单月视图。
-- [ ] 期望：按钮走 append 路径 + 渲染分隔线；月份控件行为保持不变。
-- [ ] 验收：production-source 断言；游标分页测试确认 append 与筛选绑定不回归。
+- [x] 期望：按钮走 append 路径 + 渲染分隔线；月份控件行为保持不变。
+- [x] 验收：production-source 断言；游标分页测试确认 append 与筛选绑定不回归。
 
 ### F13 Toast 图标一律绿色对勾，错误消息语义矛盾 【P2 · 反馈一致性】
 

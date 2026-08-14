@@ -871,9 +871,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookings, setBookings] = useState([]);
   const [calendarDataDate, setCalendarDataDate] = useState("");
   const [upcoming, setUpcoming] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [historySections, setHistorySections] = useState([]);
   const [historyPage, setHistoryPage] = useState({ nextCursor: null, pageSize: 50, total: 0 });
-  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState("");
   const [historyMonth, setHistoryMonth] = useState(() => monthKey(initialBusinessDate));
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyScope, setHistoryScope] = useState("unit");
@@ -1121,34 +1121,55 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }, [handleError]);
 
-  const loadHistory = useCallback(async ({ append = false, cursor = "" } = {}) => {
+  const loadHistory = useCallback(async ({ append = false, cursor = "", month = historyMonth } = {}) => {
     const requestNumber = historyRequestRef.current + 1;
     historyRequestRef.current = requestNumber;
-    if (append) setHistoryLoadingMore(true);
+    if (append) setHistoryLoadingMore(month);
     else setLoading((current) => ({ ...current, history: true }));
     try {
-      const result = await api.getHistory({ month: historyMonth, ownerId: role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : undefined, roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery.trim(), pageSize: 50, cursor });
+      const result = await api.getHistory({ month, ownerId: role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : undefined, roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery.trim(), pageSize: 50, cursor });
       if (historyRequestRef.current !== requestNumber) return;
       const nextItems = unwrapItems(result);
-      setHistory((current) => {
-        const combined = append ? [...current, ...nextItems] : nextItems;
-        return [...new Map(combined.map((booking) => [booking.id, booking])).values()];
+      const [year, monthNumber] = month.split("-").map(Number);
+      const nextSection = {
+        id: month,
+        label: `${year}年${monthNumber}月`,
+        items: nextItems,
+        nextCursor: result?.nextCursor || null,
+        pageSize: Number(result?.pageSize || 50),
+        total: Number(result?.total || nextItems.length),
+      };
+      setHistorySections((current) => {
+        if (!append) return [nextSection];
+        const existingIndex = current.findIndex((section) => section.id === month);
+        if (existingIndex < 0) return [...current, nextSection];
+        return current.map((section, index) => index === existingIndex ? {
+          ...nextSection,
+          items: [...new Map([...section.items, ...nextItems].map((booking) => [booking.id, booking])).values()],
+        } : section);
       });
-      setHistoryPage({ nextCursor: result?.nextCursor || null, pageSize: Number(result?.pageSize || 50), total: Number(result?.total || nextItems.length) });
+      if (month === historyMonth) setHistoryPage({ nextCursor: nextSection.nextCursor, pageSize: nextSection.pageSize, total: nextSection.total });
     } catch (error) {
       if (historyRequestRef.current === requestNumber) handleError(error, "无法读取预约记录");
     } finally {
       if (historyRequestRef.current === requestNumber) {
-        if (append) setHistoryLoadingMore(false);
+        if (append) setHistoryLoadingMore("");
         else setLoading((current) => ({ ...current, history: false }));
       }
     }
   }, [currentUser.id, handleError, historyMonth, historyOwner, historyQuery, historyRoom, historyScope, historyStatus, historyTag, role]);
 
-  const loadMoreHistory = useCallback(() => {
-    if (!historyPage.nextCursor || historyLoadingMore) return;
-    loadHistory({ append: true, cursor: historyPage.nextCursor });
-  }, [historyLoadingMore, historyPage.nextCursor, loadHistory]);
+  const loadMoreHistory = useCallback((section) => {
+    if (!section?.nextCursor || historyLoadingMore) return;
+    loadHistory({ append: true, cursor: section.nextCursor, month: section.id });
+  }, [historyLoadingMore, loadHistory]);
+
+  const loadPreviousHistoryMonth = useCallback(() => {
+    if (historyLoadingMore) return;
+    const oldestMonth = historySections.at(-1)?.id || historyMonth;
+    const [year, month] = oldestMonth.split("-").map(Number);
+    loadHistory({ append: true, month: monthKey(new Date(year, month - 2, 1)) });
+  }, [historyLoadingMore, historyMonth, historySections, loadHistory]);
 
   const loadActivity = useCallback(async () => {
     setActivityState("loading");
@@ -1719,6 +1740,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function renderHistory() {
+    const history = historySections.flatMap((section) => section.items);
     const effectiveHistoryUserId = role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : currentUser.id;
     const selectedOwner = users.find((user) => user.id === effectiveHistoryUserId);
     const unitHistoryTags = tags.filter((tag) => tag.slot <= 2);
@@ -1741,8 +1763,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return { id, label: `${date.getFullYear()}年${date.getMonth() + 1}月` };
     });
     const selectedMonthLabel = historyMonths.find((month) => month.id === historyMonth)?.label || historyMonth.replace("-", "年") + "月";
-    const [selectedHistoryYear, selectedHistoryMonthNumber] = historyMonth.split("-").map(Number);
-    const previousHistoryDate = new Date(selectedHistoryYear, selectedHistoryMonthNumber - 2, 1);
+    const oldestHistoryMonth = historySections.at(-1)?.id || historyMonth;
+    const [oldestHistoryYear, oldestHistoryMonthNumber] = oldestHistoryMonth.split("-").map(Number);
+    const previousHistoryDate = new Date(oldestHistoryYear, oldestHistoryMonthNumber - 2, 1);
     const previousHistoryMonth = {
       id: monthKey(previousHistoryDate),
       label: `${previousHistoryDate.getFullYear()}年${previousHistoryDate.getMonth() + 1}月`,
@@ -1756,8 +1779,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       <footer className="history-filter-footer"><button type="button" onClick={resetHistoryFilters}><ArrowClockwise size={16} />重置筛选</button><span>共 {historyPage.total} 条记录</span></footer>
     </div>}</div></div></header>
       <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= monthKey(businessDate)} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); setHistoryMonthOpen(false); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
-        <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{history.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}>{booking.status === "cancelled" ? <span className="history-cancelled-status">已取消</span> : <i aria-hidden="true" />}<CaretRight size={23} /></span></button>)}{historyPage.nextCursor && <button className="history-more" type="button" disabled={historyLoadingMore} onClick={loadMoreHistory}>{historyLoadingMore ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${history.length} / ${historyPage.total}`}</button>}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
-        {!loading.history && <button className="more-bookings-button history-more" type="button" onClick={() => setHistoryMonth(previousHistoryMonth.id)}><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></button>}
+        <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{historySections.map((section, sectionIndex) => <div className="history-month-section" key={section.id}>{sectionIndex > 0 && <div className="history-month-divider" role="separator">{section.label}</div>}{section.items.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}>{booking.status === "cancelled" ? <span className="history-cancelled-status">已取消</span> : <i aria-hidden="true" />}<CaretRight size={23} /></span></button>)}{section.nextCursor && <button className="history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={() => loadMoreHistory(section)}>{historyLoadingMore === section.id ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${section.items.length} / ${section.total}`}</button>}</div>)}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
+        {!loading.history && <button className="more-bookings-button history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={loadPreviousHistoryMonth}>{historyLoadingMore === previousHistoryMonth.id ? <><CircleNotch className="spin" size={17} /><span>正在加载{previousHistoryMonth.label}</span></> : <><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></>}</button>}
       </div>
     </main>;
   }

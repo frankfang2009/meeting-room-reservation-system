@@ -205,7 +205,7 @@ test("sends opaque pagination cursors for reservation and history pages", async 
   try {
     const cursor = "signed+/opaque=value";
     await api.getReservations("2026-08-10", "2026-08-16", { pageSize: 200, cursor });
-    await api.getHistory({ month: "2026-08", ownerId: "user-1", status: "cancelled", pageSize: 25, cursor });
+    await api.getHistory({ month: "2026-08", ownerId: "user-1", roomId: "room-2", status: "cancelled", tagId: "tag-2", query: "案号 2026", pageSize: 25, cursor });
 
     const reservations = new URL(urls[0], "http://localhost");
     assert.equal(reservations.pathname, "/api/v1/reservations");
@@ -218,7 +218,10 @@ test("sends opaque pagination cursors for reservation and history pages", async 
     assert.equal(history.pathname, "/api/v1/reservations/history");
     assert.equal(history.searchParams.get("month"), "2026-08");
     assert.equal(history.searchParams.get("ownerId"), "user-1");
+    assert.equal(history.searchParams.get("roomId"), "room-2");
     assert.equal(history.searchParams.get("status"), "cancelled");
+    assert.equal(history.searchParams.get("tagId"), "tag-2");
+    assert.equal(history.searchParams.get("query"), "案号 2026");
     assert.equal(history.searchParams.get("pageSize"), "25");
     assert.equal(history.searchParams.get("cursor"), cursor);
   } finally {
