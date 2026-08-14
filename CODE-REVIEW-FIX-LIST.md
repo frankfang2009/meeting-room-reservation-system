@@ -109,13 +109,13 @@
 
 ### F09 时长滑块缺 4 个内部刻度点 【P2 · 契约漂移】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:812`（BookingForm）；样式 `.duration-slider-stop` 已存在未用
+- [x] 位置：`v2/frontend/src/App.jsx:812`（BookingForm）；样式 `.duration-slider-stop` 已存在未用
   （`booking-forms.css:190-242`）。
-- [ ] 契约：DESIGN-CONTRACT:84 要求 60/90/120/150 四个内部刻度可见，两端点无点。
-- [ ] 期望：渲染 4 个 stop，三态（已选/可用/不可用）与当前 duration 和动态上限联动。
-- [ ] 注意：不改 AGENTS.md 规定的固定 30–180 视觉比例尺与动态上限逻辑（上限=配置最大、
+- [x] 契约：DESIGN-CONTRACT:84 要求 60/90/120/150 四个内部刻度可见，两端点无点。
+- [x] 期望：渲染 4 个 stop，三态（已选/可用/不可用）与当前 duration 和动态上限联动。
+- [x] 注意：不改 AGENTS.md 规定的固定 30–180 视觉比例尺与动态上限逻辑（上限=配置最大、
   工作时段结束、同室下一场预约三者最早）。
-- [ ] 验收：`production-source.test.mjs` 增加 stop 渲染断言；浏览器截图。
+- [x] 验收：`production-source.test.mjs` 增加 stop 渲染断言；浏览器截图。
 
 ### F10 日历加载态无骨架屏、切日旧数据闪现 【P2 · 契约漂移】
 

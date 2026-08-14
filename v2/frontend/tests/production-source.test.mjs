@@ -295,7 +295,14 @@ test("resetting the signed-in administrator password enters reauthentication imm
 });
 
 test("duration slider visual thumb shares the inset track coordinate system", () => {
-  assert.match(app, /duration-slider-track[\s\S]{0,240}duration-slider-knob[\s\S]{0,160}<\/div><input className="duration-range-input"/);
+  assert.match(app, /duration-slider-track[\s\S]{0,1800}duration-slider-knob[\s\S]{0,160}<\/div><input className="duration-range-input"/);
+});
+
+test("duration slider renders four interior stops with dynamic availability states", () => {
+  assert.match(app, /DURATION_STEPS\.slice\(1, -1\)\.map/);
+  assert.match(app, /step > maximum \? "unavailable" : step <= Number\(form\.duration\) \? "reached" : "available"/);
+  assert.match(app, /className=\{`duration-slider-stop \$\{state\} \$\{step === Number\(form\.duration\) \? "selected" : ""\}`\}/);
+  assert.match(app, /disabled=\{busy \|\| step > maximum\}/);
 });
 
 test("room deletion is confirmed and blocking bookings lead directly to adjustment", () => {
