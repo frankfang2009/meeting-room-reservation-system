@@ -78,11 +78,11 @@
 
 ### F06 键盘用户无法滚动长页面 【P1 · 无障碍】
 
-- [ ] 位置：`v2/frontend/src/styles/foundation.css:38`（`body { overflow: hidden }`）、
+- [x] 位置：`v2/frontend/src/styles/foundation.css:38`（`body { overflow: hidden }`）、
   `v2/frontend/src/styles/shell.css:156-168`（`.main-canvas` 滚动容器无 tabindex、滚动条隐藏）。
-- [ ] 期望：`.main-canvas` 成为可聚焦滚动容器（加 `tabindex="0"` + 可见 `:focus-visible` 样式），
+- [x] 期望：`.main-canvas` 成为可聚焦滚动容器（加 `tabindex="0"` + 可见 `:focus-visible` 样式），
   恢复可见滚动条（至少 thin 样式）；或放开 body 滚动。历史/审计/用户长页可用 PgUp/PgDn/空格滚动。
-- [ ] 验收：更新 `styles-structure.test.mjs` 冻结 SHA；`production-source.test.mjs` 增加
+- [x] 验收：更新 `styles-structure.test.mjs` 冻结 SHA；`production-source.test.mjs` 增加
   main-canvas tabindex 断言；真实浏览器键盘滚动回归。
 
 ### F07 会话过期未保存内容静默丢失（与冻结契约相悖）【P1 · 数据保护】

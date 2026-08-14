@@ -60,7 +60,7 @@ export function PersonalCenter({
   tab,
   uiDraft,
 }) {
-  return <main className="main-canvas settings-canvas personal-center-canvas">
+  return <main className="main-canvas settings-canvas personal-center-canvas" tabIndex={0}>
     <header className="page-header settings-header personal-center-header"><div><h1>个人中心</h1><p>查看工作概览与管理工作偏好</p></div>{tab === "preferences" && <div className="settings-header-actions"><button className="settings-logout-button" type="button" onClick={onLogout}>退出登录</button><button className="settings-save-button" type="submit" form="personal-settings-form">保存更改</button></div>}</header>
     <section className="personal-center-identity" aria-label="当前用户"><span className="personal-center-avatar" aria-hidden="true">{userInitial(currentUser)}</span><span><strong>{userName(currentUser)}</strong><small>{currentUser?.department || "未设置部门"}</small></span></section>
     <div className="personal-center-tab-row"><div className="personal-center-tabs" role="tablist" aria-label="个人中心页面"><button id="personal-center-activity-tab" type="button" role="tab" aria-controls="personal-center-activity-panel" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => onTabChange("activity")}>我的活动</button><button id="personal-center-preferences-tab" type="button" role="tab" aria-controls="personal-settings-form" aria-selected={tab === "preferences"} className={tab === "preferences" ? "active" : ""} onClick={() => onTabChange("preferences")}>偏好设置</button></div></div>

@@ -38,6 +38,12 @@ test("shared-computer users have a visible logout action in personal settings", 
   assert.equal(app.includes('className="sr-only" onClick={logout}'), false);
 });
 
+test("every authenticated main canvas is a keyboard-scrollable focus target", () => {
+  const canvases = productionSource.match(/<main className="main-canvas[^>]+>/g) || [];
+  assert.ok(canvases.length >= 8);
+  for (const canvas of canvases) assert.match(canvas, /tabIndex=\{0\}/);
+});
+
 test("login validation returns keyboard focus to the first correctable field", () => {
   assert.match(app, /const usernameRef = useRef\(null\)/);
   assert.match(app, /const passwordRef = useRef\(null\)/);

@@ -158,13 +158,26 @@
   height: 100vh;
   margin-left: var(--rail-width);
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-color: rgba(67, 65, 58, 0.42) transparent;
+  scrollbar-width: thin;
   padding: 54px 34px 32px 58px;
 }
 
+.main-canvas:focus-visible {
+  outline: 3px solid rgba(39, 87, 77, 0.72);
+  outline-offset: -3px;
+}
+
 .main-canvas::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 9px;
+  height: 9px;
+}
+
+.main-canvas::-webkit-scrollbar-thumb {
+  background: rgba(67, 65, 58, 0.42);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
 }
 
 .page-header {
