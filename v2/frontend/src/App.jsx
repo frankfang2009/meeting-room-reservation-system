@@ -869,6 +869,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [businessClockTick, setBusinessClockTick] = useState(initialReceivedAt);
   const [currentDate, setCurrentDate] = useState(initialBusinessDate);
   const [bookings, setBookings] = useState([]);
+  const [calendarDataDate, setCalendarDataDate] = useState("");
   const [upcoming, setUpcoming] = useState([]);
   const [history, setHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState({ nextCursor: null, pageSize: 50, total: 0 });
@@ -933,6 +934,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const eventRequestRef = useRef(0);
   const calendarRequestRef = useRef(0);
   const calendarAbortRef = useRef(null);
+  const calendarDataDateRef = useRef("");
   const historyRequestRef = useRef(0);
   const historyUserSelectRef = useRef(null);
   const auditRequestRef = useRef(0);
@@ -1077,20 +1079,24 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [handleError, permissions.manageRooms]);
 
   const loadCalendar = useCallback(async () => {
+    const requestedDate = dateKey(currentDate);
     const requestNumber = calendarRequestRef.current + 1;
     calendarRequestRef.current = requestNumber;
     calendarAbortRef.current?.abort();
     const controller = new AbortController();
     calendarAbortRef.current = controller;
+    if (calendarDataDateRef.current !== requestedDate) setBookings([]);
     setLoading((current) => ({ ...current, calendar: true }));
     try {
       const nextBookings = await fetchAllReservations(
-        dateKey(currentDate),
-        dateKey(currentDate),
+        requestedDate,
+        requestedDate,
         { signal: controller.signal },
       );
       if (calendarRequestRef.current !== requestNumber) return;
       setBookings(nextBookings);
+      calendarDataDateRef.current = requestedDate;
+      setCalendarDataDate(requestedDate);
       setNetworkOffline(false);
     } catch (error) {
       if (error?.name === "AbortError" || calendarRequestRef.current !== requestNumber) return;
@@ -1209,10 +1215,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   if (!bootstrap) return <FatalScreen error="无法读取系统配置" onRetry={loadBootstrap} />;
 
   const activeRooms = rooms.filter((room) => room.isActive !== false).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-  const bookingFor = (roomId, start, end) => bookings.find((booking) => booking.roomId === roomId && booking.status !== "cancelled" && overlaps(booking, start, end));
+  const visibleCalendarBookings = calendarDataDate === dateKey(currentDate) ? bookings : [];
+  const bookingFor = (roomId, start, end) => visibleCalendarBookings.find((booking) => booking.roomId === roomId && booking.status !== "cancelled" && overlaps(booking, start, end));
   const tagFor = (booking) => tags.find((tag) => tag.id === booking?.tagId) || normalizeTag({ id: booking?.tagId, label: booking?.tagLabel, slot: 1 }, 0);
   const bookingMaximumDuration = maximumAvailableDuration({
-    bookings,
+    bookings: visibleCalendarBookings,
     roomId: bookingForm.roomId,
     date: bookingForm.date,
     start: bookingForm.start,
@@ -1323,6 +1330,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         if (!start) continue;
         setCurrentDate(day);
         setBookings(dayBookings);
+        calendarDataDateRef.current = dayKey;
+        setCalendarDataDate(dayKey);
         setNetworkOffline(false);
         openCreate(preferredRoom.id, start, dayKey);
         return;
@@ -1615,6 +1624,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   function renderCalendar() {
     const roomCountClass = activeRooms.length >= 3 ? "calendar-room-count-many" : `calendar-room-count-${activeRooms.length}`;
+    const calendarPending = loading.calendar || calendarDataDate !== dateKey(currentDate);
     return <main className="main-canvas calendar-canvas" tabIndex={0}>
       <header className="page-header calendar-header"><div><h1>预约日历</h1><p>{dateLabel(currentDate)}</p></div>
         <div className="header-actions calendar-toolbar"><div className="calendar-day-navigation" role="group" aria-label="日期导航"><button aria-label="前一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="calendar-nav-today" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button aria-label="后一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button></div>
@@ -1630,8 +1640,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       {successNotice && <section className="calendar-success-notice" role="status"><CheckCircle size={20} /><p><strong>{successNotice.action}</strong><span>·</span>{successNotice.booking.roomName}<span>·</span>{successNotice.booking.start}–{successNotice.booking.end}</p><button onClick={() => openDetails(successNotice.booking)}>查看</button><button className="calendar-success-close" aria-label="关闭" onClick={() => setSuccessNotice(null)}><X size={16} /></button></section>}
       {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除"); }}>清除草稿</button></section>}
       {networkOffline && <section className="calendar-network-banner" role="status"><span className="calendar-network-icon"><WifiSlash size={18} /></span><div><strong>网络连接已断开</strong><p>当前显示最后一次成功获取的数据。</p></div><button onClick={loadCalendar}><ArrowClockwise size={16} />重新连接</button></section>}
-      <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{loading.calendar ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
-        {loading.calendar && !bookings.length ? <div className="calendar-loading-state" role="status"><CircleNotch className="spin" size={28} /><span>正在读取预约数据</span></div> :
+      <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{calendarPending ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
+        {calendarPending && activeRooms.length ? <div className="calendar-loading-state" style={{ "--room-count": activeRooms.length }} role="status" aria-label="正在读取预约数据">
+          <div className="calendar-loading-head"><span />{activeRooms.map((room) => <strong key={room.id}>{room.name}</strong>)}</div>
+          {timeSlots.map(([start], rowIndex) => <div className="calendar-loading-row" key={start}><span className="calendar-loading-time">{start}</span>{activeRooms.map((room, columnIndex) => <i key={room.id} aria-hidden="true" style={{ "--skeleton-width": `${44 + ((rowIndex + columnIndex) % 4) * 10}%` }} />)}</div>)}
+        </div> :
           !activeRooms.length ? <div className="calendar-zero-state"><DoorOpen size={48} weight="thin" /><div><h2>当前没有可预约的笔录室</h2><p>{permissions.manageRooms ? "请先启用或创建至少一个笔录室。" : "请联系管理员启用笔录室。"}</p>{permissions.manageRooms && <button onClick={() => navigate("rooms")}>前往笔录室管理</button>}</div></div> :
           <div className="schedule-viewport"><div className="schedule" style={{ "--room-count": activeRooms.length }} role="grid" tabIndex={0} onKeyDown={moveCalendarFocus} aria-label={dateLabel(currentDate) + "预约日历；使用方向键在时段间移动"}>
             <div className="schedule-head"><div />{activeRooms.map((room) => <div className="room-heading" key={room.id}>{room.name}</div>)}</div>

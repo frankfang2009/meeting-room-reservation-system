@@ -212,7 +212,7 @@
 .calendar-loading-head,
 .calendar-loading-row {
   display: grid;
-  grid-template-columns: 70px repeat(3, minmax(200px, 1fr));
+  grid-template-columns: 70px repeat(var(--room-count), minmax(200px, 1fr));
 }
 
 .calendar-loading-head {

@@ -103,6 +103,15 @@ test("preserved booking drafts stay visible and require explicit relocation", ()
   assert.doesNotMatch(app, /\.\.\.\(preservedDraft \|\| \{\}\)/);
 });
 
+test("calendar loading isolates the previous date and retains its schedule frame", () => {
+  assert.match(app, /const visibleCalendarBookings = calendarDataDate === dateKey\(currentDate\) \? bookings : \[\]/);
+  assert.match(app, /calendarDataDateRef\.current !== requestedDate\) setBookings\(\[\]\)/);
+  assert.match(app, /calendarDataDateRef\.current = requestedDate;\s+setCalendarDataDate\(requestedDate\)/);
+  assert.match(app, /calendarPending && activeRooms\.length \? <div className="calendar-loading-state"/);
+  assert.match(app, /className="calendar-loading-head"[\s\S]{0,180}activeRooms\.map/);
+  assert.match(app, /className="calendar-loading-row"[\s\S]{0,220}calendar-loading-time/);
+});
+
 test("calendar success notices expire and clear when their context changes", () => {
   assert.match(app, /window\.setTimeout\(\(\) => setSuccessNotice\(null\), 8000\)/);
   assert.match(app, /setSuccessNotice\(null\);\n {2}}, \[currentDate\]\)/);
