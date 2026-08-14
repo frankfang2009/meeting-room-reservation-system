@@ -28,6 +28,9 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 返回同值 `X-Request-Id`。恢复状态返回 503 `SYSTEM_RECOVERY_REQUIRED`；底层异常
 只写服务日志，不进入响应。
 
+`GET /healthz` 不需要登录。所有来源可读取通用健康状态；`install_id` 与
+`recovery_code` 仅在请求来源为回环地址时返回，局域网来源不得获得这两个字段。
+
 ## Setup 与 session
 
 `GET /api/v1/session`

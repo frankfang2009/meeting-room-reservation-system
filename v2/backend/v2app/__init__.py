@@ -211,10 +211,10 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
             "port": app.config["SERVICE_PORT"],
             "status": "ready" if ready else "recovery",
         }
-        if not ready:
-            payload["recovery_code"] = app.config["RECOVERY_STATE"]["code"]
         if remote_is_loopback():
             payload["install_id"] = app.config["INSTALL_ID"]
+            if not ready:
+                payload["recovery_code"] = app.config["RECOVERY_STATE"]["code"]
         return jsonify(payload)
 
     service_control = app.config.get("SERVICE_CONTROL")

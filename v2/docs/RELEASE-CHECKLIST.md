@@ -15,6 +15,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E14 | F02 笔录室轮询的空闲会话语义；`v2/scripts/check.sh` | 周期性 `GET /api/v1/rooms` 不更新 `_last_active_at`，主动日历 GET 仍更新；全量门禁通过 |
 | E15 | F03 备份失败与审计双重故障；`v2/scripts/check.sh` | 失败审计写入异常仅记日志，对管理员仍稳定返回 `500 BACKUP_FAILED`；全量门禁通过 |
 | E16 | F04 槽位唯一约束竞争兜底；`v2/scripts/check.sh` | create/update 预检漏过但槽位写入触发唯一约束时均返回 `409 SLOT_CONFLICT` 与最小冲突投影；全量门禁通过 |
+| E17 | F05 恢复码回环边界；`v2/scripts/check.sh` | recovery 状态下回环 `/healthz` 可见 `install_id/recovery_code`，局域网来源不返回两字段；全量门禁通过 |
 
 本轮修复已改变生产源码，因此下方提交
 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 CI 与候选 SHA 只作历史证据；

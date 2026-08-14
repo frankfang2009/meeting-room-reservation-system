@@ -392,6 +392,14 @@ class GenerationAndSetupTests(BackendTestCase):
                 health = client.get("/healthz/").get_json()
                 self.assertFalse(health["ok"])
                 self.assertEqual(health["status"], "recovery")
+                self.assertEqual(
+                    health["recovery_code"], "DATABASE_MISSING_AFTER_SETUP"
+                )
+                remote_health = client.get(
+                    "/healthz/", environ_base={"REMOTE_ADDR": "192.168.1.20"}
+                ).get_json()
+                self.assertNotIn("install_id", remote_health)
+                self.assertNotIn("recovery_code", remote_health)
                 blocked = client.get("/api/v1/session")
                 self.assertEqual(blocked.status_code, 503)
                 self.assertIn("requestId", blocked.get_json())

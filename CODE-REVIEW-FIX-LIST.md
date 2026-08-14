@@ -68,11 +68,11 @@
 
 ### F05 `/healthz` 的 `recovery_code` 仅回环可见 【P2 · 信息暴露】
 
-- [ ] 位置：`v2/backend/v2app/__init__.py:214-217`。
-- [ ] 现状：LAN 上任意机器可读到 `recovery_code`（`install_id` 已正确限制为回环）。
-- [ ] 期望：`recovery_code` 与 `install_id` 一样仅在 `remote_is_loopback()` 时输出。
-- [ ] 注意：确认 `service.py` 健康探测（本机回环）与 `frontend/src/setup-restart.js` 重启探测不受影响。
-- [ ] 验收：测试 LAN 来源无 recovery_code、回环来源有。
+- [x] 位置：`v2/backend/v2app/__init__.py:214-217`。
+- [x] 现状：LAN 上任意机器可读到 `recovery_code`（`install_id` 已正确限制为回环）。
+- [x] 期望：`recovery_code` 与 `install_id` 一样仅在 `remote_is_loopback()` 时输出。
+- [x] 注意：确认 `service.py` 健康探测（本机回环）与 `frontend/src/setup-restart.js` 重启探测不受影响。
+- [x] 验收：测试 LAN 来源无 recovery_code、回环来源有。
 
 ## 2. 第二批：UX 缺陷与契约漂移
 
