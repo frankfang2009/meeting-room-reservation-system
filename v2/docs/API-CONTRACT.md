@@ -152,7 +152,8 @@ slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date
 
 ## 管理与个人设置
 
-- `GET|POST /api/v1/rooms`；`PATCH /api/v1/rooms/{id}`。
+- `GET|POST /api/v1/rooms`；`PATCH /api/v1/rooms/{id}`。其中管理页的周期性
+  `GET /api/v1/rooms` 是被动状态轮询，不刷新 30 分钟空闲会话计时。
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
 - `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、两项网页通知和个人标签 3、4。

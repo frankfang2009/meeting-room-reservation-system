@@ -104,6 +104,26 @@ class ApiAndAuthenticationHardeningTests(BackendTestCase):
         self.assertIn("idle_timeout", reasons)
         self.assertIn("absolute_timeout", reasons)
 
+    def test_room_poll_is_passive_while_calendar_read_renews_idle_session(self):
+        self.setup_system()
+        clock = [1_000.0]
+        self.app.config["SESSION_TIME_PROVIDER"] = lambda: clock[0]
+        self.login()
+
+        clock[0] = 1_100.0
+        rooms = self.client.get("/api/v1/rooms")
+        self.assertEqual(rooms.status_code, 200, rooms.get_json())
+        with self.client.session_transaction() as stored:
+            self.assertEqual(stored["_last_active_at"], 1_000.0)
+
+        clock[0] = 1_200.0
+        reservations = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        )
+        self.assertEqual(reservations.status_code, 200, reservations.get_json())
+        with self.client.session_transaction() as stored:
+            self.assertEqual(stored["_last_active_at"], 1_200.0)
+
     def test_login_uses_dummy_hash_ip_limit_and_hmac_audit_fingerprints(self):
         self.setup_system()
         self.app.config["LOGIN_RATE_MAX_ATTEMPTS"] = 10

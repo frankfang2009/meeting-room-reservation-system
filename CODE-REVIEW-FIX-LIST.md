@@ -37,12 +37,12 @@
 
 ### F02 笔录室页轮询豁免了 30 分钟空闲会话 【P1 · 安全契约】
 
-- [ ] 位置：`v2/backend/v2app/security.py:22-27`（`_PASSIVE_SESSION_PATHS`）。
-- [ ] 现状：管理员停在笔录室页时前端每 30 秒 `GET /api/v1/rooms`（`App.jsx:1127-1132`），
+- [x] 位置：`v2/backend/v2app/security.py:22-27`（`_PASSIVE_SESSION_PATHS`）。
+- [x] 现状：管理员停在笔录室页时前端每 30 秒 `GET /api/v1/rooms`（`App.jsx:1127-1132`），
   该路径不在被动白名单，持续刷新 `_last_active_at`，空闲超时在该页事实上失效，
   违背 PRODUCT-CONTRACT 第 6 节"后台轮询不延长空闲会话"。
-- [ ] 期望：把 `/api/v1/rooms` 加入被动路径集合（确认该接口仅 GET）。
-- [ ] 验收：`test_hardening.py` 新增用例：在注入的 SESSION_TIME_PROVIDER 下，
+- [x] 期望：把 `/api/v1/rooms` 加入被动路径集合（已确认被动判定同时限定 `GET`）。
+- [x] 验收：`test_hardening.py` 新增用例：在注入的 SESSION_TIME_PROVIDER 下，
   GET `/api/v1/rooms` 不更新 `_last_active_at`；非被动 GET（如 /reservations）仍更新。
   注意别破坏管理员房间统计刷新（E4 有相关测试，跑全量确认）。
 
