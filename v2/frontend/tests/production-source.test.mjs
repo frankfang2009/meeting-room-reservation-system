@@ -202,7 +202,7 @@ test("filter races cannot let stale history or audit responses win", () => {
 });
 
 test("logout only leaves the authenticated shell after server confirmation", () => {
-  assert.match(app, /await api\.logout\(\);\s+onLoggedOut\(\)/);
+  assert.match(app, /await api\.logout\(\);[\s\S]{0,120}clearSessionBookingDraft[\s\S]{0,120}onLoggedOut\(\)/);
   assert.match(app, /退出失败，请确认网络后重试/);
   assert.match(app, /SYSTEM_RECOVERY_REQUIRED"\) onRecovery\(error\)/);
 });
@@ -274,6 +274,14 @@ test("reauthentication remounts scoped state only after session and bootstrap va
   assert.doesNotMatch(app, /catch \(caught\) \{[\s\S]{0,240}onRecovered/);
 });
 
+test("expired sessions preserve and restore an account-scoped booking draft", () => {
+  assert.match(app, /未保存内容已保留/);
+  assert.match(app, /writeSessionBookingDraft\(window\.sessionStorage, latest\?\.userId/);
+  assert.match(app, /consumeSessionBookingDraft\([\s\S]{0,80}window\.sessionStorage/);
+  assert.match(app, /setToast\("已恢复未保存的预约草稿"\)/);
+  assert.match(app, /clearSessionBookingDraft\(window\.sessionStorage, currentUser\?\.id\)/);
+});
+
 test("editing another user's booking resolves personal tags from the owner", () => {
   assert.match(app, /bookingTagContext\(\{/);
   assert.match(app, /booking: drawer\?\.type === "edit" \? drawer\.booking : null/);
@@ -283,7 +291,7 @@ test("editing another user's booking resolves personal tags from the owner", () 
 });
 
 test("resetting the signed-in administrator password enters reauthentication immediately", () => {
-  assert.match(app, /result\?\.reauthenticate[\s\S]*setSessionExpired\(true\)/);
+  assert.match(app, /result\?\.reauthenticate[\s\S]*expireSession\(\)/);
 });
 
 test("duration slider visual thumb shares the inset track coordinate system", () => {

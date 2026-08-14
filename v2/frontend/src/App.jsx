@@ -35,7 +35,12 @@ import {
 } from "@phosphor-icons/react";
 import { api, unwrapItems } from "./api.js";
 import { readAuthenticatedContext, reauthenticateContext, scopedAppKey } from "./auth-flow.js";
-import { SessionIsolationBoundary } from "./session-isolation.js";
+import {
+  clearSessionBookingDraft,
+  consumeSessionBookingDraft,
+  SessionIsolationBoundary,
+  writeSessionBookingDraft,
+} from "./session-isolation.js";
 import { runSetupRestartTransition, SetupRestartStatus } from "./setup-restart.js";
 import {
   adminApiFieldErrors,
@@ -767,7 +772,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   return <div className="session-expired-layer"><section ref={ref} className="session-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="session-expired-heading">
     <span className="session-expired-icon" aria-hidden="true"><LockSimple size={22} /></span>
     <h2 id="session-expired-heading">登录已过期</h2>
-    <p>为保护账户安全，请重新登录。验证成功后工作台会重新加载，未保存内容将被清除。</p>
+    <p>为保护账户安全，请重新登录。未保存内容已保留，验证成功后可继续处理。</p>
     {!editing ? <button type="button" data-initial-focus onClick={() => setEditing(true)}>重新登录</button> :
       <form className="session-reauth-form" onSubmit={submit}>
         <input data-initial-focus aria-label="用户名" autoComplete="username" placeholder="用户名" value={credentials.username} onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))} />
@@ -932,8 +937,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const auditRequestRef = useRef(0);
   const auditHiddenRef = useRef(false);
   const knownAuditIdsRef = useRef(new Set());
+  const sessionDraftRef = useRef(null);
   const role = bootstrap?.currentUser?.role || session.currentUser?.role;
   const currentUser = bootstrap?.currentUser || session.currentUser;
+  sessionDraftRef.current = {
+    bookingForm,
+    drawerType: drawer?.type,
+    preservedDraft,
+    userId: currentUser?.id,
+  };
   const permissions = bootstrap?.permissions || {};
   const settings = bootstrap?.settings || { workStart: "08:30", workEnd: "17:30", slotMinutes: 30, maxDurationMinutes: 180 };
   const businessClock = useMemo(
@@ -960,6 +972,31 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [settings.workEnd, settings.workStart, settings.slotMinutes]);
   useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
 
+  const expireSession = useCallback(() => {
+    const latest = sessionDraftRef.current;
+    const activeForm = ["create", "edit", "slot-conflict"].includes(latest?.drawerType)
+      ? latest.bookingForm
+      : null;
+    writeSessionBookingDraft(window.sessionStorage, latest?.userId, {
+      bookingForm: activeForm,
+      preservedDraft: latest?.preservedDraft,
+    });
+    setSessionExpired(true);
+  }, []);
+
+  useEffect(() => {
+    const recovered = consumeSessionBookingDraft(
+      window.sessionStorage,
+      currentUser?.id,
+    );
+    const draft = recovered?.bookingForm || recovered?.preservedDraft;
+    if (!draft) return;
+    setBookingForm(draft);
+    setPreservedDraft(draft);
+    setActiveView("calendar");
+    setToast("已恢复未保存的预约草稿");
+  }, [currentUser?.id]);
+
   useEffect(() => {
     const timer = window.setInterval(() => setBusinessClockTick(Date.now()), 30000);
     return () => window.clearInterval(timer);
@@ -974,7 +1011,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return;
     }
     if (error?.status === 401 || error?.code === "SESSION_EXPIRED" || error?.code === "SESSION_REQUIRED") {
-      setSessionExpired(true);
+      expireSession();
       return;
     }
     if (error?.status === 403 && error?.code === "FORBIDDEN") {
@@ -984,7 +1021,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
     if (error?.code === "NETWORK_ERROR") setNetworkOffline(true);
     setToast(userFacingError(error, fallback));
-  }, [onRecovery]);
+  }, [expireSession, onRecovery]);
 
   const loadBootstrap = useCallback(async () => {
     setLoading((current) => ({ ...current, bootstrap: true }));
@@ -1412,7 +1449,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         }
         await loadCalendar();
       } else {
-        if (error.status === 401) setSessionExpired(true);
+        if (error.status === 401) expireSession();
         setSaveState("failed");
       }
     }
@@ -1789,7 +1826,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setDrawer(null);
       if (result?.reauthenticate) {
         setToast("密码已重置，请使用新密码重新登录");
-        setSessionExpired(true);
+        expireSession();
       } else {
         setToast("密码已重置");
       }
@@ -2026,10 +2063,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   async function logout() {
     try {
       await api.logout();
+      clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
       onLoggedOut();
     } catch (error) {
       if (error?.code === "SYSTEM_RECOVERY_REQUIRED") onRecovery(error);
-      else if (error?.status === 401 || error?.code === "SESSION_REQUIRED" || error?.code === "SESSION_EXPIRED") onLoggedOut();
+      else if (error?.status === 401 || error?.code === "SESSION_REQUIRED" || error?.code === "SESSION_EXPIRED") {
+        clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
+        onLoggedOut();
+      }
       else handleError(error, "退出失败，请确认网络后重试");
     }
   }

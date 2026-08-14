@@ -87,17 +87,17 @@
 
 ### F07 会话过期未保存内容静默丢失（与冻结契约相悖）【P1 · 数据保护】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:746-780`（SessionExpired 文案"未保存内容将被清除"）、
+- [x] 位置：`v2/frontend/src/App.jsx:746-780`（SessionExpired 文案"未保存内容将被清除"）、
   `v2/frontend/src/session-isolation.js:8-17`。
-- [ ] 契约：`DESIGN-CONTRACT.md:93` 要求"unsaved content is preserved"并在重新登录后恢复草稿。
-- [ ] 期望（默认方案）：会话过期时把未保存的预约表单（partyName/caseNumber/purpose/notes/tagId/
+- [x] 契约：`DESIGN-CONTRACT.md:93` 要求"unsaved content is preserved"并在重新登录后恢复草稿。
+- [x] 期望（默认方案）：会话过期时把未保存的预约表单（partyName/caseNumber/purpose/notes/tagId/
   roomId/date/start/duration 及 preservedDraft）写入 `sessionStorage`，**按登录用户 ID 键隔离**；
   重新认证成功且 session+bootstrap 校验通过后恢复草稿并提示"已恢复未保存的预约草稿"；
   主动登出时清空。文案同步改为"未保存内容已保留"。
-- [ ] 注意：不同账号互不可见；恢复必须发生在重新认证成功之后（沿用现有 scopedAppKey remount 机制）。
-- [ ] 验收：新增前端测试（序列化/隔离纯函数）；更新 `production-source.test.mjs` 文案断言；
+- [x] 注意：不同账号互不可见；恢复必须发生在重新认证成功之后（沿用现有 scopedAppKey remount 机制）。
+- [x] 验收：新增前端测试（序列化/隔离纯函数）；更新 `production-source.test.mjs` 文案断言；
   真实浏览器回归：填表→等会话过期→重登→草稿恢复。
-- [ ] 若用户选择"修订契约而非保留草稿"，先问用户，不要自行决定。
+- [x] 若用户选择"修订契约而非保留草稿"，先问用户，不要自行决定。
 
 ### F08 日历方向键导航在禁用格存在时坐标错位 【P1 · 无障碍】
 
