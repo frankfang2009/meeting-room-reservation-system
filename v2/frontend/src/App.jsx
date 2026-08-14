@@ -784,7 +784,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   </section></div>;
 }
 
-function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDuration, editing, busy, failure, conflict, onSubmit, onFieldChange, onDismissFailure, onUseLatest, onContinueDraft }) {
+function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDuration, editing, busy, failure, conflict, conflictCheck, onSubmit, onFieldChange, onDismissFailure, onUseLatest, onContinueDraft, onRecheckConflict }) {
   const roomName = rooms.find((room) => room.id === form.roomId)?.name || "请选择笔录室";
   const minimum = DURATION_STEPS[0];
   const scaleMaximum = DURATION_STEPS.at(-1);
@@ -831,7 +831,7 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
         <label className="field booking-notes-field"><span>备注 <em>选填</em></span><textarea rows="3" value={form.notes} onChange={(event) => updateField("notes", event.target.value)} /></label>
       </section>
     </div>
-    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留，请比较后决定。</p></div></div>{conflictDifferences.length ? <div className="booking-modified-comparison"><div className="booking-modified-comparison-head"><span>字段</span><strong>你的修改</strong><strong>最新预约</strong></div>{conflictDifferences.map((item) => <div className="booking-modified-comparison-row" key={item.label}><span>{item.label}</span><span>{item.localValue}</span><span>{item.serverValue}</span></div>)}</div> : <p>服务器版本已更新，但当前字段值没有可见差异。</p>}<div className="booking-modified-actions"><button className="submit-button" type="button" onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" onClick={onContinueDraft}>返回继续调整</button></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
+    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留，请比较后决定。</p></div></div>{conflictDifferences.length ? <div className="booking-modified-comparison"><div className="booking-modified-comparison-head"><span>字段</span><strong>你的修改</strong><strong>最新预约</strong></div>{conflictDifferences.map((item) => <div className="booking-modified-comparison-row" key={item.label}><span>{item.label}</span><span>{item.localValue}</span><span>{item.serverValue}</span></div>)}</div> : <p>服务器版本已更新，但当前字段值没有可见差异。</p>}<div className="booking-modified-actions"><button className="submit-button" type="button" disabled={conflictCheck.busy} onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" disabled={conflictCheck.busy} onClick={onContinueDraft}>返回继续调整</button><button className="booking-modified-recheck" type="button" disabled={conflictCheck.busy} onClick={onRecheckConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查"}</button><p className={`booking-modified-message ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
   </form>;
 }
 
@@ -889,6 +889,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingErrors, setBookingErrors] = useState({});
   const [saveState, setSaveState] = useState("idle");
   const [conflict, setConflict] = useState(null);
+  const [conflictCheck, setConflictCheck] = useState({ busy: false, message: "" });
   const [loading, setLoading] = useState({ bootstrap: true, calendar: true, mine: true, history: true });
   const [networkOffline, setNetworkOffline] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -1381,6 +1382,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setBookingErrors(ownerTagError);
     setSaveState("idle");
     setConflict(null);
+    setConflictCheck({ busy: false, message: "" });
     setBookingForm({
       roomId: booking.roomId,
       date: booking.date,
@@ -1414,6 +1416,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
     setSaveState("saving");
     setConflict(null);
+    setConflictCheck({ busy: false, message: "" });
     try {
       const saved = editing
         ? await api.updateReservation(drawer.booking.id, bookingPayload(bookingForm, drawer.booking.revision))
@@ -1435,6 +1438,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       } else if (error.code === "SLOT_CONFLICT") {
         setSuccessNotice(null);
         setConflict({ type: "slot", conflicts: error.conflicts });
+        setConflictCheck({ busy: false, message: "" });
         setDrawer((current) => ({ ...current, type: "slot-conflict" }));
         await loadCalendar();
       } else if (error.code === "REVISION_CONFLICT") {
@@ -1443,6 +1447,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         setBookingForm(rebased.draft);
         setDrawer((current) => ({ ...current, booking: rebased.baseline }));
         setConflict({ type: "revision", current: rebased.baseline });
+        setConflictCheck({ busy: false, message: "" });
         setSaveState("idle");
       } else if (error.code === "VALIDATION_ERROR") {
         setBookingErrors(error.fields || {});
@@ -1462,6 +1467,51 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         if (error.status === 401) expireSession();
         setSaveState("failed");
       }
+    }
+  }
+
+  async function recheckSlotConflict() {
+    if (drawer?.type !== "slot-conflict" || conflictCheck.busy) return;
+    setConflictCheck({ busy: true, message: "" });
+    try {
+      const nextBookings = await fetchAllReservations(bookingForm.date, bookingForm.date);
+      const targetEnd = endFromDuration(bookingForm.start, bookingForm.duration);
+      const occupied = nextBookings.some((booking) => (
+        booking.roomId === bookingForm.roomId
+        && booking.status !== "cancelled"
+        && overlaps(booking, bookingForm.start, targetEnd)
+      ));
+      if (dateKey(currentDate) === bookingForm.date) {
+        setBookings(nextBookings);
+        calendarDataDateRef.current = bookingForm.date;
+        setCalendarDataDate(bookingForm.date);
+      }
+      setConflictCheck({ busy: false, message: occupied ? "该时段仍被占用" : "该时段已可用，可以返回日历重新选择" });
+    } catch (error) {
+      setConflictCheck({ busy: false, message: "暂时无法重新检查，请稍后重试" });
+      if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法重新检查这个时段");
+    }
+  }
+
+  async function recheckRevisionConflict() {
+    if (drawer?.type !== "edit" || conflict?.type !== "revision" || conflictCheck.busy) return;
+    setConflictCheck({ busy: true, message: "" });
+    try {
+      const previousRevision = Number(conflict.current?.revision || 0);
+      const latest = await api.getReservation(drawer.booking.id);
+      const rebased = rebaseBookingEdit(bookingForm, latest);
+      setBookingForm(rebased.draft);
+      setDrawer((current) => ({ ...current, booking: rebased.baseline }));
+      setConflict({ type: "revision", current: rebased.baseline });
+      setConflictCheck({
+        busy: false,
+        message: Number(latest.revision || 0) > previousRevision
+          ? "预约仍有新的变化，已更新最新内容"
+          : "当前仍是已显示的最新版本",
+      });
+    } catch (error) {
+      setConflictCheck({ busy: false, message: "暂时无法重新检查，请稍后重试" });
+      if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法重新检查预约内容");
     }
   }
 
@@ -2052,13 +2102,13 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       && drawer.user.role === "admin"
       && drawer.user.enabled !== false
       && enabledAdminCount <= 1;
-    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} maximumDuration={bookingMaximumDuration} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} onSubmit={saveBooking} onFieldChange={(field) => setBookingErrors((current) => { if (!current[field]) return current; const next = { ...current }; delete next[field]; return next; })} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => setConflict(null)} onUseLatest={() => {
+    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} maximumDuration={bookingMaximumDuration} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} conflictCheck={conflictCheck} onSubmit={saveBooking} onFieldChange={(field) => setBookingErrors((current) => { if (!current[field]) return current; const next = { ...current }; delete next[field]; return next; })} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => { setConflict(null); setConflictCheck({ busy: false, message: "" }); }} onRecheckConflict={recheckRevisionConflict} onUseLatest={() => {
       const latest = conflict?.current;
       if (!latest) return;
       setBookingForm({ roomId: latest.roomId, date: latest.date, start: latest.start, duration: durationFromRange(latest.start, latest.end), partyName: latest.partyName, caseNumber: latest.caseNumber, purpose: latest.purpose, notes: latest.notes || "", tagId: latest.tagId });
-      setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null);
+      setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null); setConflictCheck({ busy: false, message: "" });
     }} />;
-    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" onClick={loadCalendar}><ArrowClockwise size={16} />重新检查这个时段</button></div></div>;
+    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" disabled={conflictCheck.busy} onClick={recheckSlotConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查这个时段"}</button><p className={`booking-conflict-check-result ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div>;
     if (drawer.type === "draft-relocation") {
       const originalRoom = rooms.find((room) => room.id === drawer.draft.roomId)?.name || "原笔录室";
       const targetRoom = rooms.find((room) => room.id === drawer.target.roomId)?.name || "新笔录室";

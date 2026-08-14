@@ -131,6 +131,7 @@ export const api = {
     cursor,
   }), { signal }),
   getUpcoming: () => request("/reservations/upcoming"),
+  getReservation: (id) => request(`/reservations/${encodeURIComponent(id)}`),
   createReservation: (input) => request("/reservations", { method: "POST", body: input }),
   updateReservation: (id, input) => request(`/reservations/${encodeURIComponent(id)}`, { method: "PATCH", body: input }),
   cancelReservation: (id, expectedRevision) => request(`/reservations/${encodeURIComponent(id)}/cancel`, {

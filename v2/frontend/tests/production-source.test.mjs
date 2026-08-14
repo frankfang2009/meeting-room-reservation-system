@@ -93,6 +93,18 @@ test("revision conflicts rebase the drawer baseline while preserving the draft",
   assert.match(app, /setBookingForm\(rebased\.draft\)/);
 });
 
+test("conflict panels expose busy rechecks and explicit results", () => {
+  assert.match(app, /async function recheckSlotConflict\(\)/);
+  assert.match(app, /occupied \? "该时段仍被占用" : "该时段已可用，可以返回日历重新选择"/);
+  assert.match(app, /booking-conflict-recheck" disabled=\{conflictCheck\.busy\} onClick=\{recheckSlotConflict\}/);
+  assert.match(app, /booking-conflict-check-result[\s\S]{0,160}conflictCheck\.message/);
+  assert.match(app, /async function recheckRevisionConflict\(\)/);
+  assert.match(app, /await api\.getReservation\(drawer\.booking\.id\)/);
+  assert.match(app, /预约仍有新的变化，已更新最新内容/);
+  assert.match(app, /booking-modified-recheck" type="button" disabled=\{conflictCheck\.busy\}/);
+  for (const action of ["使用最新内容", "返回继续调整", "重新检查"]) assert.match(app, new RegExp(action));
+});
+
 test("preserved booking drafts stay visible and require explicit relocation", () => {
   assert.match(app, /className="calendar-draft-notice"[^>]*aria-label="待续预约草稿"/);
   assert.match(app, /选择空白时段后，系统会先确认是否迁移这份草稿/);

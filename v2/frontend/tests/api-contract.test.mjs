@@ -24,7 +24,7 @@ test("service readiness probes the root health endpoint", async () => {
 });
 
 test("unused bootstrap-duplicating API helpers stay removed", () => {
-  for (const name of ["getReservation", "getUsers", "getPreferences"]) {
+  for (const name of ["getUsers", "getPreferences"]) {
     assert.equal(Object.hasOwn(api, name), false, name);
   }
 });
@@ -109,6 +109,25 @@ test("maps the uniform API error shape", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: "REVISION_CONFLICT", message: "changed", current: { id: "booking-1", revision: 2 } } }), { status: 409, headers: { "Content-Type": "application/json" } });
   try {
     await assert.rejects(request("/reservations/booking-1", { method: "PATCH", body: {}, headers: {} }), (error) => error.code === "REVISION_CONFLICT" && error.current.revision === 2);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("reservation conflict recheck reads the latest record by encoded id", async () => {
+  const previousFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = async (url) => {
+    capturedUrl = url;
+    return new Response(JSON.stringify({ id: "booking/1", revision: 3 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const latest = await api.getReservation("booking/1");
+    assert.equal(capturedUrl, "/api/v1/reservations/booking%2F1");
+    assert.equal(latest.revision, 3);
   } finally {
     globalThis.fetch = previousFetch;
   }

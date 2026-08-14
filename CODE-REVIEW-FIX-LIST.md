@@ -127,13 +127,13 @@
 
 ### F11 冲突面板"重新检查"无反馈；修订冲突缺第三个动作 【P2 · 契约漂移】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:2002`（slot-conflict 重新检查直接 loadCalendar，无 busy/结果）、
+- [x] 位置：`v2/frontend/src/App.jsx:2002`（slot-conflict 重新检查直接 loadCalendar，无 busy/结果）、
   `App.jsx:828`（revision 面板只有两个动作）。样式 `.booking-conflict-check-result`
   （drawer-shell.css:267-279）与 `.booking-modified-recheck` 已存在未用。
-- [ ] 契约：DESIGN-CONTRACT:87-89（slot 冲突三动作+重检反馈）、:116（revision 三动作含"重新检查"）。
-- [ ] 期望：slot-conflict 重检按钮加 busy 态与结果提示（"该时段仍被占用/已可用"）；
+- [x] 契约：DESIGN-CONTRACT:87-89（slot 冲突三动作+重检反馈）、:116（revision 三动作含"重新检查"）。
+- [x] 期望：slot-conflict 重检按钮加 busy 态与结果提示（"该时段仍被占用/已可用"）；
   revision 面板补"重新检查"动作（重新拉取最新记录并更新基线）。
-- [ ] 验收：production-source 断言三动作与 busy/结果文案；浏览器回归。
+- [x] 验收：production-source 断言三动作与 busy/结果文案；浏览器回归。
 
 ### F12 历史"加载更早月份"应原地追加而非整表跳转 【P2 · 契约漂移】
 
