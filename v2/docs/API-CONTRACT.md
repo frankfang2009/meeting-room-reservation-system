@@ -97,6 +97,10 @@ DNS rebinding 夺取首次管理员：
 `GET /api/v1/reservations?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&pageSize=...&cursor=...`
 返回认证用户可见的共享日历完整详情。
 
+`GET /api/v1/reservations/upcoming` 返回当前登录用户本人 `status=active` 且尚未结束的
+预约，按 `date/start` 升序排列。它不接受 owner、日期或分页参数，响应为
+`{ "items": [预约对象] }`；管理员也只获得本人即将到来的预约，不扩展为全单位列表。
+
 `GET /api/v1/reservations/history?month=YYYY-MM&ownerId=...&status=active|cancelled&tagId=...&query=...&pageSize=...&cursor=...`：
 员工始终由服务端收窄为本人，忽略或拒绝扩权参数。
 
@@ -157,8 +161,14 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
 ## 管理与个人设置
 
-- `GET|POST /api/v1/rooms`；`PATCH /api/v1/rooms/{id}`。其中管理页的周期性
+- `GET|POST /api/v1/rooms`；`PATCH|DELETE /api/v1/rooms/{id}`。其中管理页的周期性
   `GET /api/v1/rooms` 是被动状态轮询，不刷新 30 分钟空闲会话计时。
+- `GET /api/v1/rooms/{id}/deletion-impact` 仅管理员可用，返回目标
+  `room: {id,name}`、所有未结束 active 预约计数 `total`，以及按日期/开始时间排序的
+  前 50 个完整预约投影 `items`；没有阻断项时 `total=0, items=[]`，房间不存在返回
+  `404 NOT_FOUND`。`DELETE /api/v1/rooms/{id}` 遇到阻断时返回
+  `409 ROOM_HAS_FUTURE_BOOKINGS`，其中 `error.current={roomId,roomName,total}`，
+  `error.conflicts` 与上述最多 50 条 `items` 一致；`total` 可能大于 conflicts 长度。
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
 - `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、两项网页通知和个人标签 3、4。
@@ -174,6 +184,36 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。
+
+## 只读集成 API
+
+`/api/v1/integration/*` 不使用登录 Cookie 或 CSRF，必须携带
+`Authorization: Bearer mr2_...`。管理员创建令牌时的 scope 白名单严格限定为
+`rooms:read`、`availability:read`、`health:read`；接口全部为 GET，不提供预约内容写入能力。
+每个接口只接受对应 scope，成功使用会更新令牌的 `lastUsedAt`：
+
+- `GET /api/v1/integration/rooms` 需要 `rooms:read`，仅返回启用笔录室：
+  `{ "items": [{ "id": "...", "name": "笔录室 1" }] }`。
+- `GET /api/v1/integration/availability?date=YYYY-MM-DD` 需要 `availability:read`，返回：
+
+  ```json
+  {
+    "date": "2026-08-10",
+    "rooms": [{
+      "roomId": "...", "roomName": "笔录室 1",
+      "slots": [{ "start": "08:30", "available": true }]
+    }]
+  }
+  ```
+
+  日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
+- `GET /api/v1/integration/health` 需要 `health:read`，只返回
+  `{ "ok": true, "productVersion": "V2.0.0" }`。
+
+令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
+时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少
+目标 scope 时 `403 TOKEN_SCOPE_FORBIDDEN`。过期令牌不会退化为无效令牌，也不会继续执行
+目标查询。
 
 ## 公开大屏
 

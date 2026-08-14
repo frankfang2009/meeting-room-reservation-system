@@ -44,6 +44,37 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("getActivityDay", frontend)
         self.assertIn('url_prefix="/api/v1/activity"', backend)
 
+    def test_api_contract_covers_upcoming_room_impact_and_read_only_integrations(self) -> None:
+        contract = read("docs/API-CONTRACT.md")
+        reservations = read("backend/v2app/api/reservations.py")
+        reservation_service = read("backend/v2app/services/reservations.py")
+        admin = read("backend/v2app/api/admin.py")
+        system = read("backend/v2app/api/system.py")
+
+        self.assertIn('@bp.get("/upcoming")', reservations)
+        self.assertIn("GET /api/v1/reservations/upcoming", contract)
+        self.assertIn("当前登录用户本人", contract)
+        self.assertIn("r.owner_user_id = ? AND r.status = 'active'", reservation_service)
+
+        self.assertIn('@bp.get("/rooms/<room_id>/deletion-impact")', admin)
+        self.assertIn("GET /api/v1/rooms/{id}/deletion-impact", contract)
+        self.assertIn("LIMIT 50", admin)
+        for field in ('"room"', '"total"', '"items"'):
+            self.assertIn(field, admin)
+        self.assertIn("前 50 个完整预约投影", contract)
+        self.assertIn("ROOM_HAS_FUTURE_BOOKINGS", contract)
+        self.assertIn("total` 可能大于 conflicts 长度", contract)
+
+        self.assertIn('TOKEN_SCOPES = {"rooms:read", "availability:read", "health:read"}', system)
+        for endpoint in ("rooms", "availability", "health"):
+            self.assertIn(f'@bp.get("/integration/{endpoint}")', system)
+            self.assertIn(f"GET /api/v1/integration/{endpoint}", contract)
+        for code in ("TOKEN_REQUIRED", "TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_SCOPE_FORBIDDEN"):
+            self.assertIn(code, system)
+            self.assertIn(code, contract)
+        self.assertIn('"slots": slots', system)
+        self.assertIn('"productVersion": current_app.config["PRODUCT_VERSION"]', system)
+
     def test_personal_activity_is_server_aggregated_and_current_user_scoped(self) -> None:
         activity = read("backend/v2app/api/activity.py")
         frontend = read("frontend/src/features/profile/PersonalCenter.jsx")

@@ -190,12 +190,12 @@
 
 ### F18 API-CONTRACT.md 补齐未覆盖路由 【P2 · 文档】
 
-- [ ] 补 `GET /api/v1/reservations/upcoming`（`api/reservations.py:33-36`）；
-- [ ] 补 `GET /api/v1/rooms/{id}/deletion-impact`（`api/admin.py:106-111`）与
+- [x] 补 `GET /api/v1/reservations/upcoming`（`api/reservations.py:33-36`）；
+- [x] 补 `GET /api/v1/rooms/{id}/deletion-impact`（`api/admin.py:106-111`）与
   删除阻断投影字段（最多 50 条 + total）；
-- [ ] 补 `/api/v1/integration/{rooms,availability,health}` 一节（`api/system.py:497-544`）：
+- [x] 补 `/api/v1/integration/{rooms,availability,health}` 一节（`api/system.py:497-544`）：
   token scope 白名单（只读）、过期语义、错误码。
-- [ ] 验收：文档与代码逐字段对照；可在 `tests/test_release_contract.py` 增加对应断言。
+- [x] 验收：文档与代码逐字段对照；可在 `tests/test_release_contract.py` 增加对应断言。
 
 ### F19 契约漂移裁决（需用户拍板，不要自行决定）
 
