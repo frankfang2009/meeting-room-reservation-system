@@ -128,13 +128,13 @@
   background: color-mix(in srgb, var(--terracotta) 7%, transparent);
 }
 
-.history-filter-popover .history-choice-options input[type="radio"] {
+.history-filter-popover input[type="radio"] {
   width: 18px;
   height: 18px;
   border-radius: 50%;
 }
 
-.history-filter-popover .history-choice-options input[type="radio"]::before {
+.history-filter-popover input[type="radio"]::before {
   width: 8px;
   height: 8px;
   clip-path: none;
@@ -142,7 +142,7 @@
   background: var(--terracotta);
 }
 
-.history-filter-popover .history-choice-options input[type="radio"]:checked {
+.history-filter-popover input[type="radio"]:checked {
   border-color: var(--terracotta);
   background: transparent;
 }
@@ -512,8 +512,8 @@
   align-items: center;
   justify-content: center;
   padding: 3px 7px;
-  color: #8a6960;
-  border: 1px solid rgba(138, 105, 96, 0.28);
+  color: #70493f;
+  border: 1px solid rgba(112, 73, 63, 0.34);
   border-radius: 999px;
   background: rgba(169, 87, 65, 0.035);
   font-size: 11px;

@@ -30,7 +30,18 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "ffaef1305797c36c3747bf96b1cdc40500fb72b11738576445c0b6fb774de341";
+const frozenSourceSha256 = "497decfd53d26b0a2fc8cdc7bb0566fc8f84920f6eede6832c6fdc294c166ac7";
+
+function luminance(hex) {
+  const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(left, right) {
+  const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
 
 function importedFiles() {
   const manifest = fs.readFileSync(manifestPath, "utf8");
@@ -84,4 +95,16 @@ test("the three-room calendar can shrink to the 1024px workspace", () => {
   const calendar = fs.readFileSync(path.join(stylesRoot, "calendar.css"), "utf8");
   assert.match(calendar, /\.schedule \{\s*min-width: min\(860px, 100%\);/);
   assert.match(calendar, /grid-template-columns: 70px repeat\(var\(--room-count\), minmax\(220px, 1fr\)\);/);
+});
+
+test("low-frequency controls keep semantic styles and readable cancelled status", () => {
+  const history = fs.readFileSync(path.join(stylesRoot, "history.css"), "utf8");
+  const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
+  const settings = fs.readFileSync(path.join(stylesRoot, "settings.css"), "utf8");
+  assert.match(history, /\.history-filter-popover input\[type="radio"\]/);
+  assert.match(flows, /\.booking-events-error button \{[\s\S]*?min-height: 44px;/);
+  assert.match(settings, /\.settings-save-button:disabled/);
+  const cancelledColor = history.match(/\.history-cancelled-status \{[\s\S]*?color: (#[0-9a-f]{6});/i)?.[1];
+  assert.ok(cancelledColor);
+  assert.ok(contrastRatio(cancelledColor, "#f5f4ed") >= 4.5);
 });

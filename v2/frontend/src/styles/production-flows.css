@@ -228,6 +228,17 @@
   font-size: 12px;
 }
 
+.booking-events-error button {
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0 10px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+}
+
 .history-more,
 .system-audit-more {
   min-height: 44px;

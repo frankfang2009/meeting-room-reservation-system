@@ -8,6 +8,7 @@ import {
   canManageBooking,
   canViewBookingDetails,
   clampDurationToWorkday,
+  dateKey,
   findFirstAvailableStart,
   generateTimeSlots,
   hasBookingStarted,
@@ -21,6 +22,7 @@ import {
   reservationEventLabel,
   mapSetupFieldErrors,
   setupStepForField,
+  shiftDateByYears,
   userFacingError,
   validateAuthenticatedContext,
   validateBookingForm,
@@ -285,6 +287,13 @@ test("builds the API reservation shape and requires expected revision for edits"
   });
   assert.deepEqual(validateBookingForm(form), {});
   assert.ok(validateBookingForm({ ...form, partyName: "" }).partyName);
+  assert.equal(validateBookingForm({ ...form, start: "09:15" }, 30).start, "开始时间必须按 30 分钟对齐");
+  assert.equal(validateBookingForm({ ...form, start: "09:30" }, 30).start, undefined);
+});
+
+test("calendar year bounds clamp leap-day dates", () => {
+  assert.equal(dateKey(shiftDateByYears(new Date(2024, 1, 29), 2)), "2026-02-28");
+  assert.equal(dateKey(shiftDateByYears(new Date(2026, 7, 15), -2)), "2024-08-15");
 });
 
 test("rebases an edit onto the latest revision without changing its draft", () => {

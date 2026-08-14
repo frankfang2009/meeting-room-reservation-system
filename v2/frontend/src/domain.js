@@ -245,6 +245,14 @@ export function shiftDate(date, days) {
   return next;
 }
 
+export function shiftDateByYears(date, years) {
+  const next = new Date(date);
+  const originalMonth = next.getMonth();
+  next.setFullYear(next.getFullYear() + Number(years));
+  if (next.getMonth() !== originalMonth) next.setDate(0);
+  return next;
+}
+
 export function durationFromRange(start, end) {
   return parseTime(end) - parseTime(start);
 }
@@ -403,11 +411,19 @@ export function bookingPayload(form, expectedRevision) {
   return payload;
 }
 
-export function validateBookingForm(form) {
+export function validateBookingForm(form, slotMinutes = 30) {
   const errors = {};
   if (!form.roomId) errors.roomId = "请选择笔录室";
   if (!form.date) errors.date = "请选择日期";
   if (!form.start) errors.start = "请选择开始时间";
+  if (form.start) {
+    const match = /^(\d{2}):(\d{2})$/.exec(String(form.start));
+    const step = Number(slotMinutes) || 30;
+    const minutes = match ? Number(match[1]) * 60 + Number(match[2]) : Number.NaN;
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59 || minutes % step !== 0) {
+      errors.start = `开始时间必须按 ${step} 分钟对齐`;
+    }
+  }
   if (!form.partyName?.trim()) errors.partyName = "请输入预约对象";
   if (!form.caseNumber?.trim()) errors.caseNumber = "请输入案号";
   if (!form.purpose?.trim()) errors.purpose = "请输入预约用途";

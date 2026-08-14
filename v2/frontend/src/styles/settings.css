@@ -277,6 +277,10 @@
 .settings-save-button {
   min-width: 116px;
   height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   padding: 0 22px;
   color: var(--paper-raised);
   border: 1px solid var(--ink);
@@ -294,6 +298,13 @@
 
 .settings-save-button:active {
   transform: translateY(1px);
+}
+
+.settings-save-button:disabled,
+.settings-logout-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+  transform: none;
 }
 
 .settings-save-button:focus-visible,
@@ -408,6 +419,16 @@
 .settings-field input:focus {
   border-color: rgba(20, 20, 19, 0.42);
   background: var(--paper-raised);
+}
+
+.settings-field input[aria-invalid="true"] {
+  border-color: #a34f3b;
+}
+
+.settings-field-error {
+  margin-top: -3px;
+  color: #8a3f2f;
+  font-size: 12px;
 }
 
 .settings-choice-list,

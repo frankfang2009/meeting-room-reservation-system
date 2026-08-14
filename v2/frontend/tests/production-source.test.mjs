@@ -164,8 +164,24 @@ test("upcoming reminders use the mine navigation clock badge instead of a bottom
 
 test("the frozen empty-state action consumes a valid default room", () => {
   assert.match(app, /defaultRoomId\) \|\| activeRooms\[0\]/);
-  assert.match(app, /onClick=\{openDefaultCreate\}>前往预约日历/);
+  assert.match(app, /onClick=\{openDefaultCreate\}>\{!activeRooms\.length/);
   assert.match(app, /openCreate\(preferredRoom\.id, start, dayKey\)/);
+});
+
+test("low-frequency UX safeguards remain explicit and testable", () => {
+  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminder\?\.kind === "change"[\s\S]*<Drawer/);
+  assert.match(app, /historyMonth <= historyMonths\.at\(-1\)\.id/);
+  assert.match(app, /nextMonth < earliestMonth \|\| nextMonth > latestMonth/);
+  assert.match(app, /min=\{calendarDateMinimum\} max=\{calendarDateMaximum\}/);
+  assert.match(app, /name="history-room"/);
+  assert.match(app, /name="history-tag"/);
+  assert.doesNotMatch(app, /name="history-(?:room|tag)"[^>]*type="checkbox"/);
+  assert.match(productionSource, /className="settings-save-button"[^>]*disabled=\{saving\}/);
+  assert.match(productionSource, /name="profile-name"[^>]*aria-invalid=\{Boolean\(errors\.name\)\}/);
+  assert.match(app, /booking-events-error[^>]*>暂时无法读取变更记录<button type="button" onClick=\{onRetryEvents\}>重新读取/);
+  assert.match(app, /validateBookingForm\(bookingForm, settings\.slotMinutes\)/);
+  assert.match(app, /当前没有可用笔录室，请联系管理员启用后再预约/);
+  assert.match(app, /if \(!preferredRoom\) \{[\s\S]{0,420}return;[\s\S]{0,80}navigate\("calendar"\)/);
 });
 
 test("system recovery has a dedicated gate with recovery and request references", () => {

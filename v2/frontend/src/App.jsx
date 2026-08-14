@@ -88,6 +88,7 @@ import {
   reservationEventLabel,
   setupStepForField,
   shiftDate,
+  shiftDateByYears,
   userFacingError,
   validateAuthenticatedContext,
   validateBookingForm,
@@ -874,7 +875,7 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
   </form>;
 }
 
-function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState, eventsAllowed, onEdit, onCancel, onClose }) {
+function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState, eventsAllowed, onEdit, onCancel, onClose, onRetryEvents }) {
   return <div className="booking-details">
     <div className="selection-summary"><h2>{booking.start}–{booking.end}</h2><p>{dateLabel(booking.date)}</p>{booking.status && <span className={`drawer-status ${booking.status}`}><i />{reservationStatusLabel(booking.status)}</span>}</div>
     <dl>
@@ -888,7 +889,7 @@ function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState,
     </dl>
     {eventsAllowed && <section className="booking-event-timeline" aria-labelledby="booking-events-heading" aria-busy={eventsState === "loading"}>
       <h3 id="booking-events-heading">变更记录</h3>
-      {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note">暂时无法读取变更记录</p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
+      {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note booking-events-error">暂时无法读取变更记录<button type="button" onClick={onRetryEvents}>重新读取</button></p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
     </section>}
     {(canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
   </div>;
@@ -967,6 +968,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingEvents, setBookingEvents] = useState([]);
   const [bookingEventsState, setBookingEventsState] = useState("idle");
   const [preferencesDraft, setPreferencesDraft] = useState(() => initialBootstrap?.preferences || null);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesErrors, setPreferencesErrors] = useState({});
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
   const [profileTab, setProfileTab] = useState("activity");
   const [activity, setActivity] = useState(null);
@@ -1006,6 +1009,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     [businessClockAnchor, businessClockTick],
   );
   const businessDate = useMemo(() => parseDate(businessClock.date), [businessClock.date]);
+  const calendarDateMinimum = dateKey(shiftDateByYears(businessDate, -2));
+  const calendarDateMaximum = dateKey(shiftDateByYears(businessDate, 2));
   const tags = useMemo(() => [...(bootstrap?.globalTags || []), ...(bootstrap?.personalTags || [])].map(normalizeTag).sort((a, b) => a.slot - b.slot), [bootstrap]);
   const editTagContext = useMemo(() => bookingTagContext({
     booking: drawer?.type === "edit" ? drawer.booking : null,
@@ -1382,8 +1387,16 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function openDefaultCreate() {
     const preferredRoom = activeRooms.find((room) => room.id === bootstrap.preferences?.defaultRoomId) || activeRooms[0];
+    if (!preferredRoom) {
+      if (permissions.manageRooms) {
+        setToast("当前没有可用笔录室，请先启用或创建笔录室", "info");
+        navigate("rooms");
+      } else {
+        setToast("当前没有可用笔录室，请联系管理员启用后再预约", "info");
+      }
+      return;
+    }
     navigate("calendar");
-    if (!preferredRoom) return;
     setLoading((current) => ({ ...current, calendar: true }));
     try {
       const now = new Date(businessDate);
@@ -1415,15 +1428,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }
 
-  async function openDetails(booking, readOnly = false, returnTo = null) {
-    setSuccessNotice(null);
+  async function loadBookingEvents(booking) {
     const requestNumber = eventRequestRef.current + 1;
     eventRequestRef.current = requestNumber;
-    const eventsAllowed = role === "admin" || booking.ownerId === currentUser.id;
     setBookingEvents([]);
-    setBookingEventsState(eventsAllowed ? "loading" : "hidden");
-    setDrawer({ type: "details", booking, readOnly, returnTo });
-    if (!eventsAllowed) return;
+    setBookingEventsState("loading");
     try {
       const result = await api.getReservationEvents(booking.id);
       if (eventRequestRef.current !== requestNumber) return;
@@ -1434,6 +1443,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setBookingEventsState("error");
       if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法读取变更记录");
     }
+  }
+
+  async function openDetails(booking, readOnly = false, returnTo = null) {
+    setSuccessNotice(null);
+    const eventsAllowed = role === "admin" || booking.ownerId === currentUser.id;
+    setBookingEvents([]);
+    setBookingEventsState(eventsAllowed ? "loading" : "hidden");
+    setDrawer({ type: "details", booking, readOnly, returnTo });
+    if (eventsAllowed) await loadBookingEvents(booking);
   }
 
   function openEdit(booking, returnTo = null) {
@@ -1471,7 +1489,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     event.preventDefault();
     const editing = drawer?.type === "edit";
     const returnTo = drawer?.returnTo || null;
-    const errors = validateBookingForm(bookingForm);
+    const errors = validateBookingForm(bookingForm, settings.slotMinutes);
     if (
       drawer?.type === "edit"
       && !editTagContext.ownerTagsAvailable
@@ -1710,7 +1728,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       <div className="bookings-layout">
         {loading.mine ? <div className="bookings-empty" role="status"><CircleNotch className="spin" size={30} /><p>正在读取预约</p></div> :
           next ? <button className="next-booking" onClick={() => openDetails(next)}><span className="next-booking-time"><span className="next-booking-time-value">{next.start}</span><span className="next-booking-time-separator">–</span><span className="next-booking-time-value">{next.end}</span></span><span className="next-booking-room" style={tagStyle(tagFor(next))}><i />{next.roomName}</span><CaretRight className="next-booking-caret" size={25} /></button> :
-          ownItems.length ? <div className="bookings-empty"><p>没有符合条件的预约</p><button onClick={resetMineFilters}>清除筛选</button></div> : <div className="bookings-empty booking-zero-state"><CalendarBlank size={44} weight="thin" /><h2>还没有预约</h2><p>创建预约后，最近的一场显示在这里。</p><button className="empty-primary-action" onClick={openDefaultCreate}>前往预约日历</button></div>}
+          ownItems.length ? <div className="bookings-empty"><p>没有符合条件的预约</p><button onClick={resetMineFilters}>清除筛选</button></div> : <div className="bookings-empty booking-zero-state"><CalendarBlank size={44} weight="thin" /><h2>还没有预约</h2><p>创建预约后，最近的一场显示在这里。</p><button className="empty-primary-action" onClick={openDefaultCreate}>{!activeRooms.length && permissions.manageRooms ? "管理笔录室" : "前往预约日历"}</button></div>}
         {next && <section className="later-section"><h2>之后</h2><div className="appointment-list" id="later-bookings-list">{visibleLaterItems.map((booking, index) => <button className={`appointment-row ${index >= 2 ? "revealed-row" : ""}`} key={booking.id} onClick={() => openDetails(booking)}><span className="row-date">{String(parseDate(booking.date).getMonth() + 1).padStart(2, "0")}–{String(parseDate(booking.date).getDate()).padStart(2, "0")}<small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="row-time">{booking.start}–{booking.end}</span><span className="row-room">{booking.roomName}</span><CaretRight className="row-caret" size={20} /></button>)}{!laterItems.length && <p className="later-empty">没有更多预约</p>}</div></section>}
         {laterItems.length > 2 && <button className={`more-bookings-button ${moreBookingsOpen ? "expanded" : ""}`} aria-expanded={moreBookingsOpen} aria-controls="later-bookings-list" onClick={() => setMoreBookingsOpen((open) => !open)}><span>{moreBookingsOpen ? "收起预约" : "更多预约"}</span><CaretRight size={18} /></button>}
       </div>
@@ -1747,8 +1765,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     const calendarPending = loading.calendar || calendarDataDate !== dateKey(currentDate);
     return <main className="main-canvas calendar-canvas" tabIndex={0}>
       <header className="page-header calendar-header"><div><h1>预约日历</h1><p>{dateLabel(currentDate)}</p></div>
-        <div className="header-actions calendar-toolbar"><div className="calendar-day-navigation" role="group" aria-label="日期导航"><button aria-label="前一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="calendar-nav-today" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button aria-label="后一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button></div>
-          <label className={`calendar-date-picker ${networkOffline ? "disabled" : ""}`}><span>{dateKey(currentDate).replaceAll("-", "/")}</span><CalendarBlank size={18} aria-hidden="true" /><input type="date" min="0001-01-01" max="9999-12-31" aria-label="跳转到日期" disabled={networkOffline} value={dateKey(currentDate)} onInput={(event) => { if (event.currentTarget.value) setCurrentDate(parseDate(event.currentTarget.value)); }} /></label>
+        <div className="header-actions calendar-toolbar"><div className="calendar-day-navigation" role="group" aria-label="日期导航"><button aria-label="前一天" disabled={networkOffline || dateKey(currentDate) <= calendarDateMinimum} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="calendar-nav-today" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button aria-label="后一天" disabled={networkOffline || dateKey(currentDate) >= calendarDateMaximum} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button></div>
+          <label className={`calendar-date-picker ${networkOffline ? "disabled" : ""}`}><span>{dateKey(currentDate).replaceAll("-", "/")}</span><CalendarBlank size={18} aria-hidden="true" /><input type="date" min={calendarDateMinimum} max={calendarDateMaximum} aria-label="跳转到日期" disabled={networkOffline} value={dateKey(currentDate)} onInput={(event) => { const value = event.currentTarget.value; if (value >= calendarDateMinimum && value <= calendarDateMaximum) setCurrentDate(parseDate(value)); }} /></label>
           <div className="filter-wrap"><button ref={calendarFilterPopover.triggerRef} className={"icon-button calendar-filter-trigger " + (calendarFilterOpen ? "pressed" : "") + (calendarTagFilter ? " filtered" : "")} aria-label="查看标签颜色并筛选" aria-expanded={calendarFilterOpen} aria-haspopup="true" onClick={() => setCalendarFilterOpen((open) => !open)}><FunnelSimple size={20} /></button>
             {calendarFilterOpen && <div ref={calendarFilterPopover.popoverRef} className="tag-palette-popover" role="group"><div className="popover-heading"><span>{tagEditing ? "编辑标签名称" : "标签颜色"}</span><button onClick={() => setTagEditing((editing) => !editing)}>{tagEditing ? "完成编辑" : <><PencilSimple size={13} />编辑</>}</button></div>
               {tagEditing ? <div className="tag-edit-panel tag-edit-list"><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>单位标签</span><small>{role === "admin" ? "全单位通用" : "仅管理员可修改"}</small></div>{tags.filter((tag) => tag.slot <= 2).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`单位标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} readOnly={role !== "admin"} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}{role === "admin" && <button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={saveGlobalTags}>{tagSaving === "global" ? "正在保存单位标签…" : "保存单位标签"}</button>}</section><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>个人标签</span><small>仅影响你的预约</small></div>{tags.filter((tag) => tag.slot >= 3).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`个人标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}<button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={savePersonalTags}>{tagSaving === "personal" ? "正在保存个人标签…" : "保存个人标签"}</button></section></div> :
@@ -1785,7 +1803,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   function stepMonth(delta) {
     const [year, month] = historyMonth.split("-").map(Number);
-    setHistoryMonth(monthKey(new Date(year, month - 1 + delta, 1)));
+    const nextMonth = monthKey(new Date(year, month - 1 + delta, 1));
+    const earliestMonth = monthKey(new Date(businessDate.getFullYear(), businessDate.getMonth() - 11, 1));
+    const latestMonth = monthKey(businessDate);
+    if (nextMonth < earliestMonth || nextMonth > latestMonth) return;
+    setHistoryMonth(nextMonth);
   }
 
   function renderHistory() {
@@ -1822,12 +1844,12 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     return <main className="main-canvas history-canvas" tabIndex={0}><header className="page-header history-header"><h1>预约记录</h1><div className="history-header-actions" aria-label="预约记录工具"><div className="filter-wrap"><button ref={historySearchPopover.triggerRef} className={"filter-trigger history-tool-button " + (historySearchOpen || historyQuery ? "pressed" : "")} aria-label="搜索预约记录" aria-expanded={historySearchOpen} aria-haspopup="true" onClick={() => { setHistoryFilterOpen(false); setHistorySearchOpen((open) => !open); }}><MagnifyingGlass size={21} /></button>{historySearchOpen && <div ref={historySearchPopover.popoverRef} className="history-search-popover" role="search"><MagnifyingGlass size={18} /><input autoFocus value={historyQuery} aria-label="搜索案号、当事人或笔录室" placeholder="搜索案号、当事人或笔录室" onChange={(event) => setHistoryQuery(event.target.value)} />{historyQuery && <button aria-label="清除搜索" onClick={() => setHistoryQuery("")}><X size={16} /></button>}</div>}</div><div className="filter-wrap"><button ref={historyFilterPopover.triggerRef} className={"filter-trigger history-tool-button " + (historyFilterOpen || historyRoom || historyStatus || historyTag || historyOwner || historyScope === "mine" ? "pressed" : "")} aria-label="筛选预约记录" aria-expanded={historyFilterOpen} aria-haspopup="true" onClick={() => { setHistorySearchOpen(false); setHistoryFilterOpen((open) => !open); }}><SlidersHorizontal size={20} /></button>{historyFilterOpen && <div ref={historyFilterPopover.popoverRef} className="booking-filter-popover history-filter-popover" role="group" aria-label="筛选预约记录">
       {role === "admin" ? <section className="history-filter-section history-scope-section" aria-labelledby="history-scope-heading"><h2 id="history-scope-heading">预约范围</h2><div className="history-choice-options history-scope-options" role="radiogroup" aria-label="预约范围"><label><input type="radio" name="history-scope" checked={historyScope === "unit"} onChange={() => setHistoryScope("unit")} /><span>全单位预约</span></label><label><input type="radio" name="history-scope" checked={historyScope === "mine"} onChange={() => { setHistoryScope("mine"); setHistoryOwner(""); }} /><span>仅我的预约</span></label></div>{historyScope === "unit" && <div className="history-user-filter"><label htmlFor="history-user-select">用户</label><select id="history-user-select" ref={historyUserSelectRef} value={historyOwner} onChange={(event) => { setHistoryOwner(event.target.value); if (["tag-3", "tag-4"].includes(historyTag)) setHistoryTag(""); }}><option value="">全部用户</option>{users.filter((user) => user.enabled !== false).map((user) => <option value={user.id} key={user.id}>{user.name} · {user.department}</option>)}</select><small>{historyOwner ? "正在筛选该用户的预约记录" : "可查看全单位记录，选择用户后可筛选个人标签"}</small></div>}</section> : <div className="history-employee-scope"><span>预约范围</span><strong>仅显示本人的预约记录</strong></div>}
       <section className="history-filter-section" aria-labelledby="history-status-heading"><h2 id="history-status-heading">预约状态</h2><div className="history-choice-options history-status-options" role="radiogroup" aria-label="预约状态"><label><input type="radio" name="history-status" checked={!historyStatus} onChange={() => setHistoryStatus("")} /><span>全部</span></label><label><input type="radio" name="history-status" checked={historyStatus === "active"} onChange={() => setHistoryStatus("active")} /><span>正常预约</span></label><label><input type="radio" name="history-status" checked={historyStatus === "cancelled"} onChange={() => setHistoryStatus("cancelled")} /><span>已取消</span></label></div></section>
-      <section className="history-filter-section" aria-labelledby="history-room-heading"><h2 id="history-room-heading">笔录室</h2><label><input type="checkbox" checked={!historyRoom} onChange={() => setHistoryRoom("")} /><span>全选</span></label>{rooms.map((room) => <label key={room.id}><input type="checkbox" checked={!historyRoom || historyRoom === room.id} onChange={() => setHistoryRoom((current) => current === room.id ? "" : room.id)} /><span>{room.name}</span></label>)}</section>
-      <section className="history-filter-section history-tag-section" aria-labelledby="history-unit-tags-heading"><h2 id="history-unit-tags-heading">单位标签 <small>全单位通用</small></h2>{unitHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={!historyTag || historyTag === tag.id} onChange={() => setHistoryTag((current) => current === tag.id ? "" : tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}</section>
-      <section className={`history-filter-section history-tag-section ${!effectiveHistoryUserId ? "disabled" : ""}`} aria-labelledby="history-personal-tags-heading"><h2 id="history-personal-tags-heading">个人标签 <small>{personalTagOwnerLabel}</small></h2>{personalHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={!historyTag || historyTag === tag.id} disabled={!effectiveHistoryUserId} onChange={() => setHistoryTag((current) => current === tag.id ? "" : tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}{!effectiveHistoryUserId && <p className="history-personal-helper">筛选个人标签前，请先<button type="button" onClick={() => historyUserSelectRef.current?.focus()}>选择用户</button></p>}</section>
+      <section className="history-filter-section" aria-labelledby="history-room-heading"><h2 id="history-room-heading">笔录室</h2><label><input type="radio" name="history-room" checked={!historyRoom} onChange={() => setHistoryRoom("")} /><span>全部笔录室</span></label>{rooms.map((room) => <label key={room.id}><input type="radio" name="history-room" checked={historyRoom === room.id} onChange={() => setHistoryRoom(room.id)} /><span>{room.name}</span></label>)}</section>
+      <section className="history-filter-section history-tag-section" aria-labelledby="history-unit-tags-heading"><h2 id="history-unit-tags-heading">单位标签 <small>全单位通用</small></h2><label><input type="radio" name="history-tag" checked={!historyTag} onChange={() => setHistoryTag("")} /><span>全部标签</span></label>{unitHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="radio" name="history-tag" checked={historyTag === tag.id} onChange={() => setHistoryTag(tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}</section>
+      <section className={`history-filter-section history-tag-section ${!effectiveHistoryUserId ? "disabled" : ""}`} aria-labelledby="history-personal-tags-heading"><h2 id="history-personal-tags-heading">个人标签 <small>{personalTagOwnerLabel}</small></h2>{personalHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="radio" name="history-tag" checked={historyTag === tag.id} disabled={!effectiveHistoryUserId} onChange={() => setHistoryTag(tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}{!effectiveHistoryUserId && <p className="history-personal-helper">筛选个人标签前，请先<button type="button" onClick={() => historyUserSelectRef.current?.focus()}>选择用户</button></p>}</section>
       <footer className="history-filter-footer"><button type="button" onClick={resetHistoryFilters}><ArrowClockwise size={16} />重置筛选</button><span>共 {historyPage.total} 条记录</span></footer>
     </div>}</div></div></header>
-      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= monthKey(businessDate)} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button ref={historyMonthPopover.triggerRef} className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} aria-haspopup="true" onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div ref={historyMonthPopover.popoverRef} className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); historyMonthPopover.closeAndRestoreFocus(); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
+      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" disabled={historyMonth <= historyMonths.at(-1).id} onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= historyMonths[0].id} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button ref={historyMonthPopover.triggerRef} className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} aria-haspopup="true" onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div ref={historyMonthPopover.popoverRef} className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); historyMonthPopover.closeAndRestoreFocus(); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
         <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{historySections.map((section, sectionIndex) => <div className="history-month-section" key={section.id}>{sectionIndex > 0 && <div className="history-month-divider" role="separator">{section.label}</div>}{section.items.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}>{booking.status === "cancelled" ? <span className="history-cancelled-status">已取消</span> : <i aria-hidden="true" />}<CaretRight size={23} /></span></button>)}{section.nextCursor && <button className="history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={() => loadMoreHistory(section)}>{historyLoadingMore === section.id ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${section.items.length} / ${section.total}`}</button>}</div>)}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
         {!loading.history && <button className="more-bookings-button history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={loadPreviousHistoryMonth}>{historyLoadingMore === previousHistoryMonth.id ? <><CircleNotch className="spin" size={17} /><span>正在加载{previousHistoryMonth.label}</span></> : <><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></>}</button>}
       </div>
@@ -2130,8 +2152,17 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function savePreferences(event) {
     event.preventDefault();
+    if (preferencesSaving) return;
+    const submitted = { name: currentUser.name, department: currentUser.department, ...preferencesDraft };
+    if (!submitted.name?.trim()) {
+      setPreferencesErrors({ name: "请输入姓名" });
+      window.requestAnimationFrame(() => document.querySelector('[name="profile-name"]')?.focus({ preventScroll: true }));
+      return;
+    }
+    setPreferencesErrors({});
+    setPreferencesSaving(true);
     try {
-      const saved = await api.updatePreferences(preferencesDraft);
+      const saved = await api.updatePreferences({ ...submitted, name: submitted.name.trim() });
       setBootstrap((current) => ({
         ...current,
         currentUser: saved.profile || current.currentUser,
@@ -2148,14 +2179,22 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const nextUiPreferences = writeUiPreferences(currentUser.id, uiPreferencesDraft);
       setUiPreferencesDraft(nextUiPreferences);
       setToast("个人设置已保存", "success");
-    } catch (error) { handleError(error, "保存个人设置失败"); }
+    } catch (error) {
+      if (error?.fields?.name) setPreferencesErrors({ name: error.fields.name });
+      handleError(error, "保存个人设置失败");
+    } finally {
+      setPreferencesSaving(false);
+    }
   }
 
   function renderSettings() {
     const draft = preferencesDraft || {};
-    const update = (field, value) => setPreferencesDraft((current) => ({ ...current, [field]: value }));
+    const update = (field, value) => {
+      setPreferencesDraft((current) => ({ ...current, [field]: value }));
+      if (preferencesErrors[field]) setPreferencesErrors((current) => ({ ...current, [field]: "" }));
+    };
     const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} tab={profileTab} uiDraft={uiPreferencesDraft} />;
+    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} saving={preferencesSaving} tab={profileTab} uiDraft={uiPreferencesDraft} />;
   }
 
   function renderUnauthorized() {
@@ -2189,7 +2228,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer.type === "details") {
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";
-      return <BookingDetails booking={booking} tag={tagFor(booking)} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} />;
+      return <BookingDetails booking={booking} tag={tagFor(booking)} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {dateLabel(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking, false, drawer.returnTo)}>返回</button></div></div>;
     if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;
@@ -2233,10 +2272,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人中心"} aria-label={itemName(currentUser) + "，个人中心"} onClick={openPersonalCenter}><UserCircle size={42} weight="thin" /></button>
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
+      {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
+      {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
     </div>
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>
-    {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
-    {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
   </div></SessionIsolationBoundary>;
 }
 
