@@ -274,6 +274,18 @@ test("mine, history, and users expose the frozen visual tools", () => {
   assert.match(app, /aria-label=\{userSearchOpen \? "关闭搜索" : "搜索用户"\}/);
 });
 
+test("non-modal popovers share escape, outside-click, and focus-return behavior", () => {
+  assert.match(app, /function useDismissiblePopover\(active, onClose\)/);
+  assert.match(app, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
+  assert.match(app, /event\.key !== "Escape"/);
+  assert.match(app, /triggerRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  for (const name of ["bookingFilterPopover", "calendarFilterPopover", "historySearchPopover", "historyFilterPopover", "historyMonthPopover", "userSearchPopover", "auditFilterPopover"]) {
+    assert.match(app, new RegExp(`ref=\\{${name}\\.triggerRef\\}`));
+    assert.match(app, new RegExp(`ref=\\{${name}\\.popoverRef\\}`));
+  }
+  assert.ok((app.match(/aria-haspopup="true"/g) || []).length >= 7);
+});
+
 test("first-run setup keeps the frozen safety and summary hierarchy without demo copy", () => {
   for (const className of ["setup-safety-list", "setup-password-section", "setup-rule-list", "setup-confirm-list"]) {
     assert.ok(app.includes(className), `missing setup visual contract class ${className}`);
