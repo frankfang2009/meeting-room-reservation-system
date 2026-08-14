@@ -30,7 +30,7 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "e347900624bcfea970efd756e59ab050bca4349e67e3b6aec6486a436bbf1647";
+const frozenSourceSha256 = "ffaef1305797c36c3747bf96b1cdc40500fb72b11738576445c0b6fb774de341";
 
 function importedFiles() {
   const manifest = fs.readFileSync(manifestPath, "utf8");
@@ -78,4 +78,10 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("the three-room calendar can shrink to the 1024px workspace", () => {
+  const calendar = fs.readFileSync(path.join(stylesRoot, "calendar.css"), "utf8");
+  assert.match(calendar, /\.schedule \{\s*min-width: min\(860px, 100%\);/);
+  assert.match(calendar, /grid-template-columns: 70px repeat\(var\(--room-count\), minmax\(220px, 1fr\)\);/);
 });

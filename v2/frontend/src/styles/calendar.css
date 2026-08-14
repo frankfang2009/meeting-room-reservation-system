@@ -296,7 +296,7 @@
 }
 
 .schedule {
-  min-width: 860px;
+  min-width: min(860px, 100%);
   padding-bottom: 16px;
 }
 

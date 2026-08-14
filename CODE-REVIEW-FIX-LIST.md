@@ -168,10 +168,10 @@
 
 ### F16 1024×720 三房间日历 8px 横向溢出 【P2 · 契约四档】
 
-- [ ] 位置：`v2/frontend/src/styles/calendar.css:298-301`（`.schedule { min-width: 860px }`），
+- [x] 位置：`v2/frontend/src/styles/calendar.css:298-301`（`.schedule { min-width: 860px }`），
   1024 档可用宽度 852px。
-- [ ] 期望：1024 档下无横向滚动（`documentElement.scrollWidth === innerWidth`），三列仍可读。
-- [ ] 验收：更新冻结 SHA；补 1024×720 截图证据。
+- [x] 期望：1024 档下无横向滚动（`documentElement.scrollWidth === innerWidth`），三列仍可读。
+- [x] 验收：更新冻结 SHA；补 1024×720 截图证据。
 
 ### F17 低优先级 UX 项（批量小修，可一并处理）
 
