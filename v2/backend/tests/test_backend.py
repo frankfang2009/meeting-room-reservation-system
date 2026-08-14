@@ -17,6 +17,7 @@ from unittest import mock
 import service as service_entrypoint
 import server as server_entrypoint
 from v2app import create_app
+from v2app.services import reservations as reservation_service
 from server import determine_bind_host
 
 
@@ -1059,6 +1060,55 @@ class ReservationTests(AuthenticatedReservationTestCase):
         self.assertEqual(stale.status_code, 409)
         self.assertEqual(stale.get_json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(stale.get_json()["error"]["current"]["revision"], 2)
+
+    def test_slot_unique_constraint_fallback_maps_create_and_update_to_conflict(self):
+        blocker = self.create_booking(start="09:00")
+        original_conflicts = reservation_service._conflicts
+
+        def hide_precheck_once():
+            calls = 0
+
+            def conflicts(db, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return []
+                return original_conflicts(db, **kwargs)
+
+            return conflicts
+
+        with mock.patch.object(
+            reservation_service, "_conflicts", side_effect=hide_precheck_once()
+        ):
+            create_conflict = self.write(
+                "POST",
+                "/api/v1/reservations",
+                self.booking_payload(self.room_id, partyName="并发创建"),
+            )
+        self.assertEqual(create_conflict.status_code, 409, create_conflict.get_json())
+        self.assertEqual(create_conflict.get_json()["error"]["code"], "SLOT_CONFLICT")
+        self.assertEqual(
+            create_conflict.get_json()["error"]["conflicts"][0]["id"], blocker["id"]
+        )
+
+        movable = self.create_booking(start="11:00")
+        with mock.patch.object(
+            reservation_service, "_conflicts", side_effect=hide_precheck_once()
+        ):
+            update_conflict = self.write(
+                "PATCH",
+                f"/api/v1/reservations/{movable['id']}",
+                self.booking_payload(
+                    self.room_id,
+                    start="09:00",
+                    expectedRevision=movable["revision"],
+                ),
+            )
+        self.assertEqual(update_conflict.status_code, 409, update_conflict.get_json())
+        self.assertEqual(update_conflict.get_json()["error"]["code"], "SLOT_CONFLICT")
+        self.assertEqual(
+            update_conflict.get_json()["error"]["conflicts"][0]["id"], blocker["id"]
+        )
 
     def test_create_update_cancel_failpoints_roll_back_all_state(self):
         self.app.config["TRANSACTION_FAILPOINT"] = "create_after_slots"

@@ -58,13 +58,13 @@
 
 ### F04 slots 唯一约束冲突兜底映射为 409 而非 503 【P1 · 一致性】
 
-- [ ] 位置：`v2/backend/v2app/services/reservations.py:327-363`（create）与 `:462-472`（update）的
+- [x] 位置：`v2/backend/v2app/services/reservations.py:327-363`（create）与 `:462-472`（update）的
   `executemany`；参考已有先例 `v2/backend/v2app/api/admin.py:152-153`。
-- [ ] 现状：正常路径靠 `BEGIN IMMEDIATE` 串行化，但极端竞争下 IntegrityError 落到全局
+- [x] 现状：正常路径靠 `BEGIN IMMEDIATE` 串行化，但极端竞争下 IntegrityError 落到全局
   `sqlite3.Error` handler → 503 `DATABASE_UNAVAILABLE`，误导排障。
-- [ ] 期望：捕获 `sqlite3.IntegrityError` 且确认是 slots 冲突时 → 409 `SLOT_CONFLICT`（带 conflicts）；
+- [x] 期望：捕获 `sqlite3.IntegrityError` 且确认是 slots 冲突时 → 409 `SLOT_CONFLICT`（带 conflicts）；
   其余错误继续上抛。
-- [ ] 验收：测试先直插一条占用行再调用 create/update，断言 409 + SLOT_CONFLICT。
+- [x] 验收：测试先直插一条占用行再调用 create/update，断言 409 + SLOT_CONFLICT。
 
 ### F05 `/healthz` 的 `recovery_code` 仅回环可见 【P2 · 信息暴露】
 

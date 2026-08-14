@@ -145,7 +145,9 @@ DNS rebinding 夺取首次管理员：
 `purpose` 在创建和修改时均为必填、去除首尾空白后不得为空；缺失或空白返回
 `422 VALIDATION_ERROR`，`error.fields.purpose="请输入事项"`。服务端不会生成默认用途。
 
-slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date/start/end`。revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约对象。
+slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date/start/end`；
+预检后才由 SQLite 槽位唯一约束发现的竞争冲突也使用相同响应，不得降级为数据库不可用。
+revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约对象。
 
 预约开始后到结束前 `canEdit=false`、`canCancel=true`；结束后两者均为 false。
 `GET /api/v1/reservations/{id}/events` 只允许预约本人或管理员读取追加式变更时间线。

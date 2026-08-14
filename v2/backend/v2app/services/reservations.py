@@ -276,6 +276,48 @@ def _conflicts(
     ]
 
 
+def _insert_slots(
+    db: sqlite3.Connection,
+    *,
+    reservation_id: str,
+    room_id: str,
+    booking_date: str,
+    slots: list[str],
+) -> None:
+    try:
+        db.executemany(
+            """
+            INSERT INTO reservation_slots
+                (reservation_id, room_id, booking_date, slot_start)
+            VALUES (?, ?, ?, ?)
+            """,
+            [
+                (reservation_id, room_id, booking_date, slot)
+                for slot in slots
+            ],
+        )
+    except sqlite3.IntegrityError as error:
+        constraint = (
+            "reservation_slots.room_id, reservation_slots.booking_date, "
+            "reservation_slots.slot_start"
+        )
+        if constraint not in str(error):
+            raise
+        conflicts = _conflicts(
+            db,
+            room_id=room_id,
+            booking_date=booking_date,
+            slots=slots,
+            excluding_id=reservation_id,
+        )
+        raise ApiError(
+            409,
+            "SLOT_CONFLICT",
+            "所选时段已被占用",
+            conflicts=conflicts,
+        ) from error
+
+
 def _insert_event(
     db: sqlite3.Connection,
     *,
@@ -350,16 +392,12 @@ def create_reservation(payload: dict[str, Any]) -> dict[str, Any]:
             ),
         )
         _failpoint("create_after_reservation")
-        db.executemany(
-            """
-            INSERT INTO reservation_slots
-                (reservation_id, room_id, booking_date, slot_start)
-            VALUES (?, ?, ?, ?)
-            """,
-            [
-                (reservation_id, values["room_id"], values["booking_date"], slot)
-                for slot in values["slots"]
-            ],
+        _insert_slots(
+            db,
+            reservation_id=reservation_id,
+            room_id=values["room_id"],
+            booking_date=values["booking_date"],
+            slots=values["slots"],
         )
         _failpoint("create_after_slots")
         row = _row_for_id(db, reservation_id)
@@ -459,16 +497,12 @@ def update_reservation(reservation_id: str, payload: dict[str, Any]) -> dict[str
         )
         if cursor.rowcount != 1:
             raise ApiError(409, "REVISION_CONFLICT", "预约内容已发生变化")
-        db.executemany(
-            """
-            INSERT INTO reservation_slots
-                (reservation_id, room_id, booking_date, slot_start)
-            VALUES (?, ?, ?, ?)
-            """,
-            [
-                (reservation_id, values["room_id"], values["booking_date"], slot)
-                for slot in values["slots"]
-            ],
+        _insert_slots(
+            db,
+            reservation_id=reservation_id,
+            room_id=values["room_id"],
+            booking_date=values["booking_date"],
+            slots=values["slots"],
         )
         _failpoint("update_after_slots")
         updated = _row_for_id(db, reservation_id)
