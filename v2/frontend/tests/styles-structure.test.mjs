@@ -30,7 +30,7 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "8348d2547a70001ee2b123d7ca99671cfa2400a159fa012f797cf11283f09367";
+const frozenSourceSha256 = "e347900624bcfea970efd756e59ab050bca4349e67e3b6aec6486a436bbf1647";
 
 function importedFiles() {
   const manifest = fs.readFileSync(manifestPath, "utf8");
@@ -65,4 +65,17 @@ test("React keeps one global CSS entrypoint", () => {
   const main = fs.readFileSync(path.join(sourceRoot, "main.jsx"), "utf8");
   assert.match(main, /import "\.\/styles\.css";/);
   assert.doesNotMatch(main, /import "\.\/styles\//);
+});
+
+test("compact production actions retain at least a 44px hit target", () => {
+  const drawer = fs.readFileSync(path.join(stylesRoot, "drawer-shell.css"), "utf8");
+  const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
+  const system = fs.readFileSync(path.join(stylesRoot, "system.css"), "utf8");
+  const bookingForms = fs.readFileSync(path.join(stylesRoot, "booking-forms.css"), "utf8");
+  const users = fs.readFileSync(path.join(stylesRoot, "users.css"), "utf8");
+  assert.match(drawer, /\.drawer-back \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
+  assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
+  assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
+  assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
+  assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
 });
