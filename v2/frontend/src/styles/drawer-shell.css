@@ -278,6 +278,94 @@
   opacity: 1;
 }
 
+.booking-draft-relocation {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  padding: clamp(38px, 6vh, 64px) 32px 28px;
+}
+
+.booking-draft-relocation-copy > span {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  color: #71836d;
+  border-radius: 50%;
+  background: #eef1e9;
+}
+
+.booking-draft-relocation-copy h2 {
+  margin: 24px 0 0;
+  color: var(--ink);
+  font-size: 23px;
+  font-weight: 580;
+  line-height: 1.35;
+}
+
+.booking-draft-relocation-copy p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.booking-draft-relocation dl {
+  display: grid;
+  gap: 0;
+  margin: 34px 0 28px;
+  border-top: 1px solid var(--hairline);
+}
+
+.booking-draft-relocation dl > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.booking-draft-relocation dt {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.booking-draft-relocation dd {
+  margin: 0;
+  color: #4e4c47;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.booking-draft-relocation dd strong,
+.booking-draft-relocation dd span {
+  display: block;
+}
+
+.booking-draft-relocation dd strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.booking-draft-relocation dd span {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.booking-draft-relocation-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.booking-draft-relocation-actions .submit-button,
+.booking-draft-relocation-actions .secondary-button {
+  width: 100%;
+  min-height: 46px;
+  margin: 0;
+}
+
 .selection-summary {
   padding-bottom: 29px;
   border-bottom: 1px solid var(--hairline);

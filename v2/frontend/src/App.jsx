@@ -319,7 +319,15 @@ function Login({ onAuthenticated, onRecovery }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [visible, setVisible] = useState(false);
+  const usernameRef = useRef(null);
+  const passwordRef = useRef(null);
   useDocumentTitle("登录");
+
+  useEffect(() => {
+    if (busy) return;
+    const target = errors.username ? usernameRef.current : errors.password ? passwordRef.current : null;
+    target?.focus({ preventScroll: true });
+  }, [busy, errors.password, errors.username]);
 
   async function submit(event) {
     event.preventDefault();
@@ -359,16 +367,16 @@ function Login({ onAuthenticated, onRecovery }) {
         <form className="login-form" onSubmit={submit} noValidate aria-busy={busy}>
           <label className="login-field" htmlFor="login-username">
             <span>用户名</span>
-            <input id="login-username" autoComplete="username" value={credentials.username} disabled={busy}
-              aria-invalid={Boolean(errors.username)} onChange={(event) => update("username", event.target.value)} />
+            <input ref={usernameRef} id="login-username" autoComplete="username" value={credentials.username} disabled={busy}
+              aria-invalid={Boolean(errors.username)} aria-describedby={errors.username ? "login-username-error" : undefined} onChange={(event) => update("username", event.target.value)} />
           </label>
-          {errors.username && <p className="login-field-error" role="alert"><WarningCircle size={18} />{errors.username}</p>}
+          {errors.username && <p id="login-username-error" className="login-field-error" role="alert"><WarningCircle size={18} />{errors.username}</p>}
           <label className="login-field login-password-field" htmlFor="login-password">
             <span>密码</span>
             <span className="login-password-control">
-              <input id="login-password" type={visible ? "text" : "password"} autoComplete="current-password"
+              <input ref={passwordRef} id="login-password" type={visible ? "text" : "password"} autoComplete="current-password"
                 value={credentials.password} disabled={busy} className={errors.password ? "invalid" : ""}
-                aria-invalid={Boolean(errors.password)} onChange={(event) => update("password", event.target.value)} />
+                aria-invalid={Boolean(errors.password)} aria-describedby={errors.password ? "login-password-error" : undefined} onChange={(event) => update("password", event.target.value)} />
               <button className="login-password-toggle" type="button" aria-label={visible ? "隐藏密码" : "显示密码"}
                 onClick={() => setVisible((current) => !current)} disabled={busy}>
                 {visible ? <EyeSlash size={21} /> : <Eye size={21} />}
@@ -376,7 +384,7 @@ function Login({ onAuthenticated, onRecovery }) {
             </span>
           </label>
           <div className="login-feedback-slot" aria-live="polite">
-            {errors.password && <p className="login-field-error" role="alert"><WarningCircle size={18} />{errors.password}</p>}
+            {errors.password && <p id="login-password-error" className="login-field-error" role="alert"><WarningCircle size={18} />{errors.password}</p>}
             {message && <p className="login-account-feedback" role="alert"><WarningCircle size={18} />{message}</p>}
           </div>
           <button className="login-submit" type="submit" disabled={busy}>
@@ -1143,6 +1151,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     return () => window.clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
+    if (!successNotice) return undefined;
+    const timer = window.setTimeout(() => setSuccessNotice(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [successNotice]);
+  useEffect(() => {
+    setSuccessNotice(null);
+  }, [currentDate]);
+  useEffect(() => {
     if (activeView !== "system" || !permissions.manageSystem) return undefined;
     const refresh = () => Promise.all([loadSystem(true), loadAudit({ silent: true }), loadTokens(true)]);
     refresh();
@@ -1183,6 +1199,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return;
     }
     setDrawer(null);
+    if (view !== "calendar") setSuccessNotice(null);
     setUnauthorizedMessage("");
     setActiveView(view);
   }
@@ -1192,7 +1209,38 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     navigate("settings");
   }
 
+  function beginCreate({ roomId, start, bookingDate, draft = null }) {
+    const desiredDuration = Number(draft?.duration || bootstrap.preferences?.defaultDuration || 60);
+    const maximumDuration = maximumAvailableDuration({
+      bookings,
+      roomId,
+      date: bookingDate,
+      start,
+      workEnd: settings.workEnd,
+      maxDuration: settings.maxDurationMinutes,
+      slotMinutes: settings.slotMinutes,
+    });
+    setBookingForm({
+      ...EMPTY_BOOKING,
+      ...(draft || {}),
+      roomId,
+      start,
+      date: bookingDate,
+      duration: Math.min(maximumDuration, clampDurationToWorkday({
+        desired: desiredDuration,
+        start,
+        workEnd: settings.workEnd,
+        maxDuration: settings.maxDurationMinutes,
+        slotMinutes: settings.slotMinutes,
+      })),
+      tagId: draft?.tagId || tags[0]?.id || "",
+    });
+    setPreservedDraft(null);
+    setDrawer({ type: "create" });
+  }
+
   function openCreate(roomId, start, bookingDate = dateKey(currentDate)) {
+    setSuccessNotice(null);
     if (hasBookingStarted({
       date: bookingDate,
       start,
@@ -1205,33 +1253,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setBookingErrors({});
     setSaveState("idle");
     setConflict(null);
-    const desiredDuration = Number(preservedDraft?.duration || bootstrap.preferences?.defaultDuration || 60);
-    const maximumDuration = maximumAvailableDuration({
-      bookings,
-      roomId,
-      date: bookingDate,
-      start,
-      workEnd: settings.workEnd,
-      maxDuration: settings.maxDurationMinutes,
-      slotMinutes: settings.slotMinutes,
-    });
-    setBookingForm({
-      ...EMPTY_BOOKING,
-      ...(preservedDraft || {}),
-      roomId,
-      start,
-      date: bookingDate,
-      duration: Math.min(maximumDuration, clampDurationToWorkday({
-        desired: desiredDuration,
-        start,
-        workEnd: settings.workEnd,
-        maxDuration: settings.maxDurationMinutes,
-        slotMinutes: settings.slotMinutes,
-      })),
-      tagId: preservedDraft?.tagId || tags[0]?.id || "",
-    });
-    setPreservedDraft(null);
-    setDrawer({ type: "create" });
+    if (preservedDraft) {
+      setDrawer({
+        type: "draft-relocation",
+        draft: preservedDraft,
+        target: { roomId, start, bookingDate },
+      });
+      return;
+    }
+    beginCreate({ roomId, start, bookingDate });
   }
 
   async function openDefaultCreate() {
@@ -1268,6 +1298,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   async function openDetails(booking, readOnly = false, returnTo = null) {
+    setSuccessNotice(null);
     const requestNumber = eventRequestRef.current + 1;
     eventRequestRef.current = requestNumber;
     const eventsAllowed = role === "admin" || booking.ownerId === currentUser.id;
@@ -1288,6 +1319,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openEdit(booking, returnTo = null) {
+    setSuccessNotice(null);
     const ownerTags = bookingTagContext({
       booking,
       role,
@@ -1354,10 +1386,12 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         handleError(error, "系统需要恢复");
         setSaveState("idle");
       } else if (error.code === "SLOT_CONFLICT") {
+        setSuccessNotice(null);
         setConflict({ type: "slot", conflicts: error.conflicts });
         setDrawer((current) => ({ ...current, type: "slot-conflict" }));
         await loadCalendar();
       } else if (error.code === "REVISION_CONFLICT") {
+        setSuccessNotice(null);
         const rebased = rebaseBookingEdit(bookingForm, error.current);
         setBookingForm(rebased.draft);
         setDrawer((current) => ({ ...current, booking: rebased.baseline }));
@@ -1548,6 +1582,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         </div>
       </header>
       {successNotice && <section className="calendar-success-notice" role="status"><CheckCircle size={20} /><p><strong>{successNotice.action}</strong><span>·</span>{successNotice.booking.roomName}<span>·</span>{successNotice.booking.start}–{successNotice.booking.end}</p><button onClick={() => openDetails(successNotice.booking)}>查看</button><button className="calendar-success-close" aria-label="关闭" onClick={() => setSuccessNotice(null)}><X size={16} /></button></section>}
+      {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除"); }}>清除草稿</button></section>}
       {networkOffline && <section className="calendar-network-banner" role="status"><span className="calendar-network-icon"><WifiSlash size={18} /></span><div><strong>网络连接已断开</strong><p>当前显示最后一次成功获取的数据。</p></div><button onClick={loadCalendar}><ArrowClockwise size={16} />重新连接</button></section>}
       <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{loading.calendar ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
         {loading.calendar && !bookings.length ? <div className="calendar-loading-state" role="status"><CircleNotch className="spin" size={28} /><span>正在读取预约数据</span></div> :
@@ -1947,7 +1982,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function drawerHeading() {
-    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", backup: "最近备份", "token-create": "新建集成令牌", "token-created": "令牌已创建", "token-revoke": "撤销集成令牌" }[drawer?.type] || "";
+    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "draft-relocation": "确认使用草稿", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", backup: "最近备份", "token-create": "新建集成令牌", "token-created": "令牌已创建", "token-revoke": "撤销集成令牌" }[drawer?.type] || "";
   }
 
   function renderDrawer() {
@@ -1965,6 +2000,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null);
     }} />;
     if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" onClick={loadCalendar}><ArrowClockwise size={16} />重新检查这个时段</button></div></div>;
+    if (drawer.type === "draft-relocation") {
+      const originalRoom = rooms.find((room) => room.id === drawer.draft.roomId)?.name || "原笔录室";
+      const targetRoom = rooms.find((room) => room.id === drawer.target.roomId)?.name || "新笔录室";
+      return <div className="booking-draft-relocation"><div className="booking-draft-relocation-copy"><span><PencilSimple size={30} /></span><h2>要把保留的草稿移到这里吗？</h2><p>系统不会直接套用旧案号，请先确认本次预约对象和时段。</p></div><dl><div><dt>草稿内容</dt><dd><strong>{drawer.draft.partyName || "未填写预约对象"}</strong><span>{drawer.draft.caseNumber || "未填写案号"} · {drawer.draft.purpose || "未填写事项"}</span></dd></div><div><dt>原时段</dt><dd>{originalRoom} · {drawer.draft.date} {drawer.draft.start}</dd></div><div><dt>新时段</dt><dd>{targetRoom} · {drawer.target.bookingDate} {drawer.target.start}</dd></div></dl><div className="booking-draft-relocation-actions"><button data-initial-focus className="submit-button" type="button" onClick={() => beginCreate({ ...drawer.target, draft: drawer.draft })}>使用草稿预约此时段</button><button className="secondary-button" type="button" onClick={() => beginCreate(drawer.target)}>清除草稿并新建</button><button className="booking-conflict-recheck" type="button" onClick={() => setDrawer(null)}>返回日历</button></div></div>;
+    }
     if (drawer.type === "details") {
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";

@@ -803,6 +803,15 @@
 }
 
 @media (max-width: 720px) {
+  .calendar-draft-notice {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .calendar-draft-notice button {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .calendar-success-notice {
     left: calc(var(--rail-width) + 16px);
     right: 16px;

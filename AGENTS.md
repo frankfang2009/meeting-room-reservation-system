@@ -30,6 +30,11 @@
   remain distinct and must not be mislabeled as an upcoming-booking clock.
 - Reservation status codes are never rendered directly. History keeps cancelled records visible
   with a restrained `已取消` treatment, while active records retain their tag-color marker.
+- A draft preserved after a slot conflict remains visibly identified on the calendar. Selecting a
+  different empty slot must ask whether to relocate that draft or clear it; never silently reuse a
+  preserved party or case number after the short toast has disappeared.
+- Successful backups are standalone non-WAL SQLite files. Success, failure, and retention cleanup
+  must not leave backup `-wal`, `-shm`, `-journal`, or hidden `.part-*` companions behind.
 - Keep the calendar header visually quiet: previous/today/next form one segmented navigation group,
   a compact adjacent date picker supports long jumps, and tag filtering remains separate.
 - On a configured LAN service, show a copy action beside the real LAN URL. Clipboard fallback must

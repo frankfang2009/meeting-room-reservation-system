@@ -505,6 +505,11 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertEqual(sidecar["databaseSha256"], sha256_file(first_path))
         self.assertEqual(sidecar["sequence"], 1)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
+        self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
+        self.assertFalse(Path(str(first_path) + "-wal").exists())
+        self.assertFalse(Path(str(first_path) + "-shm").exists())
+        with closing(sqlite3.connect(first_path)) as backup_db:
+            self.assertEqual(backup_db.execute("PRAGMA journal_mode").fetchone()[0], "delete")
 
         room = self.write(
             "POST",
@@ -522,16 +527,26 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         third = self.write("POST", "/api/v1/admin/backups")
         self.assertEqual(third.get_json()["sequence"], 3)
 
+        retired_path = None
         for sequence in (10, 11, 12):
-            create_backup(
+            created_path, _metadata = create_backup(
                 self.database,
                 backup_dir,
                 install_id=INSTALL_ID,
                 sequence=sequence,
                 keep_count=2,
             )
+            if sequence == 10:
+                retired_path = created_path
+                Path(str(created_path) + "-wal").write_bytes(b"")
+                Path(str(created_path) + "-shm").write_bytes(b"stale")
+                (backup_dir / f".{created_path.name}.old.part-shm").write_bytes(b"stale")
         records = backup_records(backup_dir, expected_install_id=INSTALL_ID)
         self.assertEqual([value["sequence"] for _, value in records], [12, 11])
+        self.assertIsNotNone(retired_path)
+        self.assertFalse(Path(str(retired_path) + "-wal").exists())
+        self.assertFalse(Path(str(retired_path) + "-shm").exists())
+        self.assertEqual(list(backup_dir.glob(f".{retired_path.name}.*.part-*")), [])
         records[0][0].write_bytes(b"corrupted-backup")
         status = self.client.get("/api/v1/admin/system").get_json()
         self.assertEqual(status["backupSequence"], 11)

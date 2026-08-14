@@ -22,6 +22,7 @@ BACKUP_KIND = "meeting-room-v2-backup"
 BACKUP_SIDECAR_SCHEMA = 1
 BACKUP_PREFIX = "reservation-v2-backup-"
 BACKUP_KEEP_COUNT = 30
+_SQLITE_COMPANION_SUFFIXES = ("-wal", "-shm", "-journal")
 _LOCK_OPERATIONS = {"backup", "restore"}
 _LOCK_IDENTITY_METHODS = {
     "darwin-procpath",
@@ -63,6 +64,25 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _sqlite_companion_paths(path: Path) -> tuple[Path, ...]:
+    return tuple(Path(str(path) + suffix) for suffix in _SQLITE_COMPANION_SUFFIXES)
+
+
+def _remove_sqlite_companions(path: Path) -> None:
+    for companion in _sqlite_companion_paths(path):
+        try:
+            companion.unlink()
+        except FileNotFoundError:
+            continue
+
+
+def _remove_orphaned_temporary_companions(database_path: Path) -> None:
+    pattern = f".{database_path.name}.*.part-*"
+    for companion in database_path.parent.glob(pattern):
+        with contextlib.suppress(OSError):
+            companion.unlink()
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -623,11 +643,18 @@ def create_backup(
         target_db = sqlite3.connect(temporary)
         source_db.backup(target_db)
         target_db.commit()
+        target_db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        journal_mode = target_db.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if not journal_mode or str(journal_mode[0]).lower() != "delete":
+            raise RuntimeError("备份数据库无法退出 WAL 模式")
+        target_db.commit()
         target_db.close()
         target_db = None
         source_db.close()
         source_db = None
+        _remove_sqlite_companions(temporary)
         metadata = _verify_sqlite(temporary)
+        _remove_sqlite_companions(temporary)
         if source_data_sequence is None:
             source_data_sequence = metadata["sourceDataSequence"]
         elif metadata["sourceDataSequence"] != source_data_sequence:
@@ -654,6 +681,7 @@ def create_backup(
         load_backup_sidecar(
             sidecar, expected_install_id=install_id, verify_hash=True
         )
+        _remove_sqlite_companions(target)
     except Exception:
         if target_db is not None:
             with contextlib.suppress(Exception):
@@ -661,14 +689,7 @@ def create_backup(
         if source_db is not None:
             with contextlib.suppress(Exception):
                 source_db.close()
-        for path in (
-            temporary,
-            Path(str(temporary) + "-wal"),
-            Path(str(temporary) + "-shm"),
-            Path(str(temporary) + "-journal"),
-            target,
-            sidecar,
-        ):
+        for path in (temporary, *_sqlite_companion_paths(temporary), target, *_sqlite_companion_paths(target), sidecar):
             with contextlib.suppress(FileNotFoundError):
                 path.unlink()
         raise
@@ -678,6 +699,10 @@ def create_backup(
         expected_install_id=install_id,
         verify_hash=True,
     )
+    for database, _value in records:
+        with contextlib.suppress(OSError):
+            _remove_sqlite_companions(database)
+        _remove_orphaned_temporary_companions(database)
     for old_database, old_value in records[keep_count:]:
         old_sidecar = sidecar_path(old_database)
         # Delete the data first; a crash leaves an invalid sidecar that is
@@ -690,6 +715,9 @@ def create_backup(
             continue
         with contextlib.suppress(OSError):
             old_sidecar.unlink()
+        with contextlib.suppress(OSError):
+            _remove_sqlite_companions(old_database)
+        _remove_orphaned_temporary_companions(old_database)
     return target, value
 
 

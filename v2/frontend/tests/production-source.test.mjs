@@ -38,6 +38,15 @@ test("shared-computer users have a visible logout action in personal settings", 
   assert.equal(app.includes('className="sr-only" onClick={logout}'), false);
 });
 
+test("login validation returns keyboard focus to the first correctable field", () => {
+  assert.match(app, /const usernameRef = useRef\(null\)/);
+  assert.match(app, /const passwordRef = useRef\(null\)/);
+  assert.match(app, /errors\.username \? usernameRef\.current : errors\.password \? passwordRef\.current/);
+  assert.match(app, /target\?\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(app, /aria-describedby=\{errors\.password \? "login-password-error"/);
+  assert.match(app, /id="login-password-error"[^>]*role="alert"/);
+});
+
 test("personal center keeps a concise real summary without heatmap clutter", () => {
   assert.match(app, /api\.getActivity\(\)/);
   assert.match(app, /activeView === "settings" && profileTab === "activity"/);
@@ -76,6 +85,25 @@ test("revision conflicts rebase the drawer baseline while preserving the draft",
   assert.match(app, /rebaseBookingEdit\(bookingForm, error\.current\)/);
   assert.match(app, /setDrawer\(\(current\) => \(\{ \.\.\.current, booking: rebased\.baseline \}\)\)/);
   assert.match(app, /setBookingForm\(rebased\.draft\)/);
+});
+
+test("preserved booking drafts stay visible and require explicit relocation", () => {
+  assert.match(app, /className="calendar-draft-notice"[^>]*aria-label="待续预约草稿"/);
+  assert.match(app, /选择空白时段后，系统会先确认是否迁移这份草稿/);
+  assert.match(app, /type: "draft-relocation"/);
+  assert.match(app, />使用草稿预约此时段</);
+  assert.match(app, />清除草稿并新建</);
+  assert.match(app, /beginCreate\(\{ \.\.\.drawer\.target, draft: drawer\.draft \}\)/);
+  assert.doesNotMatch(app, /\.\.\.\(preservedDraft \|\| \{\}\)/);
+});
+
+test("calendar success notices expire and clear when their context changes", () => {
+  assert.match(app, /window\.setTimeout\(\(\) => setSuccessNotice\(null\), 8000\)/);
+  assert.match(app, /setSuccessNotice\(null\);\n {2}}, \[currentDate\]\)/);
+  assert.match(app, /if \(view !== "calendar"\) setSuccessNotice\(null\)/);
+  assert.match(app, /function openCreate[\s\S]{0,180}setSuccessNotice\(null\)/);
+  assert.match(app, /function openEdit[\s\S]{0,180}setSuccessNotice\(null\)/);
+  assert.match(app, /error\.code === "SLOT_CONFLICT"[\s\S]{0,120}setSuccessNotice\(null\)/);
 });
 
 test("change notifications start the same due-reminder poller", () => {

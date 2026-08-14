@@ -90,6 +90,57 @@
   animation: system-spin 850ms linear infinite;
 }
 
+.calendar-draft-notice {
+  width: min(1240px, 100%);
+  min-height: 74px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  margin: 18px auto 14px;
+  padding: 11px 12px 11px 16px;
+  color: #514e48;
+  border: 1px solid rgba(94, 108, 86, 0.22);
+  border-radius: 9px;
+  background: #f1f3ed;
+}
+
+.calendar-draft-notice > svg {
+  color: #71836d;
+}
+
+.calendar-draft-notice strong {
+  display: block;
+  color: #3f443b;
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.calendar-draft-notice p,
+.calendar-draft-notice small {
+  display: block;
+  margin: 3px 0 0;
+  color: #6c6b64;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.calendar-draft-notice button {
+  min-width: 92px;
+  min-height: 44px;
+  padding: 0 13px;
+  color: #4b5147;
+  border: 1px solid rgba(79, 88, 73, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+}
+
+.calendar-draft-notice button:hover {
+  border-color: rgba(79, 88, 73, 0.38);
+  background: var(--paper-raised);
+}
+
 .unauthorized-canvas {
   padding-top: 58px;
   background: var(--paper);
