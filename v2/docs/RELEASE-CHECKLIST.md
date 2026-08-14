@@ -11,6 +11,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E10 | `v2/scripts/check.sh` | Ruff 和编译检查通过；backend 64/64、installer 60/60、跨层 18/18、frontend 107/107 通过；Vite 6.4.3 生产构建成功（CSS 124.09 kB，JS 425.74 kB） |
 | E11 | 对隔离模拟数据库连续创建 3 份备份并以 `keep_count=2` 轮转；在旧备份旁注入伪造 `-wal` / `-shm` / `.part-wal` | 只保留序列 2、3 的 `.db + .json`；伴随文件和隐藏临时文件全部清理；两份可恢复备份均为 `journal_mode=delete` |
 | E12 | 使用隔离 18080 服务和模拟账号做真实浏览器回归 | 错误登录后焦点回到密码框；并发占用后草稿跨页保留，选择新时段必须确认原/新时段；成功提示离开日历即清除 |
+| E13 | F01 已取消预约详情读取边界；`v2/scripts/check.sh` | 普通员工可读他人 active 详情，读他人 cancelled 稳定返回 `403 FORBIDDEN`；owner/admin 可读 cancelled；全量门禁通过 |
 
 本轮修复已改变生产源码，因此下方提交
 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 CI 与候选 SHA 只作历史证据；

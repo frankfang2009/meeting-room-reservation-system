@@ -1128,6 +1128,54 @@ class ReservationTests(AuthenticatedReservationTestCase):
         )
         self.assertEqual(expanded.status_code, 403)
 
+    def test_cancelled_details_are_limited_to_owner_or_admin(self):
+        admin_booking = self.create_booking(start="09:00")
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+
+        shared_active = employee.get(
+            f"/api/v1/reservations/{admin_booking['id']}"
+        )
+        self.assertEqual(shared_active.status_code, 200, shared_active.get_json())
+        self.assertEqual(shared_active.get_json()["notes"], admin_booking["notes"])
+
+        cancelled_admin = self.write(
+            "POST",
+            f"/api/v1/reservations/{admin_booking['id']}/cancel",
+            {"expectedRevision": admin_booking["revision"]},
+        )
+        self.assertEqual(cancelled_admin.status_code, 200, cancelled_admin.get_json())
+        denied = employee.get(f"/api/v1/reservations/{admin_booking['id']}")
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        self.assertEqual(denied.get_json()["error"]["code"], "FORBIDDEN")
+
+        employee_booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, start="10:00"),
+            client=employee,
+        )
+        self.assertEqual(employee_booking.status_code, 201, employee_booking.get_json())
+        employee_booking = employee_booking.get_json()
+        cancelled_employee = self.write(
+            "POST",
+            f"/api/v1/reservations/{employee_booking['id']}/cancel",
+            {"expectedRevision": employee_booking["revision"]},
+            client=employee,
+        )
+        self.assertEqual(
+            cancelled_employee.status_code, 200, cancelled_employee.get_json()
+        )
+        owner_view = employee.get(
+            f"/api/v1/reservations/{employee_booking['id']}"
+        )
+        self.assertEqual(owner_view.status_code, 200, owner_view.get_json())
+        admin_view = self.client.get(
+            f"/api/v1/reservations/{employee_booking['id']}"
+        )
+        self.assertEqual(admin_view.status_code, 200, admin_view.get_json())
+
     def test_cancel_increments_revision_releases_slots_and_hides_from_calendar(self):
         booking = self.create_booking()
         cancelled = self.write(

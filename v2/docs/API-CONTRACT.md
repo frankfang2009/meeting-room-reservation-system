@@ -138,6 +138,10 @@ DNS rebinding 夺取首次管理员：
 
 `PATCH /api/v1/reservations/{id}` 使用同样字段并增加 `expectedRevision`。`POST /api/v1/reservations/{id}/cancel` 请求 `{ "expectedRevision": 2 }`。
 
+`GET /api/v1/reservations/{id}` 对他人 `status=active` 的预约仍按共享日历契约
+返回完整详情；对他人 `status=cancelled` 的预约，普通员工稳定返回
+`403 FORBIDDEN`。预约本人与管理员仍可读取已取消详情。
+
 `purpose` 在创建和修改时均为必填、去除首尾空白后不得为空；缺失或空白返回
 `422 VALIDATION_ERROR`，`error.fields.purpose="请输入事项"`。服务端不会生成默认用途。
 

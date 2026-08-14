@@ -715,7 +715,14 @@ def get_reservation(reservation_id: str) -> dict[str, Any]:
     row = _row_for_id(get_db(), reservation_id)
     if row is None:
         raise ApiError(404, "NOT_FOUND", "预约不存在")
-    return serialize_reservation(row, current_user())
+    actor = current_user()
+    if (
+        row["status"] == "cancelled"
+        and actor["role"] != "admin"
+        and row["owner_user_id"] != actor["id"]
+    ):
+        raise ApiError(403, "FORBIDDEN", "无权查看他人已取消的预约")
+    return serialize_reservation(row, actor)
 
 
 def list_events(reservation_id: str) -> list[dict[str, Any]]:
