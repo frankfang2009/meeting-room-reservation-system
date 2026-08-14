@@ -133,6 +133,15 @@ test("calendar success notices expire and clear when their context changes", () 
   assert.match(app, /error\.code === "SLOT_CONFLICT"[\s\S]{0,120}setSuccessNotice\(null\)/);
 });
 
+test("toast tones map success, information, and errors to honest icons", () => {
+  assert.match(app, /tone === "success" \? CheckCircle : tone === "error" \? WarningCircle : Info/);
+  assert.match(app, /className=\{`toast visible \$\{toast\.tone\}`\} role="status" aria-live="polite"/);
+  assert.match(app, /<ToastIcon tone=\{toast\.tone\} \/><span>\{toast\.message\}<\/span>/);
+  assert.match(app, /setToast\(userFacingError\(error, fallback\), "error"\)/);
+  assert.match(app, /该时段已经开始，请选择当前时间之后的空白时段", "error"/);
+  assert.match(app, /个人设置已保存", "success"/);
+});
+
 test("change notifications start the same due-reminder poller", () => {
   assert.match(app, /bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications/);
 });
@@ -308,7 +317,7 @@ test("expired sessions preserve and restore an account-scoped booking draft", ()
   assert.match(app, /未保存内容已保留/);
   assert.match(app, /writeSessionBookingDraft\(window\.sessionStorage, latest\?\.userId/);
   assert.match(app, /consumeSessionBookingDraft\([\s\S]{0,80}window\.sessionStorage/);
-  assert.match(app, /setToast\("已恢复未保存的预约草稿"\)/);
+  assert.match(app, /setToast\("已恢复未保存的预约草稿", "info"\)/);
   assert.match(app, /clearSessionBookingDraft\(window\.sessionStorage, currentUser\?\.id\)/);
 });
 

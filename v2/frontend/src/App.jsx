@@ -17,6 +17,7 @@ import {
   Eye,
   EyeSlash,
   FunnelSimple,
+  Info,
   Key,
   LockSimple,
   MagnifyingGlass,
@@ -113,6 +114,11 @@ const EMPTY_BOOKING = {
   notes: "",
   tagId: "",
 };
+
+function ToastIcon({ tone }) {
+  const Icon = tone === "success" ? CheckCircle : tone === "error" ? WarningCircle : Info;
+  return <Icon size={20} weight="fill" aria-hidden="true" />;
+}
 
 function auditActionLabel(action) {
   const labels = {
@@ -895,7 +901,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [sessionExpired, setSessionExpired] = useState(false);
   const [unauthorizedMessage, setUnauthorizedMessage] = useState("");
   const [successNotice, setSuccessNotice] = useState(null);
-  const [toast, setToast] = useState("");
+  const [toast, setToastState] = useState(null);
+  const setToast = useCallback((message, tone = "info") => {
+    setToastState(message ? { message, tone } : null);
+  }, []);
   const [calendarFilterOpen, setCalendarFilterOpen] = useState(false);
   const [calendarTagFilter, setCalendarTagFilter] = useState("");
   const [bookingFilterOpen, setBookingFilterOpen] = useState(false);
@@ -998,8 +1007,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setBookingForm(draft);
     setPreservedDraft(draft);
     setActiveView("calendar");
-    setToast("已恢复未保存的预约草稿");
-  }, [currentUser?.id]);
+    setToast("已恢复未保存的预约草稿", "info");
+  }, [currentUser?.id, setToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setBusinessClockTick(Date.now()), 30000);
@@ -1024,8 +1033,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return;
     }
     if (error?.code === "NETWORK_ERROR") setNetworkOffline(true);
-    setToast(userFacingError(error, fallback));
-  }, [expireSession, onRecovery]);
+    setToast(userFacingError(error, fallback), "error");
+  }, [expireSession, onRecovery, setToast]);
 
   const loadBootstrap = useCallback(async () => {
     setLoading((current) => ({ ...current, bootstrap: true }));
@@ -1213,7 +1222,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [bootstrap, handleError]);
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(""), 4200);
+    const timer = window.setTimeout(() => setToastState(null), 4200);
     return () => window.clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
@@ -1262,7 +1271,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function navigate(view) {
     const item = NAV_ITEMS.find((nav) => nav.id === view);
     if (item?.permission && !permissions[item.permission]) {
-      setToast("当前账户无权访问" + item.label);
+      setToast("当前账户无权访问" + item.label, "error");
       return;
     }
     setDrawer(null);
@@ -1314,7 +1323,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       serverDate: businessClock.date,
       serverTime: businessClock.time,
     })) {
-      setToast("该时段已经开始，请选择当前时间之后的空白时段");
+      setToast("该时段已经开始，请选择当前时间之后的空白时段", "error");
       return;
     }
     setBookingErrors({});
@@ -1358,7 +1367,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         openCreate(preferredRoom.id, start, dayKey);
         return;
       }
-      setToast("未来两周内没有可用时段，请在日历中选择其他笔录室");
+      setToast("未来两周内没有可用时段，请在日历中选择其他笔录室", "info");
     } catch (error) {
       handleError(error, "无法读取可用时段");
     } finally {
@@ -1446,7 +1455,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       if (editing && returnTo?.type === "room-delete-blocked") {
         await refreshRoomDeletionFlow(returnTo.room, returnTo);
         setSuccessNotice(null);
-        setToast("预约已更新，可以继续处理笔录室删除");
+        setToast("预约已更新，可以继续处理笔录室删除", "success");
       } else {
         setDrawer(null);
         setSuccessNotice({ action: editing ? "预约已更新" : "预约已创建", booking: saved });
@@ -1481,7 +1490,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         } else {
           setPreservedDraft(bookingForm);
           setDrawer(null);
-          setToast("该时段已经开始，预约内容已保留。请选择当前时间之后的空白时段");
+          setToast("该时段已经开始，预约内容已保留。请选择当前时间之后的空白时段", "error");
         }
         await loadCalendar();
       } else {
@@ -1545,15 +1554,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       await Promise.all([loadCalendar(), loadUpcoming(), loadHistory(), loadRooms({ silent: true })]);
       if (returnTo?.type === "room-delete-blocked") {
         await refreshRoomDeletionFlow(returnTo.room, returnTo);
-        setToast("预约已取消，可以继续处理笔录室删除");
+        setToast("预约已取消，可以继续处理笔录室删除", "success");
       } else {
         setDrawer(null);
-        setToast("预约已取消");
+        setToast("预约已取消", "success");
       }
     } catch (error) {
       if (error.code === "REVISION_CONFLICT") {
         openDetails(error.current, false, returnTo);
-        setToast("预约已被其他用户修改，已显示最新内容");
+        setToast("预约已被其他用户修改，已显示最新内容", "info");
       } else handleError(error, "取消预约失败");
     } finally {
       setSaveState("idle");
@@ -1564,7 +1573,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       return buildTagSectionPayload(tags, tagDrafts, section);
     } catch {
-      setToast(`${section === "global" ? "单位" : "个人"}标签名称不能为空`);
+      setToast(`${section === "global" ? "单位" : "个人"}标签名称不能为空`, "error");
       return null;
     }
   }
@@ -1577,7 +1586,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       const saved = await api.updateGlobalTags(payload);
       setBootstrap((current) => ({ ...current, globalTags: unwrapItems(saved) }));
-      setToast("单位标签已保存；个人标签草稿未受影响");
+      setToast("单位标签已保存；个人标签草稿未受影响", "success");
     } catch (error) {
       handleError(error, "保存单位标签失败；个人标签草稿仍保留");
     } finally {
@@ -1606,7 +1615,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
           bookingReminder: saved.bookingReminder,
         },
       }));
-      setToast("个人标签已保存；单位标签草稿未受影响");
+      setToast("个人标签已保存；单位标签草稿未受影响", "success");
     } catch (error) {
       handleError(error, "保存个人标签失败；单位标签草稿仍保留");
     } finally {
@@ -1709,7 +1718,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         </div>
       </header>
       {successNotice && <section className="calendar-success-notice" role="status"><CheckCircle size={20} /><p><strong>{successNotice.action}</strong><span>·</span>{successNotice.booking.roomName}<span>·</span>{successNotice.booking.start}–{successNotice.booking.end}</p><button onClick={() => openDetails(successNotice.booking)}>查看</button><button className="calendar-success-close" aria-label="关闭" onClick={() => setSuccessNotice(null)}><X size={16} /></button></section>}
-      {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除"); }}>清除草稿</button></section>}
+      {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除", "info"); }}>清除草稿</button></section>}
       {networkOffline && <section className="calendar-network-banner" role="status"><span className="calendar-network-icon"><WifiSlash size={18} /></span><div><strong>网络连接已断开</strong><p>当前显示最后一次成功获取的数据。</p></div><button onClick={loadCalendar}><ArrowClockwise size={16} />重新连接</button></section>}
       <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{calendarPending ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
         {calendarPending && activeRooms.length ? <div className="calendar-loading-state" style={{ "--room-count": activeRooms.length }} role="status" aria-label="正在读取预约数据">
@@ -1813,7 +1822,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       if (drawer.type === "room-edit") await api.updateRoom(drawer.room.id, drawer.form);
       else await api.createRoom(drawer.form);
-      setDrawer(null); setToast("笔录室已保存"); await loadBootstrap();
+      setDrawer(null); setToast("笔录室已保存", "success"); await loadBootstrap();
     } catch (error) {
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
@@ -1861,7 +1870,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       await api.deleteRoom(room.id);
       setDrawer(null);
-      setToast("笔录室已删除");
+      setToast("笔录室已删除", "success");
       await loadBootstrap();
     } catch (error) {
       if (error.code === "ROOM_HAS_FUTURE_BOOKINGS") {
@@ -1901,7 +1910,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       if (drawer.type === "user-edit") await api.updateUser(drawer.user.id, { name: drawer.form.name.trim(), department: drawer.form.department.trim(), role: drawer.form.role, enabled: drawer.form.enabled });
       else await api.createUser({ ...drawer.form, name: drawer.form.name.trim(), username: drawer.form.username.trim(), department: drawer.form.department.trim() });
-      setDrawer(null); setToast("用户已保存"); await loadBootstrap();
+      setDrawer(null); setToast("用户已保存", "success"); await loadBootstrap();
     } catch (error) {
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
@@ -1920,10 +1929,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const result = await api.resetUserPassword(drawer.user.id, drawer.form.password);
       setDrawer(null);
       if (result?.reauthenticate) {
-        setToast("密码已重置，请使用新密码重新登录");
+        setToast("密码已重置，请使用新密码重新登录", "success");
         expireSession();
       } else {
-        setToast("密码已重置");
+        setToast("密码已重置", "success");
       }
     }
     catch (error) {
@@ -1997,7 +2006,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   async function createBackup() {
     try {
       const result = await api.createBackup();
-      setToast("备份已完成 · 序列 " + result.sequence);
+      setToast("备份已完成 · 序列 " + result.sequence, "success");
       await Promise.all([loadSystem(true), loadAudit({ silent: true })]);
     } catch (error) { handleError(error, "备份失败"); }
   }
@@ -2011,7 +2020,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const stamp = String(diagnostic.generatedAtUtc || "diagnostic").replace(/[:.]/g, "-");
       anchor.href = url; anchor.download = `meeting-room-diagnostic-${stamp}.json`; anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setToast("脱敏诊断信息已导出 · " + formatLocalDateTime(diagnostic.generatedAtUtc));
+      setToast("脱敏诊断信息已导出 · " + formatLocalDateTime(diagnostic.generatedAtUtc), "success");
     } catch (error) { handleError(error, "导出诊断失败"); }
   }
 
@@ -2019,9 +2028,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (!system?.lanAddress || system.bindMode !== "lan") return;
     try {
       await copyText(system.lanAddress);
-      setToast("局域网地址已复制，可以直接发送给员工");
+      setToast("局域网地址已复制，可以直接发送给员工", "success");
     } catch {
-      setToast("无法自动复制，请选中局域网地址后手动复制");
+      setToast("无法自动复制，请选中局域网地址后手动复制", "error");
     }
   }
 
@@ -2043,7 +2052,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       await api.revokeToken(token.id);
       await Promise.all([loadTokens(true), loadAudit({ silent: true })]);
       setDrawer(null);
-      setToast("集成令牌已撤销");
+      setToast("集成令牌已撤销", "success");
     } catch (error) { handleError(error, "撤销集成令牌失败"); }
     finally { setTokenRevokingId(""); }
   }
@@ -2098,7 +2107,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       }
       const nextUiPreferences = writeUiPreferences(currentUser.id, uiPreferencesDraft);
       setUiPreferencesDraft(nextUiPreferences);
-      setToast("个人设置已保存");
+      setToast("个人设置已保存", "success");
     } catch (error) { handleError(error, "保存个人设置失败"); }
   }
 
@@ -2131,7 +2140,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setBookingForm({ roomId: latest.roomId, date: latest.date, start: latest.start, duration: durationFromRange(latest.start, latest.end), partyName: latest.partyName, caseNumber: latest.caseNumber, purpose: latest.purpose, notes: latest.notes || "", tagId: latest.tagId });
       setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null); setConflictCheck({ busy: false, message: "" });
     }} />;
-    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" disabled={conflictCheck.busy} onClick={recheckSlotConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查这个时段"}</button><p className={`booking-conflict-check-result ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div>;
+    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段", "info"); }}>返回日历重新选择</button><button className="secondary-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" disabled={conflictCheck.busy} onClick={recheckSlotConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查这个时段"}</button><p className={`booking-conflict-check-result ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div>;
     if (drawer.type === "draft-relocation") {
       const originalRoom = rooms.find((room) => room.id === drawer.draft.roomId)?.name || "原笔录室";
       const targetRoom = rooms.find((room) => room.id === drawer.target.roomId)?.name || "新笔录室";
@@ -2150,7 +2159,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword} noValidate><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "reset-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="reset-password-error" role="alert">{drawer.errors.password}</small>}</label><div className="password-reset-actions"><button className="submit-button" type="submit">确认重置</button><button className="secondary-button" type="button" onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
     if (drawer.type === "backup") return <div className="system-backup-details"><div className="system-backup-summary"><Database size={30} /><div><h2>{system?.backupCaughtUp ? "备份已追平" : "需要创建新备份"}</h2><p>{system?.lastBackupAt ? formatLocalDateTime(system.lastBackupAt) : "尚未创建备份"}</p></div></div><dl><div><dt>数据序列</dt><dd>{system?.dataSequence ?? "—"}</dd></div><div><dt>备份序列</dt><dd>{system?.backupSequence ?? "—"}</dd></div><div><dt>追平状态</dt><dd>{system?.backupCaughtUp ? "已追平" : "待备份"}</dd></div></dl><div className="system-backup-privacy"><LockSimple size={18} /><p>备份保留在服务器电脑；诊断导出不包含预约内容或凭据。</p></div><button className="primary-button system-backup-close" onClick={createBackup}>立即备份</button></div>;
     if (drawer.type === "token-create") return <form className="system-token-form" onSubmit={createIntegrationToken}><label><span>令牌名称</span><input data-initial-focus value={drawer.form.name} placeholder="例如 只读数据看板" onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><fieldset><legend>只读权限</legend>{[["rooms:read", "笔录室"], ["availability:read", "可用时段"], ["health:read", "服务健康"]].map(([scope, label]) => <label key={scope}><input type="checkbox" checked={drawer.form.scopes.includes(scope)} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, scopes: event.target.checked ? [...current.form.scopes, scope] : current.form.scopes.filter((item) => item !== scope) } }))} />{label}</label>)}</fieldset><label><span>到期时间（可选）</span><input type="datetime-local" value={drawer.form.expiresAt} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, expiresAt: event.target.value } }))} /></label><p>集成令牌仅开放所选读取接口，不可写入预约数据。</p><div className="drawer-fixed-footer"><button className="primary-button" type="submit">创建令牌</button></div></form>;
-    if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await copyText(drawer.token.token); setToast("令牌已复制"); } catch { setToast("无法自动复制，请手动选择令牌"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
+    if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await copyText(drawer.token.token); setToast("令牌已复制", "success"); } catch { setToast("无法自动复制，请手动选择令牌", "error"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
     if (drawer.type === "token-revoke") return <div className="system-token-revoke"><WarningCircle size={32} /><h2>撤销 {drawer.token.name}？</h2><p>服务器确认撤销前，令牌仍会保留在列表中。撤销后依赖它的只读集成会立即失效。</p><button className="cancel-booking-button" disabled={tokenRevokingId === drawer.token.id} onClick={revokeIntegrationToken}>{tokenRevokingId === drawer.token.id ? "正在等待服务器确认…" : "确认撤销令牌"}</button><button className="secondary-button" disabled={tokenRevokingId === drawer.token.id} onClick={() => setDrawer(null)}>返回</button></div>;
     return null;
   }
@@ -2186,7 +2195,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
     </div>
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>
-    {toast && <div className="toast visible" role="status" aria-live="polite"><CheckCircle size={20} weight="fill" /><span>{toast}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
+    {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
     {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
   </div></SessionIsolationBoundary>;
 }

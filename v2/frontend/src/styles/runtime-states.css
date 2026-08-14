@@ -576,8 +576,16 @@
   transition-delay: 0s;
 }
 
-.toast svg:first-child {
+.toast.info svg:first-child {
+  color: #9ba9b6;
+}
+
+.toast.success svg:first-child {
   color: #8da98e;
+}
+
+.toast.error svg:first-child {
+  color: #d58367;
 }
 
 .toast span {

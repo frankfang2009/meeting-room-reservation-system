@@ -146,10 +146,10 @@
 
 ### F13 Toast 图标一律绿色对勾，错误消息语义矛盾 【P2 · 反馈一致性】
 
-- [ ] 位置：`v2/frontend/src/App.jsx:2053`。
-- [ ] 期望：toast 支持 tone（success/info/error），负面消息（权限提示、时段已开始、网络错误等）
+- [x] 位置：`v2/frontend/src/App.jsx:2053`。
+- [x] 期望：toast 支持 tone（success/info/error），负面消息（权限提示、时段已开始、网络错误等）
   用 `WarningCircle`；保留 role=status/aria-live。
-- [ ] 验收：断言 tone→图标映射；浏览器抽查负面场景。
+- [x] 验收：断言 tone→图标映射；浏览器抽查负面场景。
 
 ### F14 弹出层缺 Esc/外部点击关闭/焦点返回 【P2 · 一致性】
 
