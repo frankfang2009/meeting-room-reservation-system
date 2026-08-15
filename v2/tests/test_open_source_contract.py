@@ -89,6 +89,11 @@ class OpenSourceRepositoryContractTests(unittest.TestCase):
                     f"{workflow_path.name}: {action}@{revision}",
                 )
 
+    def test_codeql_waits_until_repository_is_public(self) -> None:
+        workflow = (WORKFLOW_ROOT / "codeql.yml").read_text(encoding="utf-8")
+        self.assertIn("if: github.event.repository.private == false", workflow)
+        self.assertIn("security-events: write", workflow)
+
     def test_normal_ci_never_builds_or_uploads_a_candidate(self) -> None:
         workflow = (WORKFLOW_ROOT / "ci.yml").read_text(encoding="utf-8")
         for job in ("repository-policy", "v2-linux", "v2-windows"):

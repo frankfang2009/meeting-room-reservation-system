@@ -18,6 +18,7 @@ concurrency:
 jobs:
   analyze:
     name: codeql-${{ matrix.language }}
+    if: github.event.repository.private == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
