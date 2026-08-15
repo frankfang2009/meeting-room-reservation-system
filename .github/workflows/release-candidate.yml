@@ -27,13 +27,13 @@ jobs:
             *) echo "release candidates may only run from main or a v2.* tag"; exit 1 ;;
           esac
       - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Match a tag to v2/VERSION
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: test "$GITHUB_REF_NAME" = "v$(tr -d '\r\n' < v2/VERSION)"
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -43,7 +43,7 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --requirement v2/backend/requirements.txt --requirement v2/backend/requirements-dev.txt
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22.17.1"
           cache: npm
@@ -83,7 +83,7 @@ jobs:
             "$input_root/wheels" \
             "$CANDIDATE_OUTPUT"
       - name: Upload candidate six-pack for controlled validation
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: meeting-room-v2-candidate
           path: ${{ runner.temp }}/meeting-room-v2-candidate
@@ -97,9 +97,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Download candidate six-pack
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: meeting-room-v2-candidate
           path: ${{ runner.temp }}/meeting-room-v2-candidate

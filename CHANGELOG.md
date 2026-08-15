@@ -8,7 +8,7 @@
 - 登录页改用项目自有的中性日程入口 SVG，移除当前源码中的第三方品牌模仿命名、私有素材路径和旧位图。
 - V1 源码与历史路径继续只读保留；已撤销的 V1 可执行 Release 附件不随公开仓库继续分发。
 - 普通 PR/main CI 只运行仓库策略与 V2 Linux/Windows 测试，不生成安装包；候选六件套改为仅允许从 main 手动触发或匹配版本标签触发，V1 Windows 兼容链按路径或手动触发。
-- GitHub Actions 固定到完整提交 SHA，并增加 CodeQL 与 Dependabot 配置；候选 artifact 只保留 7 天且不会自动创建 Release。
+- GitHub Actions 升级到基于 Node 24 的当前官方主版本并固定到完整提交 SHA，同时增加 CodeQL 与 Dependabot 配置；候选 artifact 只保留 7 天且不会自动创建 Release。
 
 ### 候选构建修复
 

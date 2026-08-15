@@ -343,7 +343,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("Invoke-CandidateBat $installRoot", gate)
         self.assertIn("formal candidate cleanup", gate)
         self.assertIn(
-            "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+            "actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53",
             workflow,
         )
         self.assertIn("v2-windows-candidate-gate.ps1", workflow)
