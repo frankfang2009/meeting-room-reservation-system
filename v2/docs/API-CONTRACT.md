@@ -183,9 +183,12 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
-  `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；`POST /api/v1/admin/backups`
+  `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；其 `databaseVersion`
+  为当前 schema v2；`POST /api/v1/admin/backups`
   返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
   `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
+- 备份侧车的 `databaseSchemaVersion` 新建时为 `2`；恢复器仍接受通过完整性和安装身份
+  验证的 schema v1 备份，并在恢复原子替换后迁移至 v2。迁移或复检失败不得标记恢复成功。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。

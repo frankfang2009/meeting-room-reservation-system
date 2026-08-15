@@ -94,7 +94,8 @@ runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 pa
   文件镜像为 `true` 而数据库缺失、损坏或未设置时则进入回环恢复态；
 - `setup_complete=false` 时只绑定 `127.0.0.1:8080`；
 - 首次设置必须在一个数据库事务中写入首个管理员、至少一个笔录室、工作时间、
-  `product_generation=2`、`schema_version=1` 和 `setup_complete=true`；
+  `product_generation=2`、`schema_version=2` 和 `setup_complete=true`；升级预检仍接受
+  可在服务启动前就地迁移的 schema v1 基线数据库；
 - 数据库事务提交后原子镜像 `install.json.setup_complete=true`，再由 supervisor
   重启服务，才可绑定 `0.0.0.0:8080`；
 - CLI 固定支持无参数启动、`--check` 和 `--stop`；`MEETING_ROOM_OPEN_BROWSER=1`

@@ -72,7 +72,8 @@ except ImportError:
 # entrypoints.  It is a tested design foundation, not a supported updater.
 PRODUCTION_UPDATE_SUPPORTED = False
 REGISTRY_SUBKEY = r"Software\MeetingRoomReservationV2"
-DATABASE_SCHEMA_VERSION = 1
+DATABASE_SCHEMA_VERSION = 2
+SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({1, DATABASE_SCHEMA_VERSION})
 EXPECTED_V2_TABLES = frozenset(
     {
         "app_meta",
@@ -220,8 +221,11 @@ def _database_setup_state(database: Path) -> bool:
         connection.close()
     if str(metadata.get("product_generation", "")).strip() != str(PRODUCT_GENERATION):
         raise UpdatePolicyError("数据库 product_generation 不是 2；拒绝更新")
-    if str(metadata.get("schema_version", "")).strip() != str(DATABASE_SCHEMA_VERSION):
-        raise UpdatePolicyError("V2 数据库 schema_version 不是受支持的 1")
+    schema_version = str(metadata.get("schema_version", "")).strip()
+    if schema_version not in {
+        str(version) for version in SUPPORTED_DATABASE_SCHEMA_VERSIONS
+    }:
+        raise UpdatePolicyError("V2 数据库 schema_version 不是可迁移的 1 或当前 2")
     missing = EXPECTED_V2_TABLES - tables
     if missing:
         raise UpdatePolicyError("V2 数据库结构不完整：" + ", ".join(sorted(missing)))

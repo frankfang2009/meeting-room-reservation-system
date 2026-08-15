@@ -115,7 +115,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('data_dir / "reservation.db"', app_factory)
         self.assertIn('"data" / "reservation.db"', updater)
         self.assertRegex(database, r"PRODUCT_GENERATION\s*=\s*2")
-        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*1")
+        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*2")
+        self.assertIn("SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})", database)
+        self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 
     def test_installer_and_backend_share_secret_and_health_contracts(self) -> None:
         installer = read("installer/installer_core.py")

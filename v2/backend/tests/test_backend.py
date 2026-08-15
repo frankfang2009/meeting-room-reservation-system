@@ -16,6 +16,7 @@ from unittest import mock
 
 import service as service_entrypoint
 import server as server_entrypoint
+import v2app.db as db_module
 from v2app import create_app
 from v2app.services import reservations as reservation_service
 from server import determine_bind_host
@@ -161,14 +162,130 @@ class BackendTestCase(unittest.TestCase):
 
 
 class GenerationAndSetupTests(BackendTestCase):
+    @staticmethod
+    def downgrade_schema_to_v1(database: Path) -> None:
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("ALTER TABLE rooms DROP COLUMN show_on_display")
+            db.execute("ALTER TABLE user_preferences DROP COLUMN default_tag_slot")
+            db.execute(
+                "ALTER TABLE user_preferences DROP COLUMN reminder_lead_minutes"
+            )
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
+            db.execute(
+                "UPDATE app_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+
     def test_new_database_has_generation_but_no_seed_account(self):
         with closing(sqlite3.connect(self.database)) as db, db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
             self.assertEqual(meta["product_generation"], "2")
-            self.assertEqual(meta["schema_version"], "1")
+            self.assertEqual(meta["schema_version"], "2")
             self.assertEqual(meta["setup_complete"], "0")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
+            room_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(rooms)")
+            }
+            preference_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(user_preferences)")
+            }
+            self.assertIn("show_on_display", room_columns)
+            self.assertTrue(
+                {
+                    "default_tag_slot",
+                    "reminder_lead_minutes",
+                    "reminder_template",
+                }.issubset(
+                    preference_columns
+                )
+            )
         self.assertEqual(determine_bind_host(self.app), "127.0.0.1")
+
+    def test_schema_v1_is_migrated_atomically_without_rewriting_business_data(self):
+        self.setup_system()
+        self.login()
+        bootstrap = self.bootstrap()
+        room_id = bootstrap["rooms"][0]["id"]
+        booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id),
+        ).get_json()
+        user_id = bootstrap["currentUser"]["id"]
+        self.downgrade_schema_to_v1(self.database)
+
+        migrated = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "migration-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertTrue(migrated.config["SYSTEM_READY"])
+        with closing(sqlite3.connect(self.database)) as db:
+            meta = dict(db.execute("SELECT key, value FROM app_meta"))
+            self.assertEqual(meta["schema_version"], "2")
+            self.assertEqual(
+                db.execute(
+                    "SELECT party_name FROM reservations WHERE id = ?", (booking["id"],)
+                ).fetchone()[0],
+                "张晓燕",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT default_tag_slot, reminder_lead_minutes, reminder_template "
+                    "FROM user_preferences WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone(),
+                (None, 30, db_module.DEFAULT_REMINDER_TEMPLATE),
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT show_on_display FROM rooms WHERE id = ?", (room_id,)
+                ).fetchone()[0],
+                1,
+            )
+        self.assertFalse(db_module.migrate_schema_v1_to_v2(self.database))
+
+    def test_schema_migration_failure_rolls_back_every_column_and_version(self):
+        self.downgrade_schema_to_v1(self.database)
+        original_add = db_module._add_column_if_missing
+        calls = 0
+
+        def fail_after_first_column(db, table, column, declaration):
+            nonlocal calls
+            original_add(db, table, column, declaration)
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("C0 migration failpoint")
+
+        with mock.patch.object(
+            db_module,
+            "_add_column_if_missing",
+            side_effect=fail_after_first_column,
+        ):
+            state = db_module.prepare_database(self.database)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_MIGRATION_FAILED")
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'schema_version'"
+                ).fetchone()[0],
+                "1",
+            )
+            self.assertNotIn(
+                "show_on_display",
+                {row[1] for row in db.execute("PRAGMA table_info(rooms)")},
+            )
+            self.assertFalse(
+                {"default_tag_slot", "reminder_lead_minutes", "reminder_template"}
+                & {
+                    row[1]
+                    for row in db.execute("PRAGMA table_info(user_preferences)")
+                }
+            )
 
     def test_v1_database_is_rejected_without_mutation_or_identity_files(self):
         with tempfile.TemporaryDirectory() as temporary:

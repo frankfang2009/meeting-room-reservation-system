@@ -12,8 +12,13 @@ from .invariants import ApplicationInvariantError, validate_application_invarian
 
 
 PRODUCT_GENERATION = 2
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})
 V1_FINGERPRINT = {"users", "rooms", "reservations", "reservation_slots"}
+DEFAULT_REMINDER_TEMPLATE = (
+    "【笔录提醒】{当事人姓名}您好，您预约的笔录时间为{日期} {开始时间}，"
+    "地点：{笔录室}，请提前到达。如有变动我们会再联系您。"
+)
 
 EXPECTED_TABLES = {
     "app_meta",
@@ -29,6 +34,29 @@ EXPECTED_TABLES = {
     "api_tokens",
     "security_audit_log",
 }
+
+SCHEMA_V2_COLUMNS = (
+    (
+        "rooms",
+        "show_on_display",
+        "INTEGER NOT NULL DEFAULT 1 CHECK (show_on_display IN (0, 1))",
+    ),
+    (
+        "user_preferences",
+        "default_tag_slot",
+        "INTEGER CHECK (default_tag_slot BETWEEN 1 AND 4)",
+    ),
+    (
+        "user_preferences",
+        "reminder_lead_minutes",
+        "INTEGER NOT NULL DEFAULT 30 CHECK (reminder_lead_minutes IN (15, 30, 60))",
+    ),
+    (
+        "user_preferences",
+        "reminder_template",
+        f"TEXT NOT NULL DEFAULT '{DEFAULT_REMINDER_TEMPLATE}'",
+    ),
+)
 
 
 class DatabaseGenerationError(RuntimeError):
@@ -88,21 +116,26 @@ SCHEMA_STATEMENTS = (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+        show_on_display INTEGER NOT NULL DEFAULT 1 CHECK (show_on_display IN (0, 1)),
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
     )
     """,
-    """
+    f"""
     CREATE TABLE user_preferences (
         user_id TEXT PRIMARY KEY,
         default_duration INTEGER NOT NULL DEFAULT 60
             CHECK (default_duration BETWEEN 30 AND 180 AND default_duration % 30 = 0),
         default_room_id TEXT,
+        default_tag_slot INTEGER CHECK (default_tag_slot BETWEEN 1 AND 4),
         booking_change_notifications INTEGER NOT NULL DEFAULT 1
             CHECK (booking_change_notifications IN (0, 1)),
         booking_reminder INTEGER NOT NULL DEFAULT 1
             CHECK (booking_reminder IN (0, 1)),
+        reminder_lead_minutes INTEGER NOT NULL DEFAULT 30
+            CHECK (reminder_lead_minutes IN (15, 30, 60)),
+        reminder_template TEXT NOT NULL DEFAULT '{DEFAULT_REMINDER_TEMPLATE}',
         personal_tag_3_label TEXT NOT NULL DEFAULT '标签 3',
         personal_tag_4_label TEXT NOT NULL DEFAULT '标签 4',
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -244,6 +277,20 @@ def _meta_value(db: sqlite3.Connection, key: str) -> Optional[str]:
     return str(row[0]) if row is not None else None
 
 
+def _column_names(db: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in db.execute(f'PRAGMA table_info("{table}")')}
+
+
+def _missing_v2_columns(db: sqlite3.Connection) -> list[str]:
+    columns_by_table: dict[str, set[str]] = {}
+    missing = []
+    for table, column, _declaration in SCHEMA_V2_COLUMNS:
+        columns = columns_by_table.setdefault(table, _column_names(db, table))
+        if column not in columns:
+            missing.append(f"{table}.{column}")
+    return missing
+
+
 def classify_existing_database(path: Path) -> str:
     try:
         db = _connect(path, readonly=True)
@@ -266,9 +313,10 @@ def classify_existing_database(path: Path) -> str:
                 )
             raise DatabaseGenerationError("数据库缺少有效的 V2 产品代际标识")
         version = _meta_value(db, "schema_version")
-        if version != str(SCHEMA_VERSION):
+        if version not in {str(item) for item in SUPPORTED_SCHEMA_VERSIONS}:
             raise DatabaseGenerationError(
-                f"数据库结构版本不受支持：需要 {SCHEMA_VERSION}，实际 {version or '缺失'}"
+                f"数据库结构版本不受支持：可迁移 1 或当前 {SCHEMA_VERSION}，"
+                f"实际 {version or '缺失'}"
             )
         setup_value = _meta_value(db, "setup_complete")
         if setup_value not in ("0", "1"):
@@ -286,7 +334,77 @@ def classify_existing_database(path: Path) -> str:
             raise DatabaseGenerationError(
                 "V2 数据库结构不完整：" + ", ".join(sorted(missing))
             )
-        return "v2"
+        if version == str(SCHEMA_VERSION):
+            missing_columns = _missing_v2_columns(db)
+            if missing_columns:
+                raise DatabaseGenerationError(
+                    "V2 数据库当前结构缺少列："
+                    + ", ".join(missing_columns)
+                )
+        return f"v{version}"
+    finally:
+        db.close()
+
+
+def _add_column_if_missing(
+    db: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    if column in _column_names(db, table):
+        return
+    db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {declaration}')
+
+
+def migrate_schema_v1_to_v2(path: Path) -> bool:
+    """Atomically and idempotently upgrade a generation-2 schema-v1 database."""
+
+    db = _connect(path)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if _meta_value(db, "product_generation") != str(PRODUCT_GENERATION):
+                raise DatabaseGenerationError("迁移目标不是 V2 产品代际")
+            version = _meta_value(db, "schema_version")
+            if version == str(SCHEMA_VERSION):
+                missing = _missing_v2_columns(db)
+                if missing:
+                    raise DatabaseGenerationError(
+                        "已标记为 schema v2 的数据库缺少列："
+                        + ", ".join(missing)
+                    )
+                db.execute("COMMIT")
+                return False
+            if version != "1":
+                raise DatabaseGenerationError(
+                    f"不支持从 schema {version or '缺失'} 迁移到 {SCHEMA_VERSION}"
+                )
+            missing_tables = EXPECTED_TABLES - _table_names(db)
+            if missing_tables:
+                raise DatabaseGenerationError(
+                    "待迁移的 V2 数据库结构不完整："
+                    + ", ".join(sorted(missing_tables))
+                )
+            for table, column, declaration in SCHEMA_V2_COLUMNS:
+                _add_column_if_missing(db, table, column, declaration)
+            updated = db.execute(
+                "UPDATE app_meta SET value = ? WHERE key = 'schema_version' AND value = '1'",
+                (str(SCHEMA_VERSION),),
+            )
+            if updated.rowcount != 1:
+                raise DatabaseGenerationError("数据库 schema_version 迁移写入失败")
+            missing = _missing_v2_columns(db)
+            if missing:
+                raise DatabaseGenerationError(
+                    "数据库迁移后仍缺少列：" + ", ".join(missing)
+                )
+            db.execute("COMMIT")
+            return True
+        except Exception:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
     finally:
         db.close()
 
@@ -373,7 +491,27 @@ def prepare_database(
         )
 
     try:
-        classify_existing_database(path)
+        classification = classify_existing_database(path)
+    except DatabaseGenerationError:
+        return _recovery(
+            "DATABASE_GENERATION_INVALID",
+            "数据库不属于可识别的 V2 代际，已进入恢复模式",
+        )
+    except (OSError, sqlite3.Error):
+        return _recovery("DATABASE_UNAVAILABLE", "数据库无法读取，已进入恢复模式")
+
+    if classification == "v1":
+        try:
+            migrate_schema_v1_to_v2(path)
+            if classify_existing_database(path) != f"v{SCHEMA_VERSION}":
+                raise DatabaseGenerationError("数据库迁移后版本复检失败")
+        except Exception:
+            return _recovery(
+                "DATABASE_MIGRATION_FAILED",
+                "数据库结构升级失败，已回滚并进入恢复模式",
+            )
+
+    try:
         db = _connect(path, readonly=True)
         try:
             health = database_health(db)
@@ -403,11 +541,6 @@ def prepare_database(
                 invariant_error = str(error)
         finally:
             db.close()
-    except DatabaseGenerationError:
-        return _recovery(
-            "DATABASE_GENERATION_INVALID",
-            "数据库不属于可识别的 V2 代际，已进入恢复模式",
-        )
     except (OSError, sqlite3.Error):
         return _recovery("DATABASE_UNAVAILABLE", "数据库无法读取，已进入恢复模式")
     if not health["quickCheckOk"]:
