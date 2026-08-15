@@ -139,7 +139,7 @@
 }
 
 .reminder-toast > button {
-  min-height: 34px;
+  min-height: 44px;
   margin-left: 8px;
   padding: 0 10px;
   color: var(--ink-secondary);
@@ -226,6 +226,17 @@
   margin: 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.booking-events-error button {
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0 10px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
 }
 
 .history-more,

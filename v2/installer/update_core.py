@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """后续 V2 累计更新的身份与数据保护基线。
 
-V2.0.0 暂不交付更新包；本模块先锁定未来更新器必须遵守的边界：只读取明确
+V2.1.0 暂不交付更新包；本模块先锁定未来更新器必须遵守的边界：只读取明确
 登记或明确传入的 V2 根目录、拒绝 V1、保护全部现场可变目录，并在写程序前
 生成可核验的数据快照。它有意不包含任何 V1 兼容桥或磁盘扫描。
 """
@@ -68,11 +68,12 @@ except ImportError:
     )
 
 
-# This module is deliberately excluded from the V2.0.0 payload and customer
+# This module is deliberately excluded from the V2.1.0 payload and customer
 # entrypoints.  It is a tested design foundation, not a supported updater.
 PRODUCTION_UPDATE_SUPPORTED = False
 REGISTRY_SUBKEY = r"Software\MeetingRoomReservationV2"
-DATABASE_SCHEMA_VERSION = 1
+DATABASE_SCHEMA_VERSION = 2
+SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({1, DATABASE_SCHEMA_VERSION})
 EXPECTED_V2_TABLES = frozenset(
     {
         "app_meta",
@@ -220,8 +221,11 @@ def _database_setup_state(database: Path) -> bool:
         connection.close()
     if str(metadata.get("product_generation", "")).strip() != str(PRODUCT_GENERATION):
         raise UpdatePolicyError("数据库 product_generation 不是 2；拒绝更新")
-    if str(metadata.get("schema_version", "")).strip() != str(DATABASE_SCHEMA_VERSION):
-        raise UpdatePolicyError("V2 数据库 schema_version 不是受支持的 1")
+    schema_version = str(metadata.get("schema_version", "")).strip()
+    if schema_version not in {
+        str(version) for version in SUPPORTED_DATABASE_SCHEMA_VERSIONS
+    }:
+        raise UpdatePolicyError("V2 数据库 schema_version 不是可迁移的 1 或当前 2")
     missing = EXPECTED_V2_TABLES - tables
     if missing:
         raise UpdatePolicyError("V2 数据库结构不完整：" + ", ".join(sorted(missing)))

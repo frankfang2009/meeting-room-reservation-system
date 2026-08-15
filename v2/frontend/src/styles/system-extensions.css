@@ -246,6 +246,88 @@
   padding: 32px;
 }
 
+.system-settings-form {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+}
+
+.system-settings-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.system-settings-copy > svg {
+  flex: 0 0 auto;
+  color: var(--ink-secondary);
+}
+
+.system-settings-copy h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 550;
+}
+
+.system-settings-copy p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.system-settings-fields {
+  display: grid;
+  gap: 22px;
+  margin-top: 28px;
+}
+
+.system-settings-fields label {
+  display: grid;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.system-settings-fields input {
+  height: 48px;
+  padding: 0 13px;
+  color: var(--ink);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: var(--paper-raised);
+  font: inherit;
+}
+
+.system-settings-fields input[aria-invalid="true"] {
+  border-color: #a76655;
+}
+
+.system-settings-fields small {
+  color: #8d5143;
+  line-height: 1.45;
+}
+
+.system-settings-form .drawer-fixed-footer {
+  margin-top: auto;
+  padding-top: 40px;
+}
+
+.system-settings-form .drawer-fixed-footer .primary-button {
+  width: 100%;
+  min-height: 50px;
+  margin: 0;
+}
+
+.system-settings-form .drawer-fixed-footer button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
 .system-token-form > label {
   display: grid;
   gap: 9px;

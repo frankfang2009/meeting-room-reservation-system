@@ -1,4 +1,4 @@
-# V2.0.0 技术架构
+# V2.1.0 技术架构
 
 ## 运行形态
 
@@ -90,6 +90,6 @@ site-packages。生产入口仅以当前安装的 runtime、`app/service.py` 路
   SYSTEM 与 Administrators；安装、启动和更新都要复核。
 - 每日 02:00 的 SYSTEM 任务执行在线备份，服务启动时对超过 24 小时的缺口补备份；
   本机 UAC 恢复工具是唯一恢复入口。
-- V2.0.0 不交付在线更新入口；`installer/update_core.py` 是明确排除在 payload 外的
+- V2.1.0 不交付在线更新入口；`installer/update_core.py` 是明确排除在 payload 外的
   非生产前置层。未来更新器只读取明确登记的 V2 安装根，保护 `data/`、`backups/`、
   `logs/`、安装身份和 secret；禁止扫描磁盘寻找旧版本。

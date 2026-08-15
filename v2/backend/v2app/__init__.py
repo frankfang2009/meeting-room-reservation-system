@@ -28,7 +28,7 @@ from .runtime.install_state import load_install_json, sync_install_json
 from .security import register_security
 
 
-PRODUCT_VERSION = "V2.0.0"
+PRODUCT_VERSION = "V2.1.0"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
@@ -211,10 +211,10 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
             "port": app.config["SERVICE_PORT"],
             "status": "ready" if ready else "recovery",
         }
-        if not ready:
-            payload["recovery_code"] = app.config["RECOVERY_STATE"]["code"]
         if remote_is_loopback():
             payload["install_id"] = app.config["INSTALL_ID"]
+            if not ready:
+                payload["recovery_code"] = app.config["RECOVERY_STATE"]["code"]
         return jsonify(payload)
 
     service_control = app.config.get("SERVICE_CONTROL")

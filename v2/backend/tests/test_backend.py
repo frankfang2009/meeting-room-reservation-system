@@ -16,7 +16,9 @@ from unittest import mock
 
 import service as service_entrypoint
 import server as server_entrypoint
+import v2app.db as db_module
 from v2app import create_app
+from v2app.services import reservations as reservation_service
 from server import determine_bind_host
 
 
@@ -160,14 +162,130 @@ class BackendTestCase(unittest.TestCase):
 
 
 class GenerationAndSetupTests(BackendTestCase):
+    @staticmethod
+    def downgrade_schema_to_v1(database: Path) -> None:
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("ALTER TABLE rooms DROP COLUMN show_on_display")
+            db.execute("ALTER TABLE user_preferences DROP COLUMN default_tag_slot")
+            db.execute(
+                "ALTER TABLE user_preferences DROP COLUMN reminder_lead_minutes"
+            )
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
+            db.execute(
+                "UPDATE app_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+
     def test_new_database_has_generation_but_no_seed_account(self):
         with closing(sqlite3.connect(self.database)) as db, db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
             self.assertEqual(meta["product_generation"], "2")
-            self.assertEqual(meta["schema_version"], "1")
+            self.assertEqual(meta["schema_version"], "2")
             self.assertEqual(meta["setup_complete"], "0")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
+            room_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(rooms)")
+            }
+            preference_columns = {
+                row[1] for row in db.execute("PRAGMA table_info(user_preferences)")
+            }
+            self.assertIn("show_on_display", room_columns)
+            self.assertTrue(
+                {
+                    "default_tag_slot",
+                    "reminder_lead_minutes",
+                    "reminder_template",
+                }.issubset(
+                    preference_columns
+                )
+            )
         self.assertEqual(determine_bind_host(self.app), "127.0.0.1")
+
+    def test_schema_v1_is_migrated_atomically_without_rewriting_business_data(self):
+        self.setup_system()
+        self.login()
+        bootstrap = self.bootstrap()
+        room_id = bootstrap["rooms"][0]["id"]
+        booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id),
+        ).get_json()
+        user_id = bootstrap["currentUser"]["id"]
+        self.downgrade_schema_to_v1(self.database)
+
+        migrated = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.data_dir),
+                "DATABASE": str(self.database),
+                "SECRET_KEY": "migration-secret",
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertTrue(migrated.config["SYSTEM_READY"])
+        with closing(sqlite3.connect(self.database)) as db:
+            meta = dict(db.execute("SELECT key, value FROM app_meta"))
+            self.assertEqual(meta["schema_version"], "2")
+            self.assertEqual(
+                db.execute(
+                    "SELECT party_name FROM reservations WHERE id = ?", (booking["id"],)
+                ).fetchone()[0],
+                "张晓燕",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT default_tag_slot, reminder_lead_minutes, reminder_template "
+                    "FROM user_preferences WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone(),
+                (None, 30, db_module.DEFAULT_REMINDER_TEMPLATE),
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT show_on_display FROM rooms WHERE id = ?", (room_id,)
+                ).fetchone()[0],
+                1,
+            )
+        self.assertFalse(db_module.migrate_schema_v1_to_v2(self.database))
+
+    def test_schema_migration_failure_rolls_back_every_column_and_version(self):
+        self.downgrade_schema_to_v1(self.database)
+        original_add = db_module._add_column_if_missing
+        calls = 0
+
+        def fail_after_first_column(db, table, column, declaration):
+            nonlocal calls
+            original_add(db, table, column, declaration)
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("C0 migration failpoint")
+
+        with mock.patch.object(
+            db_module,
+            "_add_column_if_missing",
+            side_effect=fail_after_first_column,
+        ):
+            state = db_module.prepare_database(self.database)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_MIGRATION_FAILED")
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'schema_version'"
+                ).fetchone()[0],
+                "1",
+            )
+            self.assertNotIn(
+                "show_on_display",
+                {row[1] for row in db.execute("PRAGMA table_info(rooms)")},
+            )
+            self.assertFalse(
+                {"default_tag_slot", "reminder_lead_minutes", "reminder_template"}
+                & {
+                    row[1]
+                    for row in db.execute("PRAGMA table_info(user_preferences)")
+                }
+            )
 
     def test_v1_database_is_rejected_without_mutation_or_identity_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -391,6 +509,14 @@ class GenerationAndSetupTests(BackendTestCase):
                 health = client.get("/healthz/").get_json()
                 self.assertFalse(health["ok"])
                 self.assertEqual(health["status"], "recovery")
+                self.assertEqual(
+                    health["recovery_code"], "DATABASE_MISSING_AFTER_SETUP"
+                )
+                remote_health = client.get(
+                    "/healthz/", environ_base={"REMOTE_ADDR": "192.168.1.20"}
+                ).get_json()
+                self.assertNotIn("install_id", remote_health)
+                self.assertNotIn("recovery_code", remote_health)
                 blocked = client.get("/api/v1/session")
                 self.assertEqual(blocked.status_code, 503)
                 self.assertIn("requestId", blocked.get_json())
@@ -519,6 +645,95 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.get_json()["error"]["code"], "VALIDATION_ERROR")
 
+    def test_admin_updates_work_hours_without_rewriting_existing_bookings(self):
+        room_id = self.bootstrap()["rooms"][0]["id"]
+        existing = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, start="09:00", caseNumber="C1-EXISTING"),
+        )
+        self.assertEqual(existing.status_code, 201, existing.get_json())
+        token_response = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {"name": "C1 可用时段", "scopes": ["availability:read"]},
+        )
+        raw_token = token_response.get_json()["token"]
+
+        updated = self.write(
+            "PUT",
+            "/api/v1/admin/settings",
+            {"workStart": "10:00", "workEnd": "16:00"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        self.assertEqual(updated.get_json()["workStart"], "10:00")
+        self.assertEqual(updated.get_json()["workEnd"], "16:00")
+        self.assertEqual(self.bootstrap()["settings"], updated.get_json())
+        system = self.client.get("/api/v1/admin/system").get_json()
+        self.assertEqual((system["workStart"], system["workEnd"]), ("10:00", "16:00"))
+        availability = self.client.get(
+            "/api/v1/integration/availability?date=2026-08-10",
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        self.assertEqual(availability.status_code, 200, availability.get_json())
+        slots = availability.get_json()["rooms"][0]["slots"]
+        self.assertEqual(slots[0]["start"], "10:00")
+        self.assertEqual(slots[-1]["start"], "15:30")
+        calendar = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertEqual([item["caseNumber"] for item in calendar], ["C1-EXISTING"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = db.execute(
+                "SELECT details_json FROM security_audit_log "
+                "WHERE action = 'settings.updated' ORDER BY occurred_at DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertEqual(
+            json.loads(details),
+            {
+                "before": {"workEnd": "17:30", "workStart": "08:30"},
+                "after": {"workEnd": "16:00", "workStart": "10:00"},
+            },
+        )
+
+    def test_work_hours_permissions_validation_and_transaction_rollback(self):
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        denied = self.write(
+            "PUT",
+            "/api/v1/admin/settings",
+            {"workStart": "09:00", "workEnd": "17:00"},
+            client=employee,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+
+        invalid_cases = (
+            ({"workStart": "8:30", "workEnd": "17:30"}, "workStart"),
+            ({"workStart": "08:15", "workEnd": "17:30"}, "workStart"),
+            ({"workStart": "18:00", "workEnd": "17:30"}, "workEnd"),
+        )
+        for payload, field in invalid_cases:
+            with self.subTest(payload=payload):
+                response = self.write("PUT", "/api/v1/admin/settings", payload)
+                self.assertEqual(response.status_code, 422, response.get_json())
+                self.assertIn(field, response.get_json()["error"]["fields"])
+
+        with mock.patch(
+            "v2app.api.admin.write_security_audit",
+            side_effect=RuntimeError("C1 audit failpoint"),
+        ):
+            failed = self.write(
+                "PUT",
+                "/api/v1/admin/settings",
+                {"workStart": "09:00", "workEnd": "17:00"},
+            )
+        self.assertEqual(failed.status_code, 500, failed.get_json())
+        self.assertEqual(
+            (self.bootstrap()["settings"]["workStart"], self.bootstrap()["settings"]["workEnd"]),
+            ("08:30", "17:30"),
+        )
+
     def test_create_room_and_user_preserve_explicit_disabled_state(self):
         room = self.write(
             "POST",
@@ -608,6 +823,7 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
     def test_room_and_preferences_fields_match_frontend_contract(self):
         room = self.bootstrap()["rooms"][0]
         self.assertIn("isActive", room)
+        self.assertTrue(room["showOnDisplay"])
         updated = self.write(
             "PATCH",
             f"/api/v1/rooms/{room['id']}",
@@ -630,6 +846,193 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         )
         self.assertEqual(saved.status_code, 200, saved.get_json())
         self.assertIsNone(saved.get_json()["defaultRoomId"])
+
+    def test_room_display_setting_is_admin_only_strict_and_audited(self):
+        room = self.bootstrap()["rooms"][0]
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        employee_room = self.bootstrap(employee)["rooms"][0]
+        self.assertNotIn("showOnDisplay", employee_room)
+        denied = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": False},
+            client=employee,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        invalid = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": 0},
+        )
+        self.assertEqual(invalid.status_code, 422, invalid.get_json())
+
+        updated = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        self.assertFalse(updated.get_json()["showOnDisplay"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = json.loads(
+                db.execute(
+                    "SELECT details_json FROM security_audit_log "
+                    "WHERE action = 'room.updated' "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        self.assertFalse(details["showOnDisplay"])
+
+    def test_default_tag_slot_validates_and_follows_global_slot_rename(self):
+        for invalid in (0, 5, "1", -1, True):
+            with self.subTest(defaultTagSlot=invalid):
+                response = self.write(
+                    "PUT",
+                    "/api/v1/preferences",
+                    {"defaultTagSlot": invalid},
+                )
+                self.assertEqual(response.status_code, 422, response.get_json())
+                self.assertIn(
+                    "defaultTagSlot", response.get_json()["error"].get("fields", {})
+                )
+
+        saved = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"defaultTagSlot": 1},
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["defaultTagSlot"], 1)
+        renamed = self.write(
+            "PUT",
+            "/api/v1/tags/global",
+            {
+                "tags": [
+                    {"slot": 1, "label": "新单位标签"},
+                    {"slot": 2, "label": "单位标签二"},
+                ]
+            },
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.get_json())
+        bootstrap = self.bootstrap()
+        self.assertEqual(bootstrap["preferences"]["defaultTagSlot"], 1)
+        self.assertEqual(bootstrap["globalTags"][0]["label"], "新单位标签")
+        cleared = self.write(
+            "PUT", "/api/v1/preferences", {"defaultTagSlot": None}
+        )
+        self.assertIsNone(cleared.get_json()["defaultTagSlot"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = json.loads(
+                db.execute(
+                    "SELECT details_json FROM security_audit_log "
+                    "WHERE action = 'preferences.updated' "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        self.assertIn("defaultTagSlot", details)
+        self.assertIsNone(details["defaultTagSlot"])
+
+    def test_personal_default_tag_slot_is_isolated_per_employee(self):
+        self.add_employee("employee-a")
+        self.add_employee("employee-b")
+        employee_a = self.app.test_client()
+        employee_b = self.app.test_client()
+        self.login("employee-a", "employee-pass-123", employee_a)
+        self.login("employee-b", "employee-pass-123", employee_b)
+
+        saved_a = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {
+                "defaultTagSlot": 3,
+                "personalTags": [
+                    {"slot": 3, "label": "A 的个人标签"},
+                    {"slot": 4, "label": "A 的备用标签"},
+                ],
+            },
+            client=employee_a,
+        )
+        self.assertEqual(saved_a.status_code, 200, saved_a.get_json())
+        bootstrap_b = self.bootstrap(employee_b)
+        self.assertIsNone(bootstrap_b["preferences"]["defaultTagSlot"])
+        self.assertEqual(bootstrap_b["personalTags"][0]["label"], "标签 3")
+
+        saved_b = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {
+                "defaultTagSlot": 3,
+                "personalTags": [
+                    {"slot": 3, "label": "B 的个人标签"},
+                    {"slot": 4, "label": "B 的备用标签"},
+                ],
+            },
+            client=employee_b,
+        )
+        self.assertEqual(saved_b.status_code, 200, saved_b.get_json())
+        bootstrap_a = self.bootstrap(employee_a)
+        self.assertEqual(bootstrap_a["preferences"]["defaultTagSlot"], 3)
+        self.assertEqual(bootstrap_a["personalTags"][0]["label"], "A 的个人标签")
+
+    def test_reminder_template_validation_default_audit_and_user_isolation(self):
+        default_template = db_module.DEFAULT_REMINDER_TEMPLATE
+        self.assertEqual(
+            self.bootstrap()["preferences"]["reminderTemplate"], default_template
+        )
+        accepted = "请于{日期} {开始时间}到{笔录室}，{当事人姓名}。" + "好" * 172
+        self.assertEqual(len(accepted), 200)
+        saved = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": accepted}
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["reminderTemplate"], accepted)
+        rejected = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": "字" * 201}
+        )
+        self.assertEqual(rejected.status_code, 422, rejected.get_json())
+        self.assertIn(
+            "reminderTemplate", rejected.get_json()["error"].get("fields", {})
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            audit_json = db.execute(
+                "SELECT details_json FROM security_audit_log "
+                "WHERE action = 'preferences.updated' "
+                "ORDER BY occurred_at DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertNotIn(accepted, audit_json)
+        details = json.loads(audit_json)
+        self.assertTrue(details["reminderTemplateUpdated"])
+        self.assertEqual(details["reminderTemplateLength"], 200)
+
+        reset = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": " \n\t "}
+        )
+        self.assertEqual(reset.status_code, 200, reset.get_json())
+        self.assertEqual(reset.get_json()["reminderTemplate"], default_template)
+
+        self.add_employee("employee-a")
+        self.add_employee("employee-b")
+        employee_a = self.app.test_client()
+        employee_b = self.app.test_client()
+        self.login("employee-a", "employee-pass-123", employee_a)
+        self.login("employee-b", "employee-pass-123", employee_b)
+        custom_a = "A 的提醒：{当事人姓名}，{日期} {开始时间}。"
+        response_a = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"reminderTemplate": custom_a},
+            client=employee_a,
+        )
+        self.assertEqual(response_a.status_code, 200, response_a.get_json())
+        self.assertEqual(
+            self.bootstrap(employee_a)["preferences"]["reminderTemplate"], custom_a
+        )
+        self.assertEqual(
+            self.bootstrap(employee_b)["preferences"]["reminderTemplate"],
+            default_template,
+        )
 
     def test_admin_bootstrap_supplies_owner_personal_tags(self):
         employee = self.add_employee()
@@ -1060,6 +1463,55 @@ class ReservationTests(AuthenticatedReservationTestCase):
         self.assertEqual(stale.get_json()["error"]["code"], "REVISION_CONFLICT")
         self.assertEqual(stale.get_json()["error"]["current"]["revision"], 2)
 
+    def test_slot_unique_constraint_fallback_maps_create_and_update_to_conflict(self):
+        blocker = self.create_booking(start="09:00")
+        original_conflicts = reservation_service._conflicts
+
+        def hide_precheck_once():
+            calls = 0
+
+            def conflicts(db, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    return []
+                return original_conflicts(db, **kwargs)
+
+            return conflicts
+
+        with mock.patch.object(
+            reservation_service, "_conflicts", side_effect=hide_precheck_once()
+        ):
+            create_conflict = self.write(
+                "POST",
+                "/api/v1/reservations",
+                self.booking_payload(self.room_id, partyName="并发创建"),
+            )
+        self.assertEqual(create_conflict.status_code, 409, create_conflict.get_json())
+        self.assertEqual(create_conflict.get_json()["error"]["code"], "SLOT_CONFLICT")
+        self.assertEqual(
+            create_conflict.get_json()["error"]["conflicts"][0]["id"], blocker["id"]
+        )
+
+        movable = self.create_booking(start="11:00")
+        with mock.patch.object(
+            reservation_service, "_conflicts", side_effect=hide_precheck_once()
+        ):
+            update_conflict = self.write(
+                "PATCH",
+                f"/api/v1/reservations/{movable['id']}",
+                self.booking_payload(
+                    self.room_id,
+                    start="09:00",
+                    expectedRevision=movable["revision"],
+                ),
+            )
+        self.assertEqual(update_conflict.status_code, 409, update_conflict.get_json())
+        self.assertEqual(update_conflict.get_json()["error"]["code"], "SLOT_CONFLICT")
+        self.assertEqual(
+            update_conflict.get_json()["error"]["conflicts"][0]["id"], blocker["id"]
+        )
+
     def test_create_update_cancel_failpoints_roll_back_all_state(self):
         self.app.config["TRANSACTION_FAILPOINT"] = "create_after_slots"
         failed = self.write(
@@ -1127,6 +1579,54 @@ class ReservationTests(AuthenticatedReservationTestCase):
             f"/api/v1/reservations/history?month=2026-08&ownerId={booking['ownerId']}"
         )
         self.assertEqual(expanded.status_code, 403)
+
+    def test_cancelled_details_are_limited_to_owner_or_admin(self):
+        admin_booking = self.create_booking(start="09:00")
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+
+        shared_active = employee.get(
+            f"/api/v1/reservations/{admin_booking['id']}"
+        )
+        self.assertEqual(shared_active.status_code, 200, shared_active.get_json())
+        self.assertEqual(shared_active.get_json()["notes"], admin_booking["notes"])
+
+        cancelled_admin = self.write(
+            "POST",
+            f"/api/v1/reservations/{admin_booking['id']}/cancel",
+            {"expectedRevision": admin_booking["revision"]},
+        )
+        self.assertEqual(cancelled_admin.status_code, 200, cancelled_admin.get_json())
+        denied = employee.get(f"/api/v1/reservations/{admin_booking['id']}")
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        self.assertEqual(denied.get_json()["error"]["code"], "FORBIDDEN")
+
+        employee_booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, start="10:00"),
+            client=employee,
+        )
+        self.assertEqual(employee_booking.status_code, 201, employee_booking.get_json())
+        employee_booking = employee_booking.get_json()
+        cancelled_employee = self.write(
+            "POST",
+            f"/api/v1/reservations/{employee_booking['id']}/cancel",
+            {"expectedRevision": employee_booking["revision"]},
+            client=employee,
+        )
+        self.assertEqual(
+            cancelled_employee.status_code, 200, cancelled_employee.get_json()
+        )
+        owner_view = employee.get(
+            f"/api/v1/reservations/{employee_booking['id']}"
+        )
+        self.assertEqual(owner_view.status_code, 200, owner_view.get_json())
+        admin_view = self.client.get(
+            f"/api/v1/reservations/{employee_booking['id']}"
+        )
+        self.assertEqual(admin_view.status_code, 200, admin_view.get_json())
 
     def test_cancel_increments_revision_releases_slots_and_hides_from_calendar(self):
         booking = self.create_booking()
@@ -1204,6 +1704,72 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         )
         self.assertEqual(denied.status_code, 403)
 
+    def test_hidden_display_rooms_are_filtered_without_affecting_shared_or_integration_data(self):
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        hidden_booking = self.create_booking(
+            partyName="隐藏人员甲", start="09:00", duration=60
+        )
+        second_room_id = self.bootstrap()["rooms"][1]["id"]
+        visible_booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(
+                second_room_id,
+                partyName="公开人员乙",
+                caseNumber="C3-VISIBLE",
+                start="09:00",
+                duration=60,
+            ),
+        )
+        self.assertEqual(visible_booking.status_code, 201, visible_booking.get_json())
+        hidden = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{self.room_id}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(hidden.status_code, 200, hidden.get_json())
+
+        self.now = datetime(2026, 8, 10, 9, 15, tzinfo=timezone(timedelta(hours=8)))
+        display = self.client.get("/api/v1/display/today").get_json()
+        self.assertEqual([room["id"] for room in display["rooms"]], [second_room_id])
+        self.assertNotIn("隐藏人员甲", json.dumps(display, ensure_ascii=False))
+
+        token = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {"name": "C3 集成不变", "scopes": ["rooms:read", "availability:read"]},
+        ).get_json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        integration_rooms = self.client.get(
+            "/api/v1/integration/rooms", headers=headers
+        ).get_json()["items"]
+        self.assertIn(self.room_id, [room["id"] for room in integration_rooms])
+        availability_rooms = self.client.get(
+            "/api/v1/integration/availability?date=2026-08-10", headers=headers
+        ).get_json()["rooms"]
+        self.assertIn(self.room_id, [room["roomId"] for room in availability_rooms])
+
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        employee_rooms = self.bootstrap(employee)["rooms"]
+        self.assertIn(self.room_id, [room["id"] for room in employee_rooms])
+        self.assertTrue(all("showOnDisplay" not in room for room in employee_rooms))
+        shared = employee.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertIn(hidden_booking["id"], [booking["id"] for booking in shared])
+
+        empty = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{second_room_id}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(empty.status_code, 200, empty.get_json())
+        self.assertEqual(
+            self.client.get("/api/v1/display/today").get_json()["rooms"], []
+        )
+
     def test_reminder_ack_is_revision_scoped(self):
         self.now = datetime(2026, 8, 10, 8, 40, tzinfo=timezone(timedelta(hours=8)))
         booking = self.create_booking(start="09:00", duration=30)
@@ -1216,6 +1782,75 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         )
         self.assertEqual(ack.status_code, 200)
         self.assertEqual(self.client.get("/api/v1/reminders/due").get_json()["items"], [])
+
+    def test_reminder_lead_preference_drives_due_and_ack_from_one_current_window(self):
+        self.now = datetime(2026, 8, 10, 8, 10, tzinfo=timezone(timedelta(hours=8)))
+        booking = self.create_booking(start="09:00", duration=30)
+        self.assertEqual(self.bootstrap()["preferences"]["reminderLeadMinutes"], 30)
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+
+        for allowed in (15, 30, 60):
+            response = self.write(
+                "PUT",
+                "/api/v1/preferences",
+                {"reminderLeadMinutes": allowed},
+            )
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertEqual(response.get_json()["reminderLeadMinutes"], allowed)
+        for invalid in (0, 14, 45, 61, "30", True):
+            with self.subTest(reminderLeadMinutes=invalid):
+                response = self.write(
+                    "PUT",
+                    "/api/v1/preferences",
+                    {"reminderLeadMinutes": invalid},
+                )
+                self.assertEqual(response.status_code, 422, response.get_json())
+
+        due_with_larger_window = self.client.get(
+            "/api/v1/reminders/due"
+        ).get_json()["items"]
+        self.assertEqual([item["id"] for item in due_with_larger_window], [booking["id"]])
+        smaller = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"reminderLeadMinutes": 15},
+        )
+        self.assertEqual(smaller.status_code, 200, smaller.get_json())
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+        outside_window = self.write(
+            "POST",
+            f"/api/v1/reminders/{booking['id']}/ack",
+            {"revision": booking["revision"], "kind": "upcoming"},
+        )
+        self.assertEqual(outside_window.status_code, 409, outside_window.get_json())
+        self.assertEqual(outside_window.get_json()["error"]["code"], "REMINDER_NOT_DUE")
+
+        disabled = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"bookingReminder": False, "reminderLeadMinutes": 60},
+        )
+        self.assertFalse(disabled.get_json()["bookingReminder"])
+        self.assertEqual(disabled.get_json()["reminderLeadMinutes"], 60)
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+        enabled = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"bookingReminder": True},
+        )
+        self.assertEqual(enabled.get_json()["reminderLeadMinutes"], 60)
+        acknowledged = self.write(
+            "POST",
+            f"/api/v1/reminders/{booking['id']}/ack",
+            {"revision": booking["revision"], "kind": "upcoming"},
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
 
     def test_external_change_and_upcoming_receipts_are_independent(self):
         self.add_employee()

@@ -36,7 +36,7 @@ class UpdateCoreTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def _create_v2_database(self, *, setup_complete: bool) -> Path:
+    def _create_v2_database(self, *, setup_complete: bool, schema_version: int = 2) -> Path:
         database = self.install_root / "_程序文件" / "data" / "reservation.db"
         connection = sqlite3.connect(database)
         connection.execute("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -44,7 +44,7 @@ class UpdateCoreTests(unittest.TestCase):
             "INSERT INTO app_meta VALUES (?, ?)",
             (
                 ("product_generation", "2"),
-                ("schema_version", "1"),
+                ("schema_version", str(schema_version)),
                 ("setup_complete", "1" if setup_complete else "0"),
             ),
         )
@@ -59,7 +59,7 @@ class UpdateCoreTests(unittest.TestCase):
 
     def test_explicit_v2_identity_is_accepted_before_setup(self) -> None:
         identity = load_v2_identity(self.install_root)
-        self.assertEqual(identity.version, "2.0.0")
+        self.assertEqual(identity.version, "2.1.0")
         self.assertFalse(identity.setup_complete)
         self.assertFalse(identity.database.exists())
 
@@ -71,6 +71,32 @@ class UpdateCoreTests(unittest.TestCase):
         info_path.write_text(json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         identity = load_v2_identity(self.install_root)
         self.assertTrue(identity.setup_complete)
+
+    def test_schema_v1_baseline_is_accepted_for_in_place_migration(self) -> None:
+        self._create_v2_database(setup_complete=True, schema_version=1)
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["setup_complete"] = True
+        info_path.write_text(json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        identity = load_v2_identity(self.install_root)
+        self.assertTrue(identity.setup_complete)
+
+    def test_noncanonical_schema_version_is_rejected(self) -> None:
+        database = self._create_v2_database(setup_complete=True)
+        connection = sqlite3.connect(database)
+        connection.execute(
+            "UPDATE app_meta SET value = '02' WHERE key = 'schema_version'"
+        )
+        connection.commit()
+        connection.close()
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["setup_complete"] = True
+        info_path.write_text(
+            json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
+        with self.assertRaises(UpdatePolicyError):
+            load_v2_identity(self.install_root)
 
     def test_setup_mirror_must_match_database_truth(self) -> None:
         self._create_v2_database(setup_complete=True)
@@ -126,18 +152,18 @@ class UpdateCoreTests(unittest.TestCase):
 
     def test_update_state_binds_root_identity_version_and_payload_hash(self) -> None:
         identity = load_v2_identity(self.install_root)
-        state = build_update_state(identity, "2.0.1", "a" * 64)
+        state = build_update_state(identity, "2.1.1", "a" * 64)
         self.assertEqual(state["install_root"], str(self.install_root.resolve()))
         self.assertEqual(state["install_id"], identity.install_id)
-        self.assertEqual(state["source_version"], "2.0.0")
-        self.assertEqual(state["target_version"], "2.0.1")
+        self.assertEqual(state["source_version"], "2.1.0")
+        self.assertEqual(state["target_version"], "2.1.1")
         with self.assertRaises(UpdatePolicyError):
-            build_update_state(identity, "2.0.0", "a" * 64)
+            build_update_state(identity, "2.1.0", "a" * 64)
 
     def test_preflight_snapshots_before_future_program_writes(self) -> None:
         preflight = V2UpdatePreflight(
             self.install_root,
-            "2.0.1",
+            "2.1.1",
             "b" * 64,
             [{"path": "_程序文件/app/routes.py"}],
         )

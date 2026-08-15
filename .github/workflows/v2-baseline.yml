@@ -122,4 +122,6 @@ jobs:
           path: ${{ runner.temp }}/meeting-room-v2-candidate
       - name: Gate real zero-argument candidate entrypoints
         shell: pwsh
-        run: .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V2.0.0-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"
+        run: |
+          $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
+          .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V$version-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"

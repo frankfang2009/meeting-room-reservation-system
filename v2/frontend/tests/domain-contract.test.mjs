@@ -3,14 +3,19 @@ import test from "node:test";
 import {
   bookingTagContext,
   bookingPayload,
+  calendarFocusTarget,
+  calendarTimeSlots,
   calendarTimeLineOffset,
   canManageBooking,
   canViewBookingDetails,
   clampDurationToWorkday,
+  dateKey,
+  defaultBookingTagId,
   findFirstAvailableStart,
   generateTimeSlots,
   hasBookingStarted,
   isDrawerAllowed,
+  isWithinWorkingHours,
   isSameBooking,
   maximumAvailableDuration,
   projectServerClock,
@@ -20,6 +25,7 @@ import {
   reservationEventLabel,
   mapSetupFieldErrors,
   setupStepForField,
+  shiftDateByYears,
   userFacingError,
   validateAuthenticatedContext,
   validateBookingForm,
@@ -39,6 +45,102 @@ test("generates adjacent working-hour slots", () => {
     ["08:30", "09:00"], ["09:00", "09:30"], ["09:30", "10:00"],
   ]);
   assert.throws(() => generateTimeSlots("08:30", "09:10"), /divide evenly/);
+});
+
+test("default tag applies only to a genuinely blank new booking", () => {
+  const tags = [
+    { id: "tag-1", slot: 1, label: "单位标签" },
+    { id: "tag-3", slot: 3, label: "个人标签" },
+  ];
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: null }), "");
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: 3 }), "tag-3");
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: 1 }), "tag-1");
+  assert.equal(
+    defaultBookingTagId({ tags, defaultTagSlot: 3, draft: { tagId: "tag-1" } }),
+    "tag-1",
+  );
+  assert.equal(
+    defaultBookingTagId({ tags, defaultTagSlot: 3, draft: { tagId: "" } }),
+    "",
+  );
+});
+
+test("calendar keeps existing bookings outside updated work hours without enabling new slots", () => {
+  const slots = calendarTimeSlots({
+    workStart: "10:00",
+    workEnd: "16:00",
+    slotMinutes: 30,
+    bookings: [{ start: "09:00", end: "10:00", status: "active" }],
+  });
+  assert.deepEqual(slots[0], ["09:00", "09:30"]);
+  assert.deepEqual(slots.at(-1), ["15:30", "16:00"]);
+  assert.equal(isWithinWorkingHours("09:00", "09:30", "10:00", "16:00"), false);
+  assert.equal(isWithinWorkingHours("10:00", "10:30", "10:00", "16:00"), true);
+  assert.equal(calendarTimeLineOffset({
+    selectedDate: "2026-08-10",
+    serverDate: "2026-08-10",
+    serverTime: "10:00",
+    workStart: "10:00",
+    workEnd: "16:00",
+    visibleStart: slots[0][0],
+    slotMinutes: 30,
+    rowHeight: 76,
+  }), 152);
+  assert.equal(calendarTimeLineOffset({
+    selectedDate: "2026-08-10",
+    serverDate: "2026-08-10",
+    serverTime: "09:30",
+    workStart: "10:00",
+    workEnd: "16:00",
+    visibleStart: slots[0][0],
+  }), null);
+});
+
+test("calendar arrow navigation preserves grid coordinates around disabled cells", () => {
+  const cells = [
+    { row: 0, column: 0, enabled: false },
+    { row: 0, column: 1, enabled: false },
+    { row: 0, column: 2, enabled: false },
+    { row: 1, column: 0, enabled: false },
+    { row: 1, column: 1, enabled: true },
+    { row: 1, column: 2, enabled: true },
+    { row: 2, column: 0, enabled: true },
+    { row: 2, column: 1, enabled: true },
+    { row: 2, column: 2, enabled: true },
+  ];
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 1, column: 1 }, "ArrowDown"),
+    { row: 2, column: 1, enabled: true },
+  );
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 2, column: 1 }, "ArrowUp"),
+    { row: 1, column: 1, enabled: true },
+  );
+  assert.deepEqual(calendarFocusTarget(cells, null, "ArrowDown"), {
+    row: 1,
+    column: 1,
+    enabled: true,
+  });
+});
+
+test("calendar navigation skips occupied continuations without wrapping rows", () => {
+  const cells = [
+    { row: 0, column: 0, enabled: true },
+    { row: 0, column: 1, enabled: true },
+    { row: 0, column: 2, enabled: true },
+    { row: 1, column: 0, enabled: false },
+    { row: 1, column: 1, enabled: true },
+    { row: 1, column: 2, enabled: true },
+  ];
+  assert.deepEqual(
+    calendarFocusTarget(cells, { row: 1, column: 1 }, "ArrowLeft"),
+    { row: 1, column: 1, enabled: true },
+  );
+  assert.deepEqual(calendarFocusTarget(cells, null, "End"), {
+    row: 1,
+    column: 2,
+    enabled: true,
+  });
 });
 
 test("clamps the default duration to the remaining working day", () => {
@@ -237,6 +339,13 @@ test("builds the API reservation shape and requires expected revision for edits"
   });
   assert.deepEqual(validateBookingForm(form), {});
   assert.ok(validateBookingForm({ ...form, partyName: "" }).partyName);
+  assert.equal(validateBookingForm({ ...form, start: "09:15" }, 30).start, "开始时间必须按 30 分钟对齐");
+  assert.equal(validateBookingForm({ ...form, start: "09:30" }, 30).start, undefined);
+});
+
+test("calendar year bounds clamp leap-day dates", () => {
+  assert.equal(dateKey(shiftDateByYears(new Date(2024, 1, 29), 2)), "2026-02-28");
+  assert.equal(dateKey(shiftDateByYears(new Date(2026, 7, 15), -2)), "2024-08-15");
 });
 
 test("rebases an edit onto the latest revision without changing its draft", () => {

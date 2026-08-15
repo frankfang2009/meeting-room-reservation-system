@@ -17,6 +17,7 @@ import {
   Eye,
   EyeSlash,
   FunnelSimple,
+  Info,
   Key,
   LockSimple,
   MagnifyingGlass,
@@ -35,17 +36,24 @@ import {
 } from "@phosphor-icons/react";
 import { api, unwrapItems } from "./api.js";
 import { readAuthenticatedContext, reauthenticateContext, scopedAppKey } from "./auth-flow.js";
-import { SessionIsolationBoundary } from "./session-isolation.js";
+import {
+  clearSessionBookingDraft,
+  consumeSessionBookingDraft,
+  SessionIsolationBoundary,
+  writeSessionBookingDraft,
+} from "./session-isolation.js";
 import { runSetupRestartTransition, SetupRestartStatus } from "./setup-restart.js";
 import {
   adminApiFieldErrors,
   validatePasswordReset,
   validateRoomAdminForm,
+  validateSystemSettingsForm,
   validateUserAdminForm,
 } from "./features/admin/validation.js";
 import { RoomAdminForm, RoomDeleteBlocked, RoomDeleteConfirmation, UserAdminForm } from "./features/admin/AdminForms.jsx";
 import { PersonalCenter } from "./features/profile/PersonalCenter.jsx";
 import { readUiPreferences, writeUiPreferences } from "./features/profile/ui-preferences.js";
+import { renderReminderTemplate } from "./features/reminders/reminder-template.js";
 import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
 import {
   dateLabel,
@@ -61,15 +69,19 @@ import {
 import {
   bookingTagContext,
   bookingPayload,
+  calendarFocusTarget,
+  calendarTimeSlots,
   calendarTimeLineOffset,
   canManageBooking,
   clampDurationToWorkday,
   dateKey,
+  defaultBookingTagId,
   durationFromRange,
   endFromDuration,
   findFirstAvailableStart,
   generateTimeSlots,
   hasBookingStarted,
+  isWithinWorkingHours,
   isDrawerAllowed,
   maximumAvailableDuration,
   overlaps,
@@ -81,6 +93,7 @@ import {
   reservationEventLabel,
   setupStepForField,
   shiftDate,
+  shiftDateByYears,
   userFacingError,
   validateAuthenticatedContext,
   validateBookingForm,
@@ -108,10 +121,15 @@ const EMPTY_BOOKING = {
   tagId: "",
 };
 
+function ToastIcon({ tone }) {
+  const Icon = tone === "success" ? CheckCircle : tone === "error" ? WarningCircle : Info;
+  return <Icon size={20} weight="fill" aria-hidden="true" />;
+}
+
 function auditActionLabel(action) {
   const labels = {
     "auth.login_succeeded": "登录成功", "auth.login_failed": "登录失败", "auth.logout": "退出登录", "auth.session_expired": "会话已过期",
-    "setup.completed": "首次设置完成", "room.created": "创建笔录室", "room.updated": "修改笔录室", "room.deleted": "删除笔录室",
+    "setup.completed": "首次设置完成", "settings.updated": "修改工作时间", "room.created": "创建笔录室", "room.updated": "修改笔录室", "room.deleted": "删除笔录室",
     "user.created": "创建用户", "user.updated": "修改用户", "user.password_reset": "重置用户密码",
     "preferences.updated": "修改个人设置", "tags.global_updated": "修改单位标签",
     "backup.requested": "请求备份", "backup.succeeded": "备份完成", "backup.failed": "备份失败",
@@ -148,7 +166,7 @@ function auditOutcomeLabel(value) {
 
 const AUDIT_ACTION_OPTIONS = [
   ["auth.login_succeeded", "登录成功"], ["auth.login_failed", "登录失败"], ["auth.logout", "退出登录"], ["auth.session_expired", "会话已过期"],
-  ["setup.completed", "首次设置完成"], ["room.created", "创建笔录室"], ["room.updated", "修改笔录室"], ["room.deleted", "删除笔录室"],
+  ["setup.completed", "首次设置完成"], ["settings.updated", "修改工作时间"], ["room.created", "创建笔录室"], ["room.updated", "修改笔录室"], ["room.deleted", "删除笔录室"],
   ["user.created", "创建用户"], ["user.updated", "修改用户"], ["user.password_reset", "重置用户密码"], ["preferences.updated", "修改个人设置"],
   ["tags.global_updated", "修改单位标签"], ["backup.requested", "请求备份"], ["backup.succeeded", "备份完成"], ["backup.failed", "备份失败"],
   ["token.created", "创建集成令牌"], ["token.revoked", "撤销集成令牌"],
@@ -256,6 +274,39 @@ function useFocusTrap(ref, active, onClose, dismissable = true, focusKey = "", b
       if (previous?.isConnected) previous.focus?.({ preventScroll: true });
     };
   }, [active, backgroundRef, dismissable, focusKey, ref]);
+}
+
+function useDismissiblePopover(active, onClose) {
+  const triggerRef = useRef(null);
+  const popoverRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    if (!active) return undefined;
+    const handlePointerDown = (event) => {
+      if (triggerRef.current?.contains(event.target) || popoverRef.current?.contains(event.target)) return;
+      onCloseRef.current?.();
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onCloseRef.current?.();
+      window.requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [active]);
+  const closeAndRestoreFocus = useCallback(() => {
+    onCloseRef.current?.();
+    window.requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
+  }, []);
+  return { triggerRef, popoverRef, closeAndRestoreFocus };
 }
 
 function LoadingScreen({ label = "正在连接系统" }) {
@@ -722,6 +773,7 @@ function PublicDisplay() {
             <p className="public-display-next"><span>下一位</span><span className="public-display-next-person"><strong>{room.next?.maskedPartyName || "暂无安排"}</strong><time>{room.next ? room.next.start + "–" + room.next.end : "暂无后续安排"}</time></span></p>
           </article>)}
           {!payload && state === "loading" && <div className="public-display-loading"><CircleNotch className="spin" size={30} /><span>正在读取今日安排</span></div>}
+          {payload && payload.rooms.length === 0 && <div className="public-display-empty"><DoorOpen size={44} weight="thin" /><strong>当前暂无公开引导的笔录室</strong><span>请留意现场工作人员指引</span></div>}
         </section>
       </main>
       <footer className="public-display-footer"><p><SpeakerHigh size={24} />请留意屏幕引导，按提示前往对应笔录室</p><p>最后更新&nbsp; {updated}<span aria-hidden="true">·</span>姓名已脱敏</p></footer>
@@ -767,7 +819,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   return <div className="session-expired-layer"><section ref={ref} className="session-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="session-expired-heading">
     <span className="session-expired-icon" aria-hidden="true"><LockSimple size={22} /></span>
     <h2 id="session-expired-heading">登录已过期</h2>
-    <p>为保护账户安全，请重新登录。验证成功后工作台会重新加载，未保存内容将被清除。</p>
+    <p>为保护账户安全，请重新登录。本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复。</p>
     {!editing ? <button type="button" data-initial-focus onClick={() => setEditing(true)}>重新登录</button> :
       <form className="session-reauth-form" onSubmit={submit}>
         <input data-initial-focus aria-label="用户名" autoComplete="username" placeholder="用户名" value={credentials.username} onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))} />
@@ -778,7 +830,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   </section></div>;
 }
 
-function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDuration, editing, busy, failure, conflict, onSubmit, onFieldChange, onDismissFailure, onUseLatest, onContinueDraft }) {
+function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDuration, editing, busy, failure, conflict, conflictCheck, onSubmit, onFieldChange, onDismissFailure, onUseLatest, onContinueDraft, onRecheckConflict }) {
   const roomName = rooms.find((room) => room.id === form.roomId)?.name || "请选择笔录室";
   const minimum = DURATION_STEPS[0];
   const scaleMaximum = DURATION_STEPS.at(-1);
@@ -809,7 +861,7 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
     if (field === "start") onFieldChange?.("duration");
   };
   const conflictDifferences = reservationConflictDifferences(form, conflict?.current, { rooms, tags });
-  const durationPicker = <fieldset className="duration-field"><div className="duration-field-heading"><legend>预约时长</legend><output>{form.duration} 分钟</output></div><div className="duration-slider-shell" style={{ "--duration-available-progress": availableProgress + "%", "--duration-selected-progress": selectedProgress + "%" }}><div className={`duration-slider-track ${maximum < scaleMaximum ? "is-limited" : ""}`}><span className="duration-slider-available" /><span className="duration-slider-selected" /><span className="duration-slider-knob" aria-hidden="true" /></div><input className="duration-range-input" aria-label="预约时长" aria-invalid={Boolean(errors.duration)} aria-valuemax={maximum} aria-valuetext={`${form.duration} 分钟，当前最多 ${maximum} 分钟`} type="range" min={minimum} max={scaleMaximum} step="30" value={form.duration} onChange={(event) => updateField("duration", Math.min(maximum, Number(event.target.value)))} /></div>{errors.duration && <small className="duration-error">{errors.duration}</small>}</fieldset>;
+  const durationPicker = <fieldset className="duration-field"><div className="duration-field-heading"><legend>预约时长</legend><output>{form.duration} 分钟</output></div><div className="duration-slider-shell" style={{ "--duration-available-progress": availableProgress + "%", "--duration-selected-progress": selectedProgress + "%" }}><div className={`duration-slider-track ${maximum < scaleMaximum ? "is-limited" : ""}`}><span className="duration-slider-available" /><span className="duration-slider-selected" />{DURATION_STEPS.slice(1, -1).map((step) => { const state = step > maximum ? "unavailable" : step <= Number(form.duration) ? "reached" : "available"; return <button className={`duration-slider-stop ${state} ${step === Number(form.duration) ? "selected" : ""}`} style={{ left: progressFor(step) + "%" }} type="button" disabled={busy || step > maximum} aria-label={`${step} 分钟${step > maximum ? "，当前不可用" : ""}`} onClick={() => updateField("duration", step)} key={step}><i aria-hidden="true" /></button>; })}<span className="duration-slider-knob" aria-hidden="true" /></div><input className="duration-range-input" aria-label="预约时长" aria-invalid={Boolean(errors.duration)} aria-valuemax={maximum} aria-valuetext={`${form.duration} 分钟，当前最多 ${maximum} 分钟`} type="range" min={minimum} max={scaleMaximum} step="30" value={form.duration} onChange={(event) => updateField("duration", Math.min(maximum, Number(event.target.value)))} /></div>{errors.duration && <small className="duration-error">{errors.duration}</small>}</fieldset>;
   return <form className={`booking-form ${editing ? "booking-form-edit" : "booking-form-new"}`} onSubmit={onSubmit} noValidate aria-busy={busy}>
     <div className="booking-form-scroll">
       {editing ? <div className="booking-edit-identity"><p>{form.partyName || "未填写姓名"} <span>·</span> {form.caseNumber || "未填写案号"}</p></div> : <div className="booking-create-summary"><p>{form.date ? dateLabel(form.date) : "请选择日期"}<span>·</span>{roomName}</p><h2>{form.start || "选择时段"}{form.start ? "–" + endFromDuration(form.start, form.duration) : ""}</h2></div>}
@@ -820,16 +872,16 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
         <label className="field"><span>预约对象</span><input data-initial-focus value={form.partyName} aria-invalid={Boolean(errors.partyName)} onChange={(event) => updateField("partyName", event.target.value)} />{errors.partyName && <small>{errors.partyName}</small>}</label>
         <label className="field"><span>案号</span><input value={form.caseNumber} aria-invalid={Boolean(errors.caseNumber)} onChange={(event) => updateField("caseNumber", event.target.value)} />{errors.caseNumber && <small>{errors.caseNumber}</small>}</label>
         <label className="field"><span>事项</span><input value={form.purpose} aria-invalid={Boolean(errors.purpose)} onChange={(event) => updateField("purpose", event.target.value)} />{errors.purpose && <small>{errors.purpose}</small>}</label>
-        <fieldset className="tag-field"><legend>标签</legend><div className="tag-choice-grid">{tags.map((tag) => <button type="button" className={`tag-choice ${form.tagId === tag.id ? "selected" : ""}`} style={tagStyle(tag)} aria-pressed={form.tagId === tag.id} key={tag.id} onClick={() => updateField("tagId", tag.id)}><i />{tag.label}</button>)}</div></fieldset>
+        <fieldset className="tag-field"><legend>标签</legend><div className="tag-choice-grid">{tags.map((tag) => <button type="button" className={`tag-choice ${form.tagId === tag.id ? "selected" : ""}`} style={tagStyle(tag)} aria-pressed={form.tagId === tag.id} title={tag.label} key={tag.id} onClick={() => updateField("tagId", tag.id)}><i /><span>{tag.label}</span></button>)}</div></fieldset>
         {errors.tagId && <small className="duration-error">{errors.tagId}</small>}
         <label className="field booking-notes-field"><span>备注 <em>选填</em></span><textarea rows="3" value={form.notes} onChange={(event) => updateField("notes", event.target.value)} /></label>
       </section>
     </div>
-    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留，请比较后决定。</p></div></div>{conflictDifferences.length ? <div className="booking-modified-comparison"><div className="booking-modified-comparison-head"><span>字段</span><strong>你的修改</strong><strong>最新预约</strong></div>{conflictDifferences.map((item) => <div className="booking-modified-comparison-row" key={item.label}><span>{item.label}</span><span>{item.localValue}</span><span>{item.serverValue}</span></div>)}</div> : <p>服务器版本已更新，但当前字段值没有可见差异。</p>}<div className="booking-modified-actions"><button className="submit-button" type="button" onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" onClick={onContinueDraft}>返回继续调整</button></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
+    {conflict?.type === "revision" ? <div className="booking-modified-panel" role="alert"><div className="booking-modified-heading"><WarningCircle size={19} /><div><strong>预约内容已发生变化</strong><p>其他用户已更新这场预约。你的草稿仍然保留，请比较后决定。</p></div></div>{conflictDifferences.length ? <div className="booking-modified-comparison"><div className="booking-modified-comparison-head"><span>字段</span><strong>你的修改</strong><strong>最新预约</strong></div>{conflictDifferences.map((item) => <div className="booking-modified-comparison-row" key={item.label}><span>{item.label}</span><span>{item.localValue}</span><span>{item.serverValue}</span></div>)}</div> : <p>服务器版本已更新，但当前字段值没有可见差异。</p>}<div className="booking-modified-actions"><button className="submit-button" type="button" disabled={conflictCheck.busy} onClick={onUseLatest}>使用最新内容</button><button className="secondary-button" type="button" disabled={conflictCheck.busy} onClick={onContinueDraft}>返回继续调整</button><button className="booking-modified-recheck" type="button" disabled={conflictCheck.busy} onClick={onRecheckConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查"}</button><p className={`booking-modified-message ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div> : <div className="booking-form-footer">{failure && <div className="booking-save-failure" role="alert"><WarningCircle size={19} /><span><strong>保存失败</strong><small>未能保存本次修改，你填写的内容已保留。</small></span></div>}{busy ? <div className="booking-saving-status" role="status"><CircleNotch className="spin" size={19} /><span><strong>正在保存预约</strong><small>请稍候</small></span></div> : <div className={`booking-form-actions ${failure ? "has-secondary" : ""}`}><button className="submit-button" type="submit">{failure ? "重试保存" : editing ? "保存修改" : "创建预约"}</button>{failure && <button className="secondary-button" type="button" onClick={onDismissFailure}>稍后处理</button>}</div>}</div>}
   </form>;
 }
 
-function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState, eventsAllowed, onEdit, onCancel, onClose }) {
+function BookingDetails({ booking, tag, canCopyReminder, canEdit, canCancel, events, eventsState, eventsAllowed, onCopyReminder, onEdit, onCancel, onClose, onRetryEvents }) {
   return <div className="booking-details">
     <div className="selection-summary"><h2>{booking.start}–{booking.end}</h2><p>{dateLabel(booking.date)}</p>{booking.status && <span className={`drawer-status ${booking.status}`}><i />{reservationStatusLabel(booking.status)}</span>}</div>
     <dl>
@@ -843,9 +895,9 @@ function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState,
     </dl>
     {eventsAllowed && <section className="booking-event-timeline" aria-labelledby="booking-events-heading" aria-busy={eventsState === "loading"}>
       <h3 id="booking-events-heading">变更记录</h3>
-      {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note">暂时无法读取变更记录</p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
+      {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note booking-events-error">暂时无法读取变更记录<button type="button" onClick={onRetryEvents}>重新读取</button></p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
     </section>}
-    {(canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
+    {(canCopyReminder || canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCopyReminder && <button className="copy-reminder-button" onClick={onCopyReminder}><CopySimple size={17} />复制提醒信息</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}{!canEdit && !canCancel && <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
   </div>;
 }
 
@@ -863,10 +915,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [businessClockTick, setBusinessClockTick] = useState(initialReceivedAt);
   const [currentDate, setCurrentDate] = useState(initialBusinessDate);
   const [bookings, setBookings] = useState([]);
+  const [calendarDataDate, setCalendarDataDate] = useState("");
   const [upcoming, setUpcoming] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [historySections, setHistorySections] = useState([]);
   const [historyPage, setHistoryPage] = useState({ nextCursor: null, pageSize: 50, total: 0 });
-  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState("");
   const [historyMonth, setHistoryMonth] = useState(() => monthKey(initialBusinessDate));
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyScope, setHistoryScope] = useState("unit");
@@ -882,12 +935,16 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingErrors, setBookingErrors] = useState({});
   const [saveState, setSaveState] = useState("idle");
   const [conflict, setConflict] = useState(null);
+  const [conflictCheck, setConflictCheck] = useState({ busy: false, message: "" });
   const [loading, setLoading] = useState({ bootstrap: true, calendar: true, mine: true, history: true });
   const [networkOffline, setNetworkOffline] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [unauthorizedMessage, setUnauthorizedMessage] = useState("");
   const [successNotice, setSuccessNotice] = useState(null);
-  const [toast, setToast] = useState("");
+  const [toast, setToastState] = useState(null);
+  const setToast = useCallback((message, tone = "info") => {
+    setToastState(message ? { message, tone } : null);
+  }, []);
   const [calendarFilterOpen, setCalendarFilterOpen] = useState(false);
   const [calendarTagFilter, setCalendarTagFilter] = useState("");
   const [bookingFilterOpen, setBookingFilterOpen] = useState(false);
@@ -903,6 +960,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [userQuery, setUserQuery] = useState("");
   const [system, setSystem] = useState(null);
   const [systemLoading, setSystemLoading] = useState(false);
+  const [systemSettingsSaving, setSystemSettingsSaving] = useState(false);
   const [auditItems, setAuditItems] = useState([]);
   const [auditPage, setAuditPage] = useState({ nextCursor: null, pageSize: 50, total: 0 });
   const [auditFilters, setAuditFilters] = useState({ action: "", outcome: "", actorId: "", targetType: "", targetId: "", dateFrom: "", dateTo: "" });
@@ -917,6 +975,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [bookingEvents, setBookingEvents] = useState([]);
   const [bookingEventsState, setBookingEventsState] = useState("idle");
   const [preferencesDraft, setPreferencesDraft] = useState(() => initialBootstrap?.preferences || null);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [preferencesErrors, setPreferencesErrors] = useState({});
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
   const [profileTab, setProfileTab] = useState("activity");
   const [activity, setActivity] = useState(null);
@@ -927,13 +987,28 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const eventRequestRef = useRef(0);
   const calendarRequestRef = useRef(0);
   const calendarAbortRef = useRef(null);
+  const calendarDataDateRef = useRef("");
   const historyRequestRef = useRef(0);
   const historyUserSelectRef = useRef(null);
   const auditRequestRef = useRef(0);
   const auditHiddenRef = useRef(false);
   const knownAuditIdsRef = useRef(new Set());
+  const sessionDraftRef = useRef(null);
+  const bookingFilterPopover = useDismissiblePopover(bookingFilterOpen, () => setBookingFilterOpen(false));
+  const calendarFilterPopover = useDismissiblePopover(calendarFilterOpen, () => setCalendarFilterOpen(false));
+  const historySearchPopover = useDismissiblePopover(historySearchOpen, () => setHistorySearchOpen(false));
+  const historyFilterPopover = useDismissiblePopover(historyFilterOpen, () => setHistoryFilterOpen(false));
+  const historyMonthPopover = useDismissiblePopover(historyMonthOpen, () => setHistoryMonthOpen(false));
+  const userSearchPopover = useDismissiblePopover(userSearchOpen, () => setUserSearchOpen(false));
+  const auditFilterPopover = useDismissiblePopover(auditFilterOpen, () => setAuditFilterOpen(false));
   const role = bootstrap?.currentUser?.role || session.currentUser?.role;
   const currentUser = bootstrap?.currentUser || session.currentUser;
+  sessionDraftRef.current = {
+    bookingForm,
+    drawerType: drawer?.type,
+    preservedDraft,
+    userId: currentUser?.id,
+  };
   const permissions = bootstrap?.permissions || {};
   const settings = bootstrap?.settings || { workStart: "08:30", workEnd: "17:30", slotMinutes: 30, maxDurationMinutes: 180 };
   const businessClock = useMemo(
@@ -941,6 +1016,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     [businessClockAnchor, businessClockTick],
   );
   const businessDate = useMemo(() => parseDate(businessClock.date), [businessClock.date]);
+  const calendarDateMinimum = dateKey(shiftDateByYears(businessDate, -2));
+  const calendarDateMaximum = dateKey(shiftDateByYears(businessDate, 2));
   const tags = useMemo(() => [...(bootstrap?.globalTags || []), ...(bootstrap?.personalTags || [])].map(normalizeTag).sort((a, b) => a.slot - b.slot), [bootstrap]);
   const editTagContext = useMemo(() => bookingTagContext({
     booking: drawer?.type === "edit" ? drawer.booking : null,
@@ -954,11 +1031,36 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     () => editTagContext.tags.map(normalizeTag).sort((left, right) => left.slot - right.slot),
     [editTagContext],
   );
-  const timeSlots = useMemo(() => {
+  const workingTimeSlots = useMemo(() => {
     try { return generateTimeSlots(settings.workStart, settings.workEnd, settings.slotMinutes || 30); }
     catch { return generateTimeSlots("08:30", "17:30", 30); }
   }, [settings.workEnd, settings.workStart, settings.slotMinutes]);
   useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
+
+  const expireSession = useCallback(() => {
+    const latest = sessionDraftRef.current;
+    const activeForm = ["create", "edit", "slot-conflict"].includes(latest?.drawerType)
+      ? latest.bookingForm
+      : null;
+    writeSessionBookingDraft(window.sessionStorage, latest?.userId, {
+      bookingForm: activeForm,
+      preservedDraft: latest?.preservedDraft,
+    });
+    setSessionExpired(true);
+  }, []);
+
+  useEffect(() => {
+    const recovered = consumeSessionBookingDraft(
+      window.sessionStorage,
+      currentUser?.id,
+    );
+    const draft = recovered?.bookingForm || recovered?.preservedDraft;
+    if (!draft) return;
+    setBookingForm(draft);
+    setPreservedDraft(draft);
+    setActiveView("calendar");
+    setToast("已恢复未保存的预约草稿", "info");
+  }, [currentUser?.id, setToast]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setBusinessClockTick(Date.now()), 30000);
@@ -974,7 +1076,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return;
     }
     if (error?.status === 401 || error?.code === "SESSION_EXPIRED" || error?.code === "SESSION_REQUIRED") {
-      setSessionExpired(true);
+      expireSession();
       return;
     }
     if (error?.status === 403 && error?.code === "FORBIDDEN") {
@@ -983,8 +1085,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return;
     }
     if (error?.code === "NETWORK_ERROR") setNetworkOffline(true);
-    setToast(userFacingError(error, fallback));
-  }, [onRecovery]);
+    setToast(userFacingError(error, fallback), "error");
+  }, [expireSession, onRecovery, setToast]);
 
   const loadBootstrap = useCallback(async () => {
     setLoading((current) => ({ ...current, bootstrap: true }));
@@ -1039,20 +1141,24 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [handleError, permissions.manageRooms]);
 
   const loadCalendar = useCallback(async () => {
+    const requestedDate = dateKey(currentDate);
     const requestNumber = calendarRequestRef.current + 1;
     calendarRequestRef.current = requestNumber;
     calendarAbortRef.current?.abort();
     const controller = new AbortController();
     calendarAbortRef.current = controller;
+    if (calendarDataDateRef.current !== requestedDate) setBookings([]);
     setLoading((current) => ({ ...current, calendar: true }));
     try {
       const nextBookings = await fetchAllReservations(
-        dateKey(currentDate),
-        dateKey(currentDate),
+        requestedDate,
+        requestedDate,
         { signal: controller.signal },
       );
       if (calendarRequestRef.current !== requestNumber) return;
       setBookings(nextBookings);
+      calendarDataDateRef.current = requestedDate;
+      setCalendarDataDate(requestedDate);
       setNetworkOffline(false);
     } catch (error) {
       if (error?.name === "AbortError" || calendarRequestRef.current !== requestNumber) return;
@@ -1076,34 +1182,55 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }, [handleError]);
 
-  const loadHistory = useCallback(async ({ append = false, cursor = "" } = {}) => {
+  const loadHistory = useCallback(async ({ append = false, cursor = "", month = historyMonth } = {}) => {
     const requestNumber = historyRequestRef.current + 1;
     historyRequestRef.current = requestNumber;
-    if (append) setHistoryLoadingMore(true);
+    if (append) setHistoryLoadingMore(month);
     else setLoading((current) => ({ ...current, history: true }));
     try {
-      const result = await api.getHistory({ month: historyMonth, ownerId: role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : undefined, roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery.trim(), pageSize: 50, cursor });
+      const result = await api.getHistory({ month, ownerId: role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : undefined, roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery.trim(), pageSize: 50, cursor });
       if (historyRequestRef.current !== requestNumber) return;
       const nextItems = unwrapItems(result);
-      setHistory((current) => {
-        const combined = append ? [...current, ...nextItems] : nextItems;
-        return [...new Map(combined.map((booking) => [booking.id, booking])).values()];
+      const [year, monthNumber] = month.split("-").map(Number);
+      const nextSection = {
+        id: month,
+        label: `${year}年${monthNumber}月`,
+        items: nextItems,
+        nextCursor: result?.nextCursor || null,
+        pageSize: Number(result?.pageSize || 50),
+        total: Number(result?.total || nextItems.length),
+      };
+      setHistorySections((current) => {
+        if (!append) return [nextSection];
+        const existingIndex = current.findIndex((section) => section.id === month);
+        if (existingIndex < 0) return [...current, nextSection];
+        return current.map((section, index) => index === existingIndex ? {
+          ...nextSection,
+          items: [...new Map([...section.items, ...nextItems].map((booking) => [booking.id, booking])).values()],
+        } : section);
       });
-      setHistoryPage({ nextCursor: result?.nextCursor || null, pageSize: Number(result?.pageSize || 50), total: Number(result?.total || nextItems.length) });
+      if (month === historyMonth) setHistoryPage({ nextCursor: nextSection.nextCursor, pageSize: nextSection.pageSize, total: nextSection.total });
     } catch (error) {
       if (historyRequestRef.current === requestNumber) handleError(error, "无法读取预约记录");
     } finally {
       if (historyRequestRef.current === requestNumber) {
-        if (append) setHistoryLoadingMore(false);
+        if (append) setHistoryLoadingMore("");
         else setLoading((current) => ({ ...current, history: false }));
       }
     }
   }, [currentUser.id, handleError, historyMonth, historyOwner, historyQuery, historyRoom, historyScope, historyStatus, historyTag, role]);
 
-  const loadMoreHistory = useCallback(() => {
-    if (!historyPage.nextCursor || historyLoadingMore) return;
-    loadHistory({ append: true, cursor: historyPage.nextCursor });
-  }, [historyLoadingMore, historyPage.nextCursor, loadHistory]);
+  const loadMoreHistory = useCallback((section) => {
+    if (!section?.nextCursor || historyLoadingMore) return;
+    loadHistory({ append: true, cursor: section.nextCursor, month: section.id });
+  }, [historyLoadingMore, loadHistory]);
+
+  const loadPreviousHistoryMonth = useCallback(() => {
+    if (historyLoadingMore) return;
+    const oldestMonth = historySections.at(-1)?.id || historyMonth;
+    const [year, month] = oldestMonth.split("-").map(Number);
+    loadHistory({ append: true, month: monthKey(new Date(year, month - 2, 1)) });
+  }, [historyLoadingMore, historyMonth, historySections, loadHistory]);
 
   const loadActivity = useCallback(async () => {
     setActivityState("loading");
@@ -1147,7 +1274,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }, [bootstrap, handleError]);
   useEffect(() => {
     if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(""), 4200);
+    const timer = window.setTimeout(() => setToastState(null), 4200);
     return () => window.clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
@@ -1171,10 +1298,20 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   if (!bootstrap) return <FatalScreen error="无法读取系统配置" onRetry={loadBootstrap} />;
 
   const activeRooms = rooms.filter((room) => room.isActive !== false).sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
-  const bookingFor = (roomId, start, end) => bookings.find((booking) => booking.roomId === roomId && booking.status !== "cancelled" && overlaps(booking, start, end));
+  const visibleCalendarBookings = calendarDataDate === dateKey(currentDate) ? bookings : [];
+  let timeSlots = workingTimeSlots;
+  try {
+    timeSlots = calendarTimeSlots({
+      workStart: settings.workStart,
+      workEnd: settings.workEnd,
+      slotMinutes: settings.slotMinutes,
+      bookings: visibleCalendarBookings,
+    });
+  } catch { /* keep the validated working-hours fallback */ }
+  const bookingFor = (roomId, start, end) => visibleCalendarBookings.find((booking) => booking.roomId === roomId && booking.status !== "cancelled" && overlaps(booking, start, end));
   const tagFor = (booking) => tags.find((tag) => tag.id === booking?.tagId) || normalizeTag({ id: booking?.tagId, label: booking?.tagLabel, slot: 1 }, 0);
   const bookingMaximumDuration = maximumAvailableDuration({
-    bookings,
+    bookings: visibleCalendarBookings,
     roomId: bookingForm.roomId,
     date: bookingForm.date,
     start: bookingForm.start,
@@ -1189,13 +1326,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     serverTime: businessClock.time,
     workStart: settings.workStart,
     workEnd: settings.workEnd,
+    visibleStart: timeSlots[0]?.[0] || settings.workStart,
     slotMinutes: settings.slotMinutes,
   });
 
   function navigate(view) {
     const item = NAV_ITEMS.find((nav) => nav.id === view);
     if (item?.permission && !permissions[item.permission]) {
-      setToast("当前账户无权访问" + item.label);
+      setToast("当前账户无权访问" + item.label, "error");
       return;
     }
     setDrawer(null);
@@ -1205,6 +1343,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openPersonalCenter() {
+    setPreferencesDraft(bootstrap?.preferences || {});
+    setPreferencesErrors({});
+    setUiPreferencesDraft(readUiPreferences(currentUser.id));
     setProfileTab("activity");
     navigate("settings");
   }
@@ -1233,7 +1374,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         maxDuration: settings.maxDurationMinutes,
         slotMinutes: settings.slotMinutes,
       })),
-      tagId: draft?.tagId || tags[0]?.id || "",
+      tagId: defaultBookingTagId({
+        tags,
+        defaultTagSlot: bootstrap.preferences?.defaultTagSlot,
+        draft,
+      }),
     });
     setPreservedDraft(null);
     setDrawer({ type: "create" });
@@ -1247,7 +1392,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       serverDate: businessClock.date,
       serverTime: businessClock.time,
     })) {
-      setToast("该时段已经开始，请选择当前时间之后的空白时段");
+      setToast("该时段已经开始，请选择当前时间之后的空白时段", "error");
       return;
     }
     setBookingErrors({});
@@ -1266,8 +1411,16 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function openDefaultCreate() {
     const preferredRoom = activeRooms.find((room) => room.id === bootstrap.preferences?.defaultRoomId) || activeRooms[0];
+    if (!preferredRoom) {
+      if (permissions.manageRooms) {
+        setToast("当前没有可用笔录室，请先启用或创建笔录室", "info");
+        navigate("rooms");
+      } else {
+        setToast("当前没有可用笔录室，请联系管理员启用后再预约", "info");
+      }
+      return;
+    }
     navigate("calendar");
-    if (!preferredRoom) return;
     setLoading((current) => ({ ...current, calendar: true }));
     try {
       const now = new Date(businessDate);
@@ -1279,17 +1432,19 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         const start = findFirstAvailableStart({
           bookings: dayBookings,
           roomId: preferredRoom.id,
-          slots: timeSlots,
+          slots: workingTimeSlots,
           notBefore: offset === 0 ? currentTime : "",
         });
         if (!start) continue;
         setCurrentDate(day);
         setBookings(dayBookings);
+        calendarDataDateRef.current = dayKey;
+        setCalendarDataDate(dayKey);
         setNetworkOffline(false);
         openCreate(preferredRoom.id, start, dayKey);
         return;
       }
-      setToast("未来两周内没有可用时段，请在日历中选择其他笔录室");
+      setToast("未来两周内没有可用时段，请在日历中选择其他笔录室", "info");
     } catch (error) {
       handleError(error, "无法读取可用时段");
     } finally {
@@ -1297,15 +1452,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }
 
-  async function openDetails(booking, readOnly = false, returnTo = null) {
-    setSuccessNotice(null);
+  async function loadBookingEvents(booking) {
     const requestNumber = eventRequestRef.current + 1;
     eventRequestRef.current = requestNumber;
-    const eventsAllowed = role === "admin" || booking.ownerId === currentUser.id;
     setBookingEvents([]);
-    setBookingEventsState(eventsAllowed ? "loading" : "hidden");
-    setDrawer({ type: "details", booking, readOnly, returnTo });
-    if (!eventsAllowed) return;
+    setBookingEventsState("loading");
     try {
       const result = await api.getReservationEvents(booking.id);
       if (eventRequestRef.current !== requestNumber) return;
@@ -1316,6 +1467,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setBookingEventsState("error");
       if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法读取变更记录");
     }
+  }
+
+  async function openDetails(booking, readOnly = false, returnTo = null) {
+    setSuccessNotice(null);
+    const eventsAllowed = role === "admin" || booking.ownerId === currentUser.id;
+    setBookingEvents([]);
+    setBookingEventsState(eventsAllowed ? "loading" : "hidden");
+    setDrawer({ type: "details", booking, readOnly, returnTo });
+    if (eventsAllowed) await loadBookingEvents(booking);
   }
 
   function openEdit(booking, returnTo = null) {
@@ -1334,6 +1494,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setBookingErrors(ownerTagError);
     setSaveState("idle");
     setConflict(null);
+    setConflictCheck({ busy: false, message: "" });
     setBookingForm({
       roomId: booking.roomId,
       date: booking.date,
@@ -1352,7 +1513,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     event.preventDefault();
     const editing = drawer?.type === "edit";
     const returnTo = drawer?.returnTo || null;
-    const errors = validateBookingForm(bookingForm);
+    const errors = validateBookingForm(bookingForm, settings.slotMinutes);
     if (
       drawer?.type === "edit"
       && !editTagContext.ownerTagsAvailable
@@ -1367,6 +1528,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
     setSaveState("saving");
     setConflict(null);
+    setConflictCheck({ busy: false, message: "" });
     try {
       const saved = editing
         ? await api.updateReservation(drawer.booking.id, bookingPayload(bookingForm, drawer.booking.revision))
@@ -1375,7 +1537,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       if (editing && returnTo?.type === "room-delete-blocked") {
         await refreshRoomDeletionFlow(returnTo.room, returnTo);
         setSuccessNotice(null);
-        setToast("预约已更新，可以继续处理笔录室删除");
+        setToast("预约已更新，可以继续处理笔录室删除", "success");
       } else {
         setDrawer(null);
         setSuccessNotice({ action: editing ? "预约已更新" : "预约已创建", booking: saved });
@@ -1388,6 +1550,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       } else if (error.code === "SLOT_CONFLICT") {
         setSuccessNotice(null);
         setConflict({ type: "slot", conflicts: error.conflicts });
+        setConflictCheck({ busy: false, message: "" });
         setDrawer((current) => ({ ...current, type: "slot-conflict" }));
         await loadCalendar();
       } else if (error.code === "REVISION_CONFLICT") {
@@ -1396,6 +1559,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         setBookingForm(rebased.draft);
         setDrawer((current) => ({ ...current, booking: rebased.baseline }));
         setConflict({ type: "revision", current: rebased.baseline });
+        setConflictCheck({ busy: false, message: "" });
         setSaveState("idle");
       } else if (error.code === "VALIDATION_ERROR") {
         setBookingErrors(error.fields || {});
@@ -1408,13 +1572,58 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         } else {
           setPreservedDraft(bookingForm);
           setDrawer(null);
-          setToast("该时段已经开始，预约内容已保留。请选择当前时间之后的空白时段");
+          setToast("该时段已经开始，预约内容已保留。请选择当前时间之后的空白时段", "error");
         }
         await loadCalendar();
       } else {
-        if (error.status === 401) setSessionExpired(true);
+        if (error.status === 401) expireSession();
         setSaveState("failed");
       }
+    }
+  }
+
+  async function recheckSlotConflict() {
+    if (drawer?.type !== "slot-conflict" || conflictCheck.busy) return;
+    setConflictCheck({ busy: true, message: "" });
+    try {
+      const nextBookings = await fetchAllReservations(bookingForm.date, bookingForm.date);
+      const targetEnd = endFromDuration(bookingForm.start, bookingForm.duration);
+      const occupied = nextBookings.some((booking) => (
+        booking.roomId === bookingForm.roomId
+        && booking.status !== "cancelled"
+        && overlaps(booking, bookingForm.start, targetEnd)
+      ));
+      if (dateKey(currentDate) === bookingForm.date) {
+        setBookings(nextBookings);
+        calendarDataDateRef.current = bookingForm.date;
+        setCalendarDataDate(bookingForm.date);
+      }
+      setConflictCheck({ busy: false, message: occupied ? "该时段仍被占用" : "该时段已可用，可以返回日历重新选择" });
+    } catch (error) {
+      setConflictCheck({ busy: false, message: "暂时无法重新检查，请稍后重试" });
+      if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法重新检查这个时段");
+    }
+  }
+
+  async function recheckRevisionConflict() {
+    if (drawer?.type !== "edit" || conflict?.type !== "revision" || conflictCheck.busy) return;
+    setConflictCheck({ busy: true, message: "" });
+    try {
+      const previousRevision = Number(conflict.current?.revision || 0);
+      const latest = await api.getReservation(drawer.booking.id);
+      const rebased = rebaseBookingEdit(bookingForm, latest);
+      setBookingForm(rebased.draft);
+      setDrawer((current) => ({ ...current, booking: rebased.baseline }));
+      setConflict({ type: "revision", current: rebased.baseline });
+      setConflictCheck({
+        busy: false,
+        message: Number(latest.revision || 0) > previousRevision
+          ? "预约仍有新的变化，已更新最新内容"
+          : "当前仍是已显示的最新版本",
+      });
+    } catch (error) {
+      setConflictCheck({ busy: false, message: "暂时无法重新检查，请稍后重试" });
+      if (error?.status === 401 || error?.code === "SYSTEM_RECOVERY_REQUIRED") handleError(error, "无法重新检查预约内容");
     }
   }
 
@@ -1427,15 +1636,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       await Promise.all([loadCalendar(), loadUpcoming(), loadHistory(), loadRooms({ silent: true })]);
       if (returnTo?.type === "room-delete-blocked") {
         await refreshRoomDeletionFlow(returnTo.room, returnTo);
-        setToast("预约已取消，可以继续处理笔录室删除");
+        setToast("预约已取消，可以继续处理笔录室删除", "success");
       } else {
         setDrawer(null);
-        setToast("预约已取消");
+        setToast("预约已取消", "success");
       }
     } catch (error) {
       if (error.code === "REVISION_CONFLICT") {
         openDetails(error.current, false, returnTo);
-        setToast("预约已被其他用户修改，已显示最新内容");
+        setToast("预约已被其他用户修改，已显示最新内容", "info");
       } else handleError(error, "取消预约失败");
     } finally {
       setSaveState("idle");
@@ -1446,7 +1655,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       return buildTagSectionPayload(tags, tagDrafts, section);
     } catch {
-      setToast(`${section === "global" ? "单位" : "个人"}标签名称不能为空`);
+      setToast(`${section === "global" ? "单位" : "个人"}标签名称不能为空`, "error");
       return null;
     }
   }
@@ -1459,7 +1668,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       const saved = await api.updateGlobalTags(payload);
       setBootstrap((current) => ({ ...current, globalTags: unwrapItems(saved) }));
-      setToast("单位标签已保存；个人标签草稿未受影响");
+      setToast("单位标签已保存；个人标签草稿未受影响", "success");
     } catch (error) {
       handleError(error, "保存单位标签失败；个人标签草稿仍保留");
     } finally {
@@ -1488,7 +1697,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
           bookingReminder: saved.bookingReminder,
         },
       }));
-      setToast("个人标签已保存；单位标签草稿未受影响");
+      setToast("个人标签已保存；单位标签草稿未受影响", "success");
     } catch (error) {
       handleError(error, "保存个人标签失败；单位标签草稿仍保留");
     } finally {
@@ -1539,11 +1748,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       if (nextValues.has(value)) nextValues.delete(value); else nextValues.add(value);
       return nextValues;
     });
-    return <main className="main-canvas bookings-canvas"><header className="page-header bookings-header"><h1>我的预约</h1><div className="filter-wrap"><button className={`filter-trigger ${bookingFilterOpen ? "pressed" : ""} ${filtersActive ? "filtered" : ""}`} aria-label="筛选我的预约" aria-expanded={bookingFilterOpen} onClick={() => setBookingFilterOpen((open) => !open)}><SlidersHorizontal size={19} /></button>{bookingFilterOpen && <div className="booking-filter-popover" role="group" aria-label="筛选我的预约"><div className="popover-heading"><span>筛选预约</span><button onClick={resetMineFilters}>重置</button></div><p>笔录室</p>{rooms.map((room) => <label key={room.id}><input type="checkbox" checked={bookingRooms.has(room.id)} onChange={() => toggleMineFilter(room.id, setBookingRooms)} /><span>{room.name}</span></label>)}<p className="filter-section-label">标签</p>{tags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={bookingTags.has(tag.id)} onChange={() => toggleMineFilter(tag.id, setBookingTags)} /><i /><span>{tag.label}</span></label>)}<div className="filter-result-count">当前显示 {items.length} 场</div></div>}</div></header>
+    return <main className="main-canvas bookings-canvas" tabIndex={0}><header className="page-header bookings-header"><h1>我的预约</h1><div className="filter-wrap"><button ref={bookingFilterPopover.triggerRef} className={`filter-trigger ${bookingFilterOpen ? "pressed" : ""} ${filtersActive ? "filtered" : ""}`} aria-label="筛选我的预约" aria-expanded={bookingFilterOpen} aria-haspopup="true" onClick={() => setBookingFilterOpen((open) => !open)}><SlidersHorizontal size={19} /></button>{bookingFilterOpen && <div ref={bookingFilterPopover.popoverRef} className="booking-filter-popover" role="group" aria-label="筛选我的预约"><div className="popover-heading"><span>筛选预约</span><button onClick={resetMineFilters}>重置</button></div><p>笔录室</p>{rooms.map((room) => <label key={room.id}><input type="checkbox" checked={bookingRooms.has(room.id)} onChange={() => toggleMineFilter(room.id, setBookingRooms)} /><span>{room.name}</span></label>)}<p className="filter-section-label">标签</p>{tags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={bookingTags.has(tag.id)} onChange={() => toggleMineFilter(tag.id, setBookingTags)} /><i /><span>{tag.label}</span></label>)}<div className="filter-result-count">当前显示 {items.length} 场</div></div>}</div></header>
       <div className="bookings-layout">
         {loading.mine ? <div className="bookings-empty" role="status"><CircleNotch className="spin" size={30} /><p>正在读取预约</p></div> :
           next ? <button className="next-booking" onClick={() => openDetails(next)}><span className="next-booking-time"><span className="next-booking-time-value">{next.start}</span><span className="next-booking-time-separator">–</span><span className="next-booking-time-value">{next.end}</span></span><span className="next-booking-room" style={tagStyle(tagFor(next))}><i />{next.roomName}</span><CaretRight className="next-booking-caret" size={25} /></button> :
-          ownItems.length ? <div className="bookings-empty"><p>没有符合条件的预约</p><button onClick={resetMineFilters}>清除筛选</button></div> : <div className="bookings-empty booking-zero-state"><CalendarBlank size={44} weight="thin" /><h2>还没有预约</h2><p>创建预约后，最近的一场显示在这里。</p><button className="empty-primary-action" onClick={openDefaultCreate}>前往预约日历</button></div>}
+          ownItems.length ? <div className="bookings-empty"><p>没有符合条件的预约</p><button onClick={resetMineFilters}>清除筛选</button></div> : <div className="bookings-empty booking-zero-state"><CalendarBlank size={44} weight="thin" /><h2>还没有预约</h2><p>创建预约后，最近的一场显示在这里。</p><button className="empty-primary-action" onClick={openDefaultCreate}>{!activeRooms.length && permissions.manageRooms ? "管理笔录室" : "前往预约日历"}</button></div>}
         {next && <section className="later-section"><h2>之后</h2><div className="appointment-list" id="later-bookings-list">{visibleLaterItems.map((booking, index) => <button className={`appointment-row ${index >= 2 ? "revealed-row" : ""}`} key={booking.id} onClick={() => openDetails(booking)}><span className="row-date">{String(parseDate(booking.date).getMonth() + 1).padStart(2, "0")}–{String(parseDate(booking.date).getDate()).padStart(2, "0")}<small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="row-time">{booking.start}–{booking.end}</span><span className="row-room">{booking.roomName}</span><CaretRight className="row-caret" size={20} /></button>)}{!laterItems.length && <p className="later-empty">没有更多预约</p>}</div></section>}
         {laterItems.length > 2 && <button className={`more-bookings-button ${moreBookingsOpen ? "expanded" : ""}`} aria-expanded={moreBookingsOpen} aria-controls="later-bookings-list" onClick={() => setMoreBookingsOpen((open) => !open)}><span>{moreBookingsOpen ? "收起预约" : "更多预约"}</span><CaretRight size={18} /></button>}
       </div>
@@ -1552,29 +1761,38 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   function moveCalendarFocus(event) {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
-    const cells = [...event.currentTarget.querySelectorAll("button.slot:not([disabled])")];
-    if (!cells.length) return;
-    const currentIndex = Math.max(0, cells.indexOf(event.target));
-    let nextIndex = currentIndex;
-    if (event.key === "ArrowLeft") nextIndex -= 1;
-    if (event.key === "ArrowRight") nextIndex += 1;
-    if (event.key === "ArrowUp") nextIndex -= activeRooms.length;
-    if (event.key === "ArrowDown") nextIndex += activeRooms.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = cells.length - 1;
-    nextIndex = Math.max(0, Math.min(cells.length - 1, nextIndex));
+    const elements = [...event.currentTarget.querySelectorAll(".slot[data-calendar-row]")];
+    const target = calendarFocusTarget(
+      elements.map((element) => ({
+        row: Number(element.dataset.calendarRow),
+        column: Number(element.dataset.calendarColumn),
+        enabled: element.matches("button:not([disabled])"),
+      })),
+      event.target?.dataset?.calendarRow === undefined ? null : {
+        row: Number(event.target.dataset.calendarRow),
+        column: Number(event.target.dataset.calendarColumn),
+      },
+      event.key,
+    );
+    if (!target) return;
+    const next = elements.find(
+      (element) => Number(element.dataset.calendarRow) === target.row
+        && Number(element.dataset.calendarColumn) === target.column,
+    );
+    if (!(next instanceof HTMLButtonElement) || next.disabled) return;
     event.preventDefault();
-    cells[nextIndex].focus();
+    next.focus();
   }
 
   function renderCalendar() {
     const roomCountClass = activeRooms.length >= 3 ? "calendar-room-count-many" : `calendar-room-count-${activeRooms.length}`;
-    return <main className="main-canvas calendar-canvas">
+    const calendarPending = loading.calendar || calendarDataDate !== dateKey(currentDate);
+    return <main className="main-canvas calendar-canvas" tabIndex={0}>
       <header className="page-header calendar-header"><div><h1>预约日历</h1><p>{dateLabel(currentDate)}</p></div>
-        <div className="header-actions calendar-toolbar"><div className="calendar-day-navigation" role="group" aria-label="日期导航"><button aria-label="前一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="calendar-nav-today" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button aria-label="后一天" disabled={networkOffline} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button></div>
-          <label className={`calendar-date-picker ${networkOffline ? "disabled" : ""}`}><span>{dateKey(currentDate).replaceAll("-", "/")}</span><CalendarBlank size={18} aria-hidden="true" /><input type="date" min="0001-01-01" max="9999-12-31" aria-label="跳转到日期" disabled={networkOffline} value={dateKey(currentDate)} onInput={(event) => { if (event.currentTarget.value) setCurrentDate(parseDate(event.currentTarget.value)); }} /></label>
-          <div className="filter-wrap"><button className={"icon-button calendar-filter-trigger " + (calendarFilterOpen ? "pressed" : "") + (calendarTagFilter ? " filtered" : "")} aria-label="查看标签颜色并筛选" aria-expanded={calendarFilterOpen} onClick={() => setCalendarFilterOpen((open) => !open)}><FunnelSimple size={20} /></button>
-            {calendarFilterOpen && <div className="tag-palette-popover" role="group"><div className="popover-heading"><span>{tagEditing ? "编辑标签名称" : "标签颜色"}</span><button onClick={() => setTagEditing((editing) => !editing)}>{tagEditing ? "完成编辑" : <><PencilSimple size={13} />编辑</>}</button></div>
+        <div className="header-actions calendar-toolbar"><div className="calendar-day-navigation" role="group" aria-label="日期导航"><button aria-label="前一天" disabled={networkOffline || dateKey(currentDate) <= calendarDateMinimum} onClick={() => setCurrentDate((date) => shiftDate(date, -1))}><CaretLeft size={19} /></button><button className="calendar-nav-today" disabled={networkOffline} onClick={() => setCurrentDate(new Date(businessDate))}>今天</button><button aria-label="后一天" disabled={networkOffline || dateKey(currentDate) >= calendarDateMaximum} onClick={() => setCurrentDate((date) => shiftDate(date, 1))}><CaretRight size={19} /></button></div>
+          <label className={`calendar-date-picker ${networkOffline ? "disabled" : ""}`}><span>{dateKey(currentDate).replaceAll("-", "/")}</span><CalendarBlank size={18} aria-hidden="true" /><input type="date" min={calendarDateMinimum} max={calendarDateMaximum} aria-label="跳转到日期" disabled={networkOffline} value={dateKey(currentDate)} onInput={(event) => { const value = event.currentTarget.value; if (value >= calendarDateMinimum && value <= calendarDateMaximum) setCurrentDate(parseDate(value)); }} /></label>
+          <div className="filter-wrap"><button ref={calendarFilterPopover.triggerRef} className={"icon-button calendar-filter-trigger " + (calendarFilterOpen ? "pressed" : "") + (calendarTagFilter ? " filtered" : "")} aria-label="查看标签颜色并筛选" aria-expanded={calendarFilterOpen} aria-haspopup="true" onClick={() => setCalendarFilterOpen((open) => !open)}><FunnelSimple size={20} /></button>
+            {calendarFilterOpen && <div ref={calendarFilterPopover.popoverRef} className="tag-palette-popover" role="group"><div className="popover-heading"><span>{tagEditing ? "编辑标签名称" : "标签颜色"}</span><button onClick={() => setTagEditing((editing) => !editing)}>{tagEditing ? "完成编辑" : <><PencilSimple size={13} />编辑</>}</button></div>
               {tagEditing ? <div className="tag-edit-panel tag-edit-list"><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>单位标签</span><small>{role === "admin" ? "全单位通用" : "仅管理员可修改"}</small></div>{tags.filter((tag) => tag.slot <= 2).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`单位标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} readOnly={role !== "admin"} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}{role === "admin" && <button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={saveGlobalTags}>{tagSaving === "global" ? "正在保存单位标签…" : "保存单位标签"}</button>}</section><section className="tag-edit-group"><div className="tag-edit-group-heading"><span>个人标签</span><small>仅影响你的预约</small></div>{tags.filter((tag) => tag.slot >= 3).map((tag) => <label className="tag-edit-row" style={tagStyle(tag)} key={tag.id}><i /><input aria-label={`个人标签 ${tag.slot}`} value={tagDrafts[tag.id] || ""} onChange={(event) => setTagDrafts((current) => ({ ...current, [tag.id]: event.target.value }))} /></label>)}<button className="tag-edit-save" disabled={Boolean(tagSaving)} onClick={savePersonalTags}>{tagSaving === "personal" ? "正在保存个人标签…" : "保存个人标签"}</button></section></div> :
                 <div className="tag-palette-list"><button className={"tag-filter-option " + (!calendarTagFilter ? "active" : "")} onClick={() => setCalendarTagFilter("")}>全部</button>{tags.map((tag) => <button className={"tag-filter-option " + (calendarTagFilter === tag.id ? "active" : "")} style={tagStyle(tag)} key={tag.id} onClick={() => setCalendarTagFilter((current) => current === tag.id ? "" : tag.id)}><i /><span>{tag.label}</span></button>)}</div>}
             </div>}
@@ -1582,22 +1800,27 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         </div>
       </header>
       {successNotice && <section className="calendar-success-notice" role="status"><CheckCircle size={20} /><p><strong>{successNotice.action}</strong><span>·</span>{successNotice.booking.roomName}<span>·</span>{successNotice.booking.start}–{successNotice.booking.end}</p><button onClick={() => openDetails(successNotice.booking)}>查看</button><button className="calendar-success-close" aria-label="关闭" onClick={() => setSuccessNotice(null)}><X size={16} /></button></section>}
-      {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除"); }}>清除草稿</button></section>}
+      {preservedDraft && <section className="calendar-draft-notice" role="status" aria-label="待续预约草稿"><PencilSimple size={20} /><div><strong>有一份待续草稿</strong><p>{preservedDraft.partyName || "未填写预约对象"} · {preservedDraft.caseNumber || "未填写案号"} · {rooms.find((room) => room.id === preservedDraft.roomId)?.name || "原笔录室"} {preservedDraft.date} {preservedDraft.start}</p><small>选择空白时段后，系统会先确认是否迁移这份草稿。</small></div><button type="button" onClick={() => { setPreservedDraft(null); setToast("预约草稿已清除", "info"); }}>清除草稿</button></section>}
       {networkOffline && <section className="calendar-network-banner" role="status"><span className="calendar-network-icon"><WifiSlash size={18} /></span><div><strong>网络连接已断开</strong><p>当前显示最后一次成功获取的数据。</p></div><button onClick={loadCalendar}><ArrowClockwise size={16} />重新连接</button></section>}
-      <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{loading.calendar ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
-        {loading.calendar && !bookings.length ? <div className="calendar-loading-state" role="status"><CircleNotch className="spin" size={28} /><span>正在读取预约数据</span></div> :
+      <section className={`calendar-section ${roomCountClass}`}><div className="calendar-meta"><p>{calendarPending ? "正在读取预约数据" : activeRooms.length ? dateKey(currentDate) === businessClock.date ? "已开始的时段不可预约，请选择当前时间之后的空白时段" : "选择空白时段以创建预约" : "请先启用或创建笔录室"}</p></div>
+        {calendarPending && activeRooms.length ? <div className="calendar-loading-state" style={{ "--room-count": activeRooms.length }} role="status" aria-label="正在读取预约数据">
+          <div className="calendar-loading-head"><span />{activeRooms.map((room) => <strong key={room.id}>{room.name}</strong>)}</div>
+          {timeSlots.map(([start], rowIndex) => <div className="calendar-loading-row" key={start}><span className="calendar-loading-time">{start}</span>{activeRooms.map((room, columnIndex) => <i key={room.id} aria-hidden="true" style={{ "--skeleton-width": `${44 + ((rowIndex + columnIndex) % 4) * 10}%` }} />)}</div>)}
+        </div> :
           !activeRooms.length ? <div className="calendar-zero-state"><DoorOpen size={48} weight="thin" /><div><h2>当前没有可预约的笔录室</h2><p>{permissions.manageRooms ? "请先启用或创建至少一个笔录室。" : "请联系管理员启用笔录室。"}</p>{permissions.manageRooms && <button onClick={() => navigate("rooms")}>前往笔录室管理</button>}</div></div> :
           <div className="schedule-viewport"><div className="schedule" style={{ "--room-count": activeRooms.length }} role="grid" tabIndex={0} onKeyDown={moveCalendarFocus} aria-label={dateLabel(currentDate) + "预约日历；使用方向键在时段间移动"}>
             <div className="schedule-head"><div />{activeRooms.map((room) => <div className="room-heading" key={room.id}>{room.name}</div>)}</div>
-            <div className="schedule-body">{currentTimeOffset !== null && <div className="current-time-line" style={{ top: currentTimeOffset + "px" }} role="separator" aria-label={`当前时间 ${businessClock.time.slice(0, 5)}`} />}{timeSlots.map(([start, end]) => <div className="schedule-row" key={start}><div className="time-label">{start}</div>{activeRooms.map((room) => {
+            <div className="schedule-body">{currentTimeOffset !== null && <div className="current-time-line" style={{ top: currentTimeOffset + "px" }} role="separator" aria-label={`当前时间 ${businessClock.time.slice(0, 5)}`} />}{timeSlots.map(([start, end], rowIndex) => <div className="schedule-row" key={start}><div className="time-label">{start}</div>{activeRooms.map((room, columnIndex) => {
               const booking = bookingFor(room.id, start, end);
-              if (booking && booking.start !== start) return <div className="slot occupied-slot" aria-hidden="true" key={room.id + start} />;
+              if (booking && booking.start !== start) return <div className="slot occupied-slot" data-calendar-row={rowIndex} data-calendar-column={columnIndex} aria-hidden="true" key={room.id + start} />;
               if (booking) {
                 const tag = tagFor(booking);
-                return <button className={"slot booked-slot " + (calendarTagFilter && calendarTagFilter !== booking.tagId ? "tag-muted" : "")} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationFromRange(booking.start, booking.end) / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={room.name + " " + booking.start + "至" + booking.end + "，预约者" + (booking.owner?.name || "未知用户") + "，当事人" + booking.partyName + "，案号" + booking.caseNumber}><span className="booking-title"><i />{booking.owner?.name || "未知用户"} · 已预约</span><span className="booking-case">案号 {booking.caseNumber}</span></button>;
+                return <button className={"slot booked-slot " + (calendarTagFilter && calendarTagFilter !== booking.tagId ? "tag-muted" : "")} data-calendar-row={rowIndex} data-calendar-column={columnIndex} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationFromRange(booking.start, booking.end) / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={room.name + " " + booking.start + "至" + booking.end + "，预约者" + (booking.owner?.name || "未知用户") + "，当事人" + booking.partyName + "，案号" + booking.caseNumber}><span className="booking-title"><i />{booking.owner?.name || "未知用户"} · 已预约</span><span className="booking-case">案号 {booking.caseNumber}</span></button>;
               }
               const slotStarted = hasBookingStarted({ date: dateKey(currentDate), start, serverDate: businessClock.date, serverTime: businessClock.time });
-              return <button className={`slot available-slot ${slotStarted ? "past-slot" : ""}`} disabled={networkOffline || slotStarted} key={room.id + start} tabIndex={-1} onClick={() => openCreate(room.id, start)} aria-label={room.name + " " + start + "至" + end + (slotStarted ? " 已开始，不可预约" : " 可预约")}><span className="slot-affordance">{slotStarted ? <span>{start} · 已开始</span> : <><Plus size={18} /><span>{start} · 新建预约</span></>}</span></button>;
+              const outsideWorkHours = !isWithinWorkingHours(start, end, settings.workStart, settings.workEnd);
+              const unavailable = slotStarted || outsideWorkHours;
+              return <button className={`slot available-slot ${slotStarted ? "past-slot" : ""} ${outsideWorkHours ? "outside-work-slot" : ""}`} data-calendar-row={rowIndex} data-calendar-column={columnIndex} disabled={networkOffline || unavailable} key={room.id + start} tabIndex={-1} onClick={() => openCreate(room.id, start)} aria-label={room.name + " " + start + "至" + end + (outsideWorkHours ? " 工作时间外，不可预约" : slotStarted ? " 已开始，不可预约" : " 可预约")}><span className="slot-affordance">{outsideWorkHours ? <span>{start} · 工作时间外</span> : slotStarted ? <span>{start} · 已开始</span> : <><Plus size={18} /><span>{start} · 新建预约</span></>}</span></button>;
             })}</div>)}</div>
           </div></div>}
       </section>
@@ -1606,10 +1829,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   function stepMonth(delta) {
     const [year, month] = historyMonth.split("-").map(Number);
-    setHistoryMonth(monthKey(new Date(year, month - 1 + delta, 1)));
+    const nextMonth = monthKey(new Date(year, month - 1 + delta, 1));
+    const earliestMonth = monthKey(new Date(businessDate.getFullYear(), businessDate.getMonth() - 11, 1));
+    const latestMonth = monthKey(businessDate);
+    if (nextMonth < earliestMonth || nextMonth > latestMonth) return;
+    setHistoryMonth(nextMonth);
   }
 
   function renderHistory() {
+    const history = historySections.flatMap((section) => section.items);
     const effectiveHistoryUserId = role === "admin" ? (historyScope === "mine" ? currentUser.id : historyOwner) : currentUser.id;
     const selectedOwner = users.find((user) => user.id === effectiveHistoryUserId);
     const unitHistoryTags = tags.filter((tag) => tag.slot <= 2);
@@ -1632,29 +1860,30 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return { id, label: `${date.getFullYear()}年${date.getMonth() + 1}月` };
     });
     const selectedMonthLabel = historyMonths.find((month) => month.id === historyMonth)?.label || historyMonth.replace("-", "年") + "月";
-    const [selectedHistoryYear, selectedHistoryMonthNumber] = historyMonth.split("-").map(Number);
-    const previousHistoryDate = new Date(selectedHistoryYear, selectedHistoryMonthNumber - 2, 1);
+    const oldestHistoryMonth = historySections.at(-1)?.id || historyMonth;
+    const [oldestHistoryYear, oldestHistoryMonthNumber] = oldestHistoryMonth.split("-").map(Number);
+    const previousHistoryDate = new Date(oldestHistoryYear, oldestHistoryMonthNumber - 2, 1);
     const previousHistoryMonth = {
       id: monthKey(previousHistoryDate),
       label: `${previousHistoryDate.getFullYear()}年${previousHistoryDate.getMonth() + 1}月`,
     };
-    return <main className="main-canvas history-canvas"><header className="page-header history-header"><h1>预约记录</h1><div className="history-header-actions" aria-label="预约记录工具"><div className="filter-wrap"><button className={"filter-trigger history-tool-button " + (historySearchOpen || historyQuery ? "pressed" : "")} aria-label="搜索预约记录" aria-expanded={historySearchOpen} onClick={() => { setHistoryFilterOpen(false); setHistorySearchOpen((open) => !open); }}><MagnifyingGlass size={21} /></button>{historySearchOpen && <div className="history-search-popover" role="search"><MagnifyingGlass size={18} /><input autoFocus value={historyQuery} aria-label="搜索案号、当事人或笔录室" placeholder="搜索案号、当事人或笔录室" onChange={(event) => setHistoryQuery(event.target.value)} />{historyQuery && <button aria-label="清除搜索" onClick={() => setHistoryQuery("")}><X size={16} /></button>}</div>}</div><div className="filter-wrap"><button className={"filter-trigger history-tool-button " + (historyFilterOpen || historyRoom || historyStatus || historyTag || historyOwner || historyScope === "mine" ? "pressed" : "")} aria-label="筛选预约记录" aria-expanded={historyFilterOpen} onClick={() => { setHistorySearchOpen(false); setHistoryFilterOpen((open) => !open); }}><SlidersHorizontal size={20} /></button>{historyFilterOpen && <div className="booking-filter-popover history-filter-popover" role="group" aria-label="筛选预约记录">
+    return <main className="main-canvas history-canvas" tabIndex={0}><header className="page-header history-header"><h1>预约记录</h1><div className="history-header-actions" aria-label="预约记录工具"><div className="filter-wrap"><button ref={historySearchPopover.triggerRef} className={"filter-trigger history-tool-button " + (historySearchOpen || historyQuery ? "pressed" : "")} aria-label="搜索预约记录" aria-expanded={historySearchOpen} aria-haspopup="true" onClick={() => { setHistoryFilterOpen(false); setHistorySearchOpen((open) => !open); }}><MagnifyingGlass size={21} /></button>{historySearchOpen && <div ref={historySearchPopover.popoverRef} className="history-search-popover" role="search"><MagnifyingGlass size={18} /><input autoFocus value={historyQuery} aria-label="搜索案号、当事人或笔录室" placeholder="搜索案号、当事人或笔录室" onChange={(event) => setHistoryQuery(event.target.value)} />{historyQuery && <button aria-label="清除搜索" onClick={() => setHistoryQuery("")}><X size={16} /></button>}</div>}</div><div className="filter-wrap"><button ref={historyFilterPopover.triggerRef} className={"filter-trigger history-tool-button " + (historyFilterOpen || historyRoom || historyStatus || historyTag || historyOwner || historyScope === "mine" ? "pressed" : "")} aria-label="筛选预约记录" aria-expanded={historyFilterOpen} aria-haspopup="true" onClick={() => { setHistorySearchOpen(false); setHistoryFilterOpen((open) => !open); }}><SlidersHorizontal size={20} /></button>{historyFilterOpen && <div ref={historyFilterPopover.popoverRef} className="booking-filter-popover history-filter-popover" role="group" aria-label="筛选预约记录">
       {role === "admin" ? <section className="history-filter-section history-scope-section" aria-labelledby="history-scope-heading"><h2 id="history-scope-heading">预约范围</h2><div className="history-choice-options history-scope-options" role="radiogroup" aria-label="预约范围"><label><input type="radio" name="history-scope" checked={historyScope === "unit"} onChange={() => setHistoryScope("unit")} /><span>全单位预约</span></label><label><input type="radio" name="history-scope" checked={historyScope === "mine"} onChange={() => { setHistoryScope("mine"); setHistoryOwner(""); }} /><span>仅我的预约</span></label></div>{historyScope === "unit" && <div className="history-user-filter"><label htmlFor="history-user-select">用户</label><select id="history-user-select" ref={historyUserSelectRef} value={historyOwner} onChange={(event) => { setHistoryOwner(event.target.value); if (["tag-3", "tag-4"].includes(historyTag)) setHistoryTag(""); }}><option value="">全部用户</option>{users.filter((user) => user.enabled !== false).map((user) => <option value={user.id} key={user.id}>{user.name} · {user.department}</option>)}</select><small>{historyOwner ? "正在筛选该用户的预约记录" : "可查看全单位记录，选择用户后可筛选个人标签"}</small></div>}</section> : <div className="history-employee-scope"><span>预约范围</span><strong>仅显示本人的预约记录</strong></div>}
       <section className="history-filter-section" aria-labelledby="history-status-heading"><h2 id="history-status-heading">预约状态</h2><div className="history-choice-options history-status-options" role="radiogroup" aria-label="预约状态"><label><input type="radio" name="history-status" checked={!historyStatus} onChange={() => setHistoryStatus("")} /><span>全部</span></label><label><input type="radio" name="history-status" checked={historyStatus === "active"} onChange={() => setHistoryStatus("active")} /><span>正常预约</span></label><label><input type="radio" name="history-status" checked={historyStatus === "cancelled"} onChange={() => setHistoryStatus("cancelled")} /><span>已取消</span></label></div></section>
-      <section className="history-filter-section" aria-labelledby="history-room-heading"><h2 id="history-room-heading">笔录室</h2><label><input type="checkbox" checked={!historyRoom} onChange={() => setHistoryRoom("")} /><span>全选</span></label>{rooms.map((room) => <label key={room.id}><input type="checkbox" checked={!historyRoom || historyRoom === room.id} onChange={() => setHistoryRoom((current) => current === room.id ? "" : room.id)} /><span>{room.name}</span></label>)}</section>
-      <section className="history-filter-section history-tag-section" aria-labelledby="history-unit-tags-heading"><h2 id="history-unit-tags-heading">单位标签 <small>全单位通用</small></h2>{unitHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={!historyTag || historyTag === tag.id} onChange={() => setHistoryTag((current) => current === tag.id ? "" : tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}</section>
-      <section className={`history-filter-section history-tag-section ${!effectiveHistoryUserId ? "disabled" : ""}`} aria-labelledby="history-personal-tags-heading"><h2 id="history-personal-tags-heading">个人标签 <small>{personalTagOwnerLabel}</small></h2>{personalHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={!historyTag || historyTag === tag.id} disabled={!effectiveHistoryUserId} onChange={() => setHistoryTag((current) => current === tag.id ? "" : tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}{!effectiveHistoryUserId && <p className="history-personal-helper">筛选个人标签前，请先<button type="button" onClick={() => historyUserSelectRef.current?.focus()}>选择用户</button></p>}</section>
+      <section className="history-filter-section" aria-labelledby="history-room-heading"><h2 id="history-room-heading">笔录室</h2><label><input type="radio" name="history-room" checked={!historyRoom} onChange={() => setHistoryRoom("")} /><span>全部笔录室</span></label>{rooms.map((room) => <label key={room.id}><input type="radio" name="history-room" checked={historyRoom === room.id} onChange={() => setHistoryRoom(room.id)} /><span>{room.name}</span></label>)}</section>
+      <section className="history-filter-section history-tag-section" aria-labelledby="history-unit-tags-heading"><h2 id="history-unit-tags-heading">单位标签 <small>全单位通用</small></h2><label><input type="radio" name="history-tag" checked={!historyTag} onChange={() => setHistoryTag("")} /><span>全部标签</span></label>{unitHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="radio" name="history-tag" checked={historyTag === tag.id} onChange={() => setHistoryTag(tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}</section>
+      <section className={`history-filter-section history-tag-section ${!effectiveHistoryUserId ? "disabled" : ""}`} aria-labelledby="history-personal-tags-heading"><h2 id="history-personal-tags-heading">个人标签 <small>{personalTagOwnerLabel}</small></h2>{personalHistoryTags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="radio" name="history-tag" checked={historyTag === tag.id} disabled={!effectiveHistoryUserId} onChange={() => setHistoryTag(tag.id)} /><i aria-hidden="true" /><span>{tag.label}</span></label>)}{!effectiveHistoryUserId && <p className="history-personal-helper">筛选个人标签前，请先<button type="button" onClick={() => historyUserSelectRef.current?.focus()}>选择用户</button></p>}</section>
       <footer className="history-filter-footer"><button type="button" onClick={resetHistoryFilters}><ArrowClockwise size={16} />重置筛选</button><span>共 {historyPage.total} 条记录</span></footer>
     </div>}</div></div></header>
-      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= monthKey(businessDate)} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); setHistoryMonthOpen(false); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
-        <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{history.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}>{booking.status === "cancelled" ? <span className="history-cancelled-status">已取消</span> : <i aria-hidden="true" />}<CaretRight size={23} /></span></button>)}{historyPage.nextCursor && <button className="history-more" type="button" disabled={historyLoadingMore} onClick={loadMoreHistory}>{historyLoadingMore ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${history.length} / ${historyPage.total}`}</button>}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
-        {!loading.history && <button className="more-bookings-button history-more" type="button" onClick={() => setHistoryMonth(previousHistoryMonth.id)}><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></button>}
+      <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" disabled={historyMonth <= historyMonths.at(-1).id} onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= historyMonths[0].id} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button ref={historyMonthPopover.triggerRef} className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} aria-haspopup="true" onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div ref={historyMonthPopover.popoverRef} className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); historyMonthPopover.closeAndRestoreFocus(); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
+        <section className="history-list">{loading.history ? <div className="history-empty"><CircleNotch className="spin" size={28} /><p>正在读取预约记录</p></div> : history.length ? <>{historySections.map((section, sectionIndex) => <div className="history-month-section" key={section.id}>{sectionIndex > 0 && <div className="history-month-divider" role="separator">{section.label}</div>}{section.items.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}>{booking.status === "cancelled" ? <span className="history-cancelled-status">已取消</span> : <i aria-hidden="true" />}<CaretRight size={23} /></span></button>)}{section.nextCursor && <button className="history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={() => loadMoreHistory(section)}>{historyLoadingMore === section.id ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${section.items.length} / ${section.total}`}</button>}</div>)}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
+        {!loading.history && <button className="more-bookings-button history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={loadPreviousHistoryMonth}>{historyLoadingMore === previousHistoryMonth.id ? <><CircleNotch className="spin" size={17} /><span>正在加载{previousHistoryMonth.label}</span></> : <><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></>}</button>}
       </div>
     </main>;
   }
 
   function openRoom(room = null) {
-    setDrawer({ type: room ? "room-edit" : "room-create", room, errors: {}, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true } });
+    setDrawer({ type: room ? "room-edit" : "room-create", room, errors: {}, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false, showOnDisplay: room.showOnDisplay !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true, showOnDisplay: true } });
   }
 
   function updateDrawerField(field, value) {
@@ -1681,7 +1910,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       if (drawer.type === "room-edit") await api.updateRoom(drawer.room.id, drawer.form);
       else await api.createRoom(drawer.form);
-      setDrawer(null); setToast("笔录室已保存"); await loadBootstrap();
+      setDrawer(null); setToast("笔录室已保存", "success"); await loadBootstrap();
     } catch (error) {
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
@@ -1729,7 +1958,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       await api.deleteRoom(room.id);
       setDrawer(null);
-      setToast("笔录室已删除");
+      setToast("笔录室已删除", "success");
       await loadBootstrap();
     } catch (error) {
       if (error.code === "ROOM_HAS_FUTURE_BOOKINGS") {
@@ -1750,7 +1979,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function renderRooms() {
     const orderedRooms = [...rooms].sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder));
     const roomCountClass = orderedRooms.length >= 3 ? "room-count-many" : `room-count-${orderedRooms.length}`;
-    return <main className="main-canvas rooms-canvas"><header className="page-header rooms-header"><div><h1>笔录室</h1><p>管理预约日历中可使用的笔录室</p></div><button className="room-create-button" aria-label="添加笔录室" data-tooltip="添加笔录室" onClick={() => openRoom()}><Plus size={22} /></button></header>
+    return <main className="main-canvas rooms-canvas" tabIndex={0}><header className="page-header rooms-header"><div><h1>笔录室</h1><p>管理预约日历中可使用的笔录室</p></div><button className="room-create-button" aria-label="添加笔录室" data-tooltip="添加笔录室" onClick={() => openRoom()}><Plus size={22} /></button></header>
       {orderedRooms.length ? <section className={`room-overview ${roomCountClass}`}>{orderedRooms.map((room) => <article className="room-column" key={room.id}><div className="room-column-heading"><span className="room-sort-order">{String(room.sortOrder || 0).padStart(2, "0")}</span><h2><button className="room-title-button" onClick={() => openRoom(room)}><span>{room.name}</span><CaretRight size={22} /></button></h2><span className={"room-state " + (room.isActive !== false ? "active" : "inactive")}><i />{room.isActive !== false ? "启用" : "停用"}</span></div><dl className="room-metrics"><div><dt><CalendarBlank size={20} />今天</dt><dd>{room.todayCount || 0} 场</dd></div><div><dt><ClockCounterClockwise size={20} />未来</dt><dd>{room.futureCount || 0} 场</dd></div></dl><div className="room-next-booking"><span>下一场</span><strong>{room.nextBooking || "暂无安排"}</strong></div></article>)}</section> : <section className="rooms-empty"><DoorOpen size={42} weight="thin" /><p>尚未创建笔录室</p><button onClick={() => openRoom()}>创建第一个笔录室</button></section>}
     </main>;
   }
@@ -1769,7 +1998,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       if (drawer.type === "user-edit") await api.updateUser(drawer.user.id, { name: drawer.form.name.trim(), department: drawer.form.department.trim(), role: drawer.form.role, enabled: drawer.form.enabled });
       else await api.createUser({ ...drawer.form, name: drawer.form.name.trim(), username: drawer.form.username.trim(), department: drawer.form.department.trim() });
-      setDrawer(null); setToast("用户已保存"); await loadBootstrap();
+      setDrawer(null); setToast("用户已保存", "success"); await loadBootstrap();
     } catch (error) {
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
@@ -1788,10 +2017,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const result = await api.resetUserPassword(drawer.user.id, drawer.form.password);
       setDrawer(null);
       if (result?.reauthenticate) {
-        setToast("密码已重置，请使用新密码重新登录");
-        setSessionExpired(true);
+        setToast("密码已重置，请使用新密码重新登录", "success");
+        expireSession();
       } else {
-        setToast("密码已重置");
+        setToast("密码已重置", "success");
       }
     }
     catch (error) {
@@ -1803,7 +2032,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function renderUsers() {
     const query = userQuery.trim().toLocaleLowerCase("zh-CN");
     const visibleUsers = users.filter((user) => !query || [user.name, user.username, user.department].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query)));
-    return <main className="main-canvas users-canvas"><header className="page-header users-header"><div><h1>用户管理</h1><p>管理可登录系统的用户与权限</p></div><div className="users-header-actions"><div className={`user-search ${userSearchOpen ? "open" : ""}`}>{userSearchOpen && <input autoFocus type="search" value={userQuery} placeholder="搜索姓名、用户名或部门" aria-label="搜索用户" onChange={(event) => setUserQuery(event.target.value)} />}<button type="button" aria-label={userSearchOpen ? "关闭搜索" : "搜索用户"} aria-expanded={userSearchOpen} onClick={() => { if (userSearchOpen && userQuery) setUserQuery(""); setUserSearchOpen((open) => !open); }}>{userSearchOpen ? <X size={19} /> : <MagnifyingGlass size={20} />}</button></div><button className="users-create-button" onClick={() => openUser()}><span className="users-create-icon"><Plus size={18} /></span>新建用户</button></div></header>
+    return <main className="main-canvas users-canvas" tabIndex={0}><header className="page-header users-header"><div><h1>用户管理</h1><p>管理可登录系统的用户与权限</p></div><div className="users-header-actions"><div ref={userSearchPopover.popoverRef} className={`user-search ${userSearchOpen ? "open" : ""}`}>{userSearchOpen && <input autoFocus type="search" value={userQuery} placeholder="搜索姓名、用户名或部门" aria-label="搜索用户" onChange={(event) => setUserQuery(event.target.value)} />}<button ref={userSearchPopover.triggerRef} type="button" aria-label={userSearchOpen ? "关闭搜索" : "搜索用户"} aria-expanded={userSearchOpen} aria-haspopup="true" onClick={() => { if (userSearchOpen && userQuery) setUserQuery(""); setUserSearchOpen((open) => !open); }}>{userSearchOpen ? <X size={19} /> : <MagnifyingGlass size={20} />}</button></div><button className="users-create-button" onClick={() => openUser()}><span className="users-create-icon"><Plus size={18} /></span>新建用户</button></div></header>
       <section className="user-roster"><div className="user-roster-heading"><span>用户</span><span>部门</span><span>角色</span><span>状态</span></div><div className="user-roster-rows">{visibleUsers.map((user) => <button className="user-roster-row" key={user.id} onClick={() => openUser(user)}><span className="user-primary"><strong>{user.name}</strong><small>{user.username}</small></span><span className="user-department">{user.department}</span><span className={"user-role " + user.role}>{user.role === "admin" ? "管理员" : "普通员工"}</span><span className={"user-status " + (user.enabled !== false ? "enabled" : "disabled")}><i />{user.enabled !== false ? "启用" : "已停用"}</span><CaretRight className="user-row-edit" size={17} /></button>)}</div></section>
     </main>;
   }
@@ -1813,6 +2042,33 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try { setSystem(await api.getSystem()); }
     catch (error) { handleError(error, "读取系统状态失败"); }
     finally { if (!silent) setSystemLoading(false); }
+  }
+
+  async function saveSystemSettings(event) {
+    event.preventDefault();
+    if (drawer?.type !== "system-settings" || systemSettingsSaving) return;
+    const errors = validateSystemSettingsForm(drawer.form, settings.slotMinutes);
+    if (Object.keys(errors).length) {
+      showDrawerErrors(errors);
+      return;
+    }
+    setSystemSettingsSaving(true);
+    try {
+      const saved = await api.updateSystemSettings({
+        workStart: drawer.form.workStart,
+        workEnd: drawer.form.workEnd,
+      });
+      setBootstrap((current) => ({ ...current, settings: saved }));
+      setSystem((current) => current ? { ...current, workStart: saved.workStart, workEnd: saved.workEnd } : current);
+      await Promise.all([loadSystem(true), loadAudit({ silent: true })]);
+      setDrawer(null);
+      setToast("工作时间已更新，已有预约保持不变", "success");
+    } catch (error) {
+      if (error?.fields && Object.keys(error.fields).length) showDrawerErrors(error.fields);
+      else handleError(error, "更新工作时间失败");
+    } finally {
+      setSystemSettingsSaving(false);
+    }
   }
 
   async function loadAudit({ append = false, cursor = "", silent = false, preserveLoaded = false } = {}) {
@@ -1865,7 +2121,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   async function createBackup() {
     try {
       const result = await api.createBackup();
-      setToast("备份已完成 · 序列 " + result.sequence);
+      setToast("备份已完成 · 序列 " + result.sequence, "success");
       await Promise.all([loadSystem(true), loadAudit({ silent: true })]);
     } catch (error) { handleError(error, "备份失败"); }
   }
@@ -1879,7 +2135,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const stamp = String(diagnostic.generatedAtUtc || "diagnostic").replace(/[:.]/g, "-");
       anchor.href = url; anchor.download = `meeting-room-diagnostic-${stamp}.json`; anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setToast("脱敏诊断信息已导出 · " + formatLocalDateTime(diagnostic.generatedAtUtc));
+      setToast("脱敏诊断信息已导出 · " + formatLocalDateTime(diagnostic.generatedAtUtc), "success");
     } catch (error) { handleError(error, "导出诊断失败"); }
   }
 
@@ -1887,9 +2143,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (!system?.lanAddress || system.bindMode !== "lan") return;
     try {
       await copyText(system.lanAddress);
-      setToast("局域网地址已复制，可以直接发送给员工");
+      setToast("局域网地址已复制，可以直接发送给员工", "success");
     } catch {
-      setToast("无法自动复制，请选中局域网地址后手动复制");
+      setToast("无法自动复制，请选中局域网地址后手动复制", "error");
     }
   }
 
@@ -1911,7 +2167,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       await api.revokeToken(token.id);
       await Promise.all([loadTokens(true), loadAudit({ silent: true })]);
       setDrawer(null);
-      setToast("集成令牌已撤销");
+      setToast("集成令牌已撤销", "success");
     } catch (error) { handleError(error, "撤销集成令牌失败"); }
     finally { setTokenRevokingId(""); }
   }
@@ -1934,14 +2190,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         loadAudit();
       }
     };
-    return <main className="main-canvas system-canvas"><header className="page-header system-header"><div><h1>系统状态</h1><p>查看本机服务、局域网连接与安全审计</p></div><div className="system-header-actions"><button className="system-recheck-inline" disabled={systemLoading} onClick={() => Promise.all([loadSystem(), loadAudit(), loadTokens()])}><ArrowClockwise className={systemLoading ? "spin" : ""} size={18} />{systemLoading ? "正在刷新" : "立即刷新"}</button><button className="system-export-button" onClick={downloadDiagnostics}><DownloadSimple size={20} /><span>导出诊断信息</span></button></div></header>
+    return <main className="main-canvas system-canvas" tabIndex={0}><header className="page-header system-header"><div><h1>系统状态</h1><p>查看本机服务、局域网连接与安全审计</p></div><div className="system-header-actions"><button className="system-recheck-inline" disabled={systemLoading} onClick={() => Promise.all([loadSystem(), loadAudit(), loadTokens()])}><ArrowClockwise className={systemLoading ? "spin" : ""} size={18} />{systemLoading ? "正在刷新" : "立即刷新"}</button><button className="system-export-button" onClick={downloadDiagnostics}><DownloadSimple size={20} /><span>导出诊断信息</span></button></div></header>
       <div className="system-status-content"><section className={"system-health-summary " + (system ? healthy ? "normal" : "warning" : "normal")}><span className="system-health-dot" /><div><h2>{system?.label || (system ? "系统需要注意" : "正在检查系统")}</h2><p>最后检查：{formatLocalDateTime(system?.lastCheckedAt)} · 每 30 秒自动刷新</p></div></section>
-        <section className="system-status-group"><h2>运行环境</h2><div className="system-status-list">{[["程序版本", system?.productVersion || bootstrap.productVersion], ["数据库版本", system?.databaseVersion || "—"], ["局域网地址", system?.lanAddress || "—"], ["服务端口", system?.servicePort || "—"], ["绑定模式", system?.bindMode === "lan" ? "局域网" : system?.bindMode === "loopback" ? "仅本机" : "—"], ["数据序列", system?.dataSequence ?? "—"], ["备份序列", system?.backupSequence ?? "—"]].map(([label, value]) => <div className="system-status-row" key={label}><span>{label}</span><span className={`system-status-value ${label === "局域网地址" ? "system-lan-address" : ""}`}><strong>{value}</strong>{label === "局域网地址" && shareableLanAddress && <button type="button" className="system-copy-address" aria-label="复制局域网地址" onClick={copyLanAddress}><CopySimple size={15} />复制</button>}</span><span /></div>)}<button className="system-status-row system-backup-row" onClick={() => setDrawer({ type: "backup" })}><span>最近备份</span><strong>{system?.lastBackupAt ? `${formatLocalDateTime(system.lastBackupAt)} · ${system.backupCaughtUp ? "已追平" : "待备份"}` : "尚无备份"}</strong><CaretRight size={17} /></button></div></section>
+        <section className="system-status-group"><h2>运行环境</h2><div className="system-status-list">{[["程序版本", system?.productVersion || bootstrap.productVersion], ["数据库版本", system?.databaseVersion || "—"], ["局域网地址", system?.lanAddress || "—"], ["服务端口", system?.servicePort || "—"], ["绑定模式", system?.bindMode === "lan" ? "局域网" : system?.bindMode === "loopback" ? "仅本机" : "—"], ["数据序列", system?.dataSequence ?? "—"], ["备份序列", system?.backupSequence ?? "—"]].map(([label, value]) => <div className="system-status-row" key={label}><span>{label}</span><span className={`system-status-value ${label === "局域网地址" ? "system-lan-address" : ""}`}><strong>{value}</strong>{label === "局域网地址" && shareableLanAddress && <button type="button" className="system-copy-address" aria-label="复制局域网地址" onClick={copyLanAddress}><CopySimple size={15} />复制</button>}</span><span /></div>)}<button type="button" className="system-status-row system-action-row system-work-hours-row" onClick={() => setDrawer({ type: "system-settings", errors: {}, form: { workStart: system?.workStart || settings.workStart, workEnd: system?.workEnd || settings.workEnd } })}><span>工作时间</span><strong>{system?.workStart || settings.workStart}–{system?.workEnd || settings.workEnd}</strong><CaretRight size={17} /></button><button type="button" className="system-status-row system-action-row system-backup-row" onClick={() => setDrawer({ type: "backup" })}><span>最近备份</span><strong>{system?.lastBackupAt ? `${formatLocalDateTime(system.lastBackupAt)} · ${system.backupCaughtUp ? "已追平" : "待备份"}` : "尚无备份"}</strong><CaretRight size={17} /></button></div></section>
         <section className="system-status-group system-service-group"><h2>服务连接</h2><div className="system-status-list">{services.map((service) => <div className={"system-status-row system-service-row " + (service.status || "")} key={service.id || service.label}><span>{service.label}</span><strong><i />{service.value || service.status}</strong><span /></div>)}</div></section>
         <section className="system-status-group system-token-group"><div className="system-section-heading"><div><h2>只读集成令牌</h2><p>令牌明文仅在创建成功时显示一次</p></div><button onClick={() => setDrawer({ type: "token-create", form: { name: "", scopes: ["rooms:read"], expiresAt: "" } })}><Plus size={17} />新建令牌</button></div><div className="system-token-list">{tokens.length ? tokens.map((token) => <div className={"system-token-row " + (token.revokedAt ? "revoked" : "")} key={token.id}><span><strong>{token.name}</strong><small>{token.prefix}… · {token.scopes.join("、")}</small></span><span><small>{token.revokedAt ? "已撤销 " + formatLocalDateTime(token.revokedAt) : token.expiresAt ? "到期 " + formatLocalDateTime(token.expiresAt) : "长期有效"}</small>{!token.revokedAt && <button disabled={tokenRevokingId === token.id} onClick={() => setDrawer({ type: "token-revoke", token })}>{tokenRevokingId === token.id ? "正在撤销" : "撤销"}</button>}</span></div>) : <p className="system-empty-copy">尚未创建集成令牌</p>}</div></section>
         <section className={`system-status-group system-audit-group ${auditHidden ? "is-hidden" : ""}`}>
-          <div className="system-section-heading system-audit-heading"><div><h2>安全审计{auditUnreadCount > 0 && <span className="system-audit-unread" aria-label={`${auditUnreadCount} 条未查看安全信息`}>{auditUnreadCount > 99 ? "99+" : auditUnreadCount}</span>}</h2><p>共 {auditPage.total} 条 · 原始时间由本机服务以协调世界时记录</p></div><div className="system-audit-heading-actions"><button onClick={toggleAuditVisibility}>{auditHidden ? <Eye size={17} /> : <EyeSlash size={17} />}{auditHidden ? "显示" : "隐藏"}</button><button aria-expanded={auditFilterOpen} disabled={auditHidden} onClick={() => setAuditFilterOpen((open) => !open)}><SlidersHorizontal size={17} />筛选</button></div></div>
-          {!auditHidden && <>{auditFilterOpen && <div className="system-audit-filters"><label><span>动作</span><select value={auditFilters.action} onChange={(event) => updateAuditFilter("action", event.target.value)}><option value="">全部动作</option>{AUDIT_ACTION_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>结果</span><select value={auditFilters.outcome} onChange={(event) => updateAuditFilter("outcome", event.target.value)}><option value="">全部结果</option>{AUDIT_OUTCOME_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>操作人</span><select value={auditFilters.actorId} onChange={(event) => updateAuditFilter("actorId", event.target.value)}><option value="">全部人员</option>{users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label><label><span>对象类型</span><select value={auditFilters.targetType} onChange={(event) => updateAuditFilter("targetType", event.target.value)}><option value="">全部类型</option>{AUDIT_TARGET_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>对象标识</span><input value={auditFilters.targetId} onChange={(event) => updateAuditFilter("targetId", event.target.value)} /></label><label><span>开始时间</span><input type="datetime-local" value={auditFilters.dateFrom} onChange={(event) => updateAuditFilter("dateFrom", event.target.value)} /></label><label><span>结束时间</span><input type="datetime-local" value={auditFilters.dateTo} onChange={(event) => updateAuditFilter("dateTo", event.target.value)} /></label><button className="system-audit-reset" onClick={() => setAuditFilters({ action: "", outcome: "", actorId: "", targetType: "", targetId: "", dateFrom: "", dateTo: "" })}>清除筛选</button></div>}<div className="system-audit-list" aria-busy={auditLoading}>{auditLoading ? <p className="system-empty-copy"><CircleNotch className="spin" size={18} />正在读取审计记录</p> : auditItems.length ? auditItems.map((item) => { const outcome = item.details?.result || item.details?.reason; return <article className="system-audit-row" key={item.id}><time>{formatLocalDateTime(item.occurredAtUtc)}</time><span><strong>{auditActionLabel(item.action)}</strong><small>{auditTargetTypeLabel(item.targetType)}操作</small></span><span><strong>{item.actor?.name || "系统"}</strong><small>{auditTargetTypeLabel(item.targetType)}{item.targetId ? " · " + item.targetId : ""}</small></span><em>{auditOutcomeLabel(outcome)}</em></article>; }) : <p className="system-empty-copy">当前筛选条件下没有审计记录</p>}{auditPage.nextCursor && <button className="system-audit-more" disabled={auditLoadingMore} onClick={() => loadAudit({ append: true, cursor: auditPage.nextCursor })}>{auditLoadingMore ? "正在加载…" : `加载更多 · 已显示 ${auditItems.length} / ${auditPage.total}`}</button>}</div></>}
+          <div className="system-section-heading system-audit-heading"><div><h2>安全审计{auditUnreadCount > 0 && <span className="system-audit-unread" aria-label={`${auditUnreadCount} 条未查看安全信息`}>{auditUnreadCount > 99 ? "99+" : auditUnreadCount}</span>}</h2><p>共 {auditPage.total} 条 · 原始时间由本机服务以协调世界时记录</p></div><div className="system-audit-heading-actions"><button onClick={toggleAuditVisibility}>{auditHidden ? <Eye size={17} /> : <EyeSlash size={17} />}{auditHidden ? "显示" : "隐藏"}</button><button ref={auditFilterPopover.triggerRef} aria-expanded={auditFilterOpen} aria-haspopup="true" disabled={auditHidden} onClick={() => setAuditFilterOpen((open) => !open)}><SlidersHorizontal size={17} />筛选</button></div></div>
+          {!auditHidden && <>{auditFilterOpen && <div ref={auditFilterPopover.popoverRef} className="system-audit-filters"><label><span>动作</span><select value={auditFilters.action} onChange={(event) => updateAuditFilter("action", event.target.value)}><option value="">全部动作</option>{AUDIT_ACTION_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>结果</span><select value={auditFilters.outcome} onChange={(event) => updateAuditFilter("outcome", event.target.value)}><option value="">全部结果</option>{AUDIT_OUTCOME_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>操作人</span><select value={auditFilters.actorId} onChange={(event) => updateAuditFilter("actorId", event.target.value)}><option value="">全部人员</option>{users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label><label><span>对象类型</span><select value={auditFilters.targetType} onChange={(event) => updateAuditFilter("targetType", event.target.value)}><option value="">全部类型</option>{AUDIT_TARGET_OPTIONS.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label><span>对象标识</span><input value={auditFilters.targetId} onChange={(event) => updateAuditFilter("targetId", event.target.value)} /></label><label><span>开始时间</span><input type="datetime-local" value={auditFilters.dateFrom} onChange={(event) => updateAuditFilter("dateFrom", event.target.value)} /></label><label><span>结束时间</span><input type="datetime-local" value={auditFilters.dateTo} onChange={(event) => updateAuditFilter("dateTo", event.target.value)} /></label><button className="system-audit-reset" onClick={() => setAuditFilters({ action: "", outcome: "", actorId: "", targetType: "", targetId: "", dateFrom: "", dateTo: "" })}>清除筛选</button></div>}<div className="system-audit-list" aria-busy={auditLoading}>{auditLoading ? <p className="system-empty-copy"><CircleNotch className="spin" size={18} />正在读取审计记录</p> : auditItems.length ? auditItems.map((item) => { const outcome = item.details?.result || item.details?.reason; return <article className="system-audit-row" key={item.id}><time>{formatLocalDateTime(item.occurredAtUtc)}</time><span><strong>{auditActionLabel(item.action)}</strong><small>{auditTargetTypeLabel(item.targetType)}操作</small></span><span><strong>{item.actor?.name || "系统"}</strong><small>{auditTargetTypeLabel(item.targetType)}{item.targetId ? " · " + item.targetId : ""}</small></span><em>{auditOutcomeLabel(outcome)}</em></article>; }) : <p className="system-empty-copy">当前筛选条件下没有审计记录</p>}{auditPage.nextCursor && <button className="system-audit-more" disabled={auditLoadingMore} onClick={() => loadAudit({ append: true, cursor: auditPage.nextCursor })}>{auditLoadingMore ? "正在加载…" : `加载更多 · 已显示 ${auditItems.length} / ${auditPage.total}`}</button>}</div></>}
         </section>
       </div>
     </main>;
@@ -1949,8 +2205,17 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function savePreferences(event) {
     event.preventDefault();
+    if (preferencesSaving) return;
+    const submitted = { name: currentUser.name, department: currentUser.department, ...preferencesDraft };
+    if (!submitted.name?.trim()) {
+      setPreferencesErrors({ name: "请输入姓名" });
+      window.requestAnimationFrame(() => document.querySelector('[name="profile-name"]')?.focus({ preventScroll: true }));
+      return;
+    }
+    setPreferencesErrors({});
+    setPreferencesSaving(true);
     try {
-      const saved = await api.updatePreferences(preferencesDraft);
+      const saved = await api.updatePreferences({ ...submitted, name: submitted.name.trim() });
       setBootstrap((current) => ({
         ...current,
         currentUser: saved.profile || current.currentUser,
@@ -1966,23 +2231,31 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       }
       const nextUiPreferences = writeUiPreferences(currentUser.id, uiPreferencesDraft);
       setUiPreferencesDraft(nextUiPreferences);
-      setToast("个人设置已保存");
-    } catch (error) { handleError(error, "保存个人设置失败"); }
+      setToast("个人设置已保存", "success");
+    } catch (error) {
+      if (error?.fields) setPreferencesErrors(error.fields);
+      handleError(error, "保存个人设置失败");
+    } finally {
+      setPreferencesSaving(false);
+    }
   }
 
   function renderSettings() {
     const draft = preferencesDraft || {};
-    const update = (field, value) => setPreferencesDraft((current) => ({ ...current, [field]: value }));
+    const update = (field, value) => {
+      setPreferencesDraft((current) => ({ ...current, [field]: value }));
+      if (preferencesErrors[field]) setPreferencesErrors((current) => ({ ...current, [field]: "" }));
+    };
     const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} tab={profileTab} uiDraft={uiPreferencesDraft} />;
+    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} saving={preferencesSaving} tab={profileTab} tags={tags} uiDraft={uiPreferencesDraft} />;
   }
 
   function renderUnauthorized() {
-    return <main className="main-canvas unauthorized-canvas"><header className="page-header unauthorized-header"><div><h1>受限页面</h1><p>当前账户权限不足</p></div></header><section className="unauthorized-state" role="alert"><span className="unauthorized-icon"><LockSimple size={36} /></span><h2>无权限访问此页面</h2><p>{unauthorizedMessage || "当前账户没有访问该页面的权限。"}</p><button type="button" onClick={() => navigate("mine")}>返回我的预约</button></section></main>;
+    return <main className="main-canvas unauthorized-canvas" tabIndex={0}><header className="page-header unauthorized-header"><div><h1>受限页面</h1><p>当前账户权限不足</p></div></header><section className="unauthorized-state" role="alert"><span className="unauthorized-icon"><LockSimple size={36} /></span><h2>无权限访问此页面</h2><p>{unauthorizedMessage || "当前账户没有访问该页面的权限。"}</p><button type="button" onClick={() => navigate("mine")}>返回我的预约</button></section></main>;
   }
 
   function drawerHeading() {
-    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "draft-relocation": "确认使用草稿", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", backup: "最近备份", "token-create": "新建集成令牌", "token-created": "令牌已创建", "token-revoke": "撤销集成令牌" }[drawer?.type] || "";
+    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "draft-relocation": "确认使用草稿", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", "system-settings": "修改工作时间", backup: "最近备份", "token-create": "新建集成令牌", "token-created": "令牌已创建", "token-revoke": "撤销集成令牌" }[drawer?.type] || "";
   }
 
   function renderDrawer() {
@@ -1993,13 +2266,13 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       && drawer.user.role === "admin"
       && drawer.user.enabled !== false
       && enabledAdminCount <= 1;
-    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} maximumDuration={bookingMaximumDuration} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} onSubmit={saveBooking} onFieldChange={(field) => setBookingErrors((current) => { if (!current[field]) return current; const next = { ...current }; delete next[field]; return next; })} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => setConflict(null)} onUseLatest={() => {
+    if (drawer.type === "create" || drawer.type === "edit") return <BookingForm form={bookingForm} setForm={setBookingForm} errors={bookingErrors} rooms={rooms} tags={drawer.type === "edit" ? editTags : tags} settings={settings} maximumDuration={bookingMaximumDuration} editing={drawer.type === "edit"} busy={saveState === "saving"} failure={saveState === "failed"} conflict={conflict} conflictCheck={conflictCheck} onSubmit={saveBooking} onFieldChange={(field) => setBookingErrors((current) => { if (!current[field]) return current; const next = { ...current }; delete next[field]; return next; })} onDismissFailure={() => setSaveState("idle")} onContinueDraft={() => { setConflict(null); setConflictCheck({ busy: false, message: "" }); }} onRecheckConflict={recheckRevisionConflict} onUseLatest={() => {
       const latest = conflict?.current;
       if (!latest) return;
       setBookingForm({ roomId: latest.roomId, date: latest.date, start: latest.start, duration: durationFromRange(latest.start, latest.end), partyName: latest.partyName, caseNumber: latest.caseNumber, purpose: latest.purpose, notes: latest.notes || "", tagId: latest.tagId });
-      setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null);
+      setDrawer((current) => ({ type: "edit", booking: latest, returnTo: current?.returnTo || null })); setConflict(null); setConflictCheck({ busy: false, message: "" });
     }} />;
-    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段"); }}>返回日历重新选择</button><button className="secondary-button" onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" onClick={loadCalendar}><ArrowClockwise size={16} />重新检查这个时段</button></div></div>;
+    if (drawer.type === "slot-conflict") return <div className="booking-conflict-resolution"><div className="booking-conflict-scroll"><div className="booking-conflict-copy"><span className="booking-conflict-icon"><WarningCircle size={34} /></span><h2>预约刚被别人占用</h2><p>{bookingForm.roomId && rooms.find((room) => room.id === bookingForm.roomId)?.name} · {bookingForm.start}–{endFromDuration(bookingForm.start, bookingForm.duration)}</p></div><dl className="booking-conflict-draft"><div><dt><CheckCircle size={18} /></dt><dd>你填写的预约对象、案号、事项、标签和备注都已保留，背景日历已更新。</dd></div></dl></div><div className="booking-conflict-actions"><button className="submit-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); setToast("草稿已保留，请选择新的空白时段", "info"); }}>返回日历重新选择</button><button className="secondary-button" disabled={conflictCheck.busy} onClick={() => { setPreservedDraft(bookingForm); setDrawer(null); }}>保留草稿并关闭</button><button className="booking-conflict-recheck" disabled={conflictCheck.busy} onClick={recheckSlotConflict}><ArrowClockwise className={conflictCheck.busy ? "spin" : ""} size={16} />{conflictCheck.busy ? "正在重新检查" : "重新检查这个时段"}</button><p className={`booking-conflict-check-result ${conflictCheck.message ? "visible" : ""}`} role="status">{conflictCheck.message}</p></div></div>;
     if (drawer.type === "draft-relocation") {
       const originalRoom = rooms.find((room) => room.id === drawer.draft.roomId)?.name || "原笔录室";
       const targetRoom = rooms.find((room) => room.id === drawer.target.roomId)?.name || "新笔录室";
@@ -2008,7 +2281,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer.type === "details") {
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";
-      return <BookingDetails booking={booking} tag={tagFor(booking)} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} />;
+      const canCopyReminder = canManage && booking.status === "active" && !hasBookingStarted({ date: booking.date, start: booking.start, serverDate: businessClock.date, serverTime: businessClock.time });
+      return <BookingDetails booking={booking} tag={tagFor(booking)} canCopyReminder={canCopyReminder} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onCopyReminder={async () => { const message = renderReminderTemplate(bootstrap?.preferences?.reminderTemplate, { partyName: booking.partyName, date: dateLabel(booking.date).split(" · ")[0], start: booking.start, end: booking.end, roomName: booking.roomName }); try { await copyText(message); setToast("提醒信息已复制，可在微信中粘贴发送", "success"); } catch { setToast("无法自动复制，请手动复制提醒信息", "error"); } }} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {dateLabel(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking, false, drawer.returnTo)}>返回</button></div></div>;
     if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;
@@ -2016,9 +2290,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer.type === "room-delete-blocked") return <RoomDeleteBlocked room={drawer.room} bookings={drawer.bookings} total={drawer.total} onOpenBooking={(booking) => { const returnTo = { ...drawer }; return booking.canEdit ? openEdit(booking, returnTo) : openDetails(booking, false, returnTo); }} onBack={() => openRoom(drawer.room)} />;
     if (drawer.type === "user-create" || drawer.type === "user-edit") return <UserAdminForm drawer={drawer} lastAdminProtected={lastAdminProtected} onSubmit={saveUser} onFieldChange={updateDrawerField} onReset={() => setDrawer({ type: "user-reset", user: drawer.user, errors: {}, form: { password: "" } })} />;
     if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword} noValidate><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "reset-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="reset-password-error" role="alert">{drawer.errors.password}</small>}</label><div className="password-reset-actions"><button className="submit-button" type="submit">确认重置</button><button className="secondary-button" type="button" onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
+    if (drawer.type === "system-settings") return <form className="system-settings-form" onSubmit={saveSystemSettings} noValidate><div className="system-settings-copy"><Clock size={27} /><div><h2>调整可预约工作时间</h2><p>仅影响以后的可用时段；已有预约的日期和时间保持不变。</p></div></div><div className="system-settings-fields"><label><span>开始时间</span><input data-initial-focus type="time" step="1800" value={drawer.form.workStart} aria-invalid={Boolean(drawer.errors?.workStart)} aria-describedby={drawer.errors?.workStart ? "system-work-start-error" : undefined} onChange={(event) => updateDrawerField("workStart", event.target.value)} />{drawer.errors?.workStart && <small id="system-work-start-error" role="alert">{drawer.errors.workStart}</small>}</label><label><span>结束时间</span><input type="time" step="1800" value={drawer.form.workEnd} aria-invalid={Boolean(drawer.errors?.workEnd)} aria-describedby={drawer.errors?.workEnd ? "system-work-end-error" : undefined} onChange={(event) => updateDrawerField("workEnd", event.target.value)} />{drawer.errors?.workEnd && <small id="system-work-end-error" role="alert">{drawer.errors.workEnd}</small>}</label></div><div className="drawer-fixed-footer"><button className="primary-button" type="submit" disabled={systemSettingsSaving}>{systemSettingsSaving ? "正在保存…" : "保存工作时间"}</button></div></form>;
     if (drawer.type === "backup") return <div className="system-backup-details"><div className="system-backup-summary"><Database size={30} /><div><h2>{system?.backupCaughtUp ? "备份已追平" : "需要创建新备份"}</h2><p>{system?.lastBackupAt ? formatLocalDateTime(system.lastBackupAt) : "尚未创建备份"}</p></div></div><dl><div><dt>数据序列</dt><dd>{system?.dataSequence ?? "—"}</dd></div><div><dt>备份序列</dt><dd>{system?.backupSequence ?? "—"}</dd></div><div><dt>追平状态</dt><dd>{system?.backupCaughtUp ? "已追平" : "待备份"}</dd></div></dl><div className="system-backup-privacy"><LockSimple size={18} /><p>备份保留在服务器电脑；诊断导出不包含预约内容或凭据。</p></div><button className="primary-button system-backup-close" onClick={createBackup}>立即备份</button></div>;
     if (drawer.type === "token-create") return <form className="system-token-form" onSubmit={createIntegrationToken}><label><span>令牌名称</span><input data-initial-focus value={drawer.form.name} placeholder="例如 只读数据看板" onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><fieldset><legend>只读权限</legend>{[["rooms:read", "笔录室"], ["availability:read", "可用时段"], ["health:read", "服务健康"]].map(([scope, label]) => <label key={scope}><input type="checkbox" checked={drawer.form.scopes.includes(scope)} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, scopes: event.target.checked ? [...current.form.scopes, scope] : current.form.scopes.filter((item) => item !== scope) } }))} />{label}</label>)}</fieldset><label><span>到期时间（可选）</span><input type="datetime-local" value={drawer.form.expiresAt} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, expiresAt: event.target.value } }))} /></label><p>集成令牌仅开放所选读取接口，不可写入预约数据。</p><div className="drawer-fixed-footer"><button className="primary-button" type="submit">创建令牌</button></div></form>;
-    if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await copyText(drawer.token.token); setToast("令牌已复制"); } catch { setToast("无法自动复制，请手动选择令牌"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
+    if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await copyText(drawer.token.token); setToast("令牌已复制", "success"); } catch { setToast("无法自动复制，请手动选择令牌", "error"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
     if (drawer.type === "token-revoke") return <div className="system-token-revoke"><WarningCircle size={32} /><h2>撤销 {drawer.token.name}？</h2><p>服务器确认撤销前，令牌仍会保留在列表中。撤销后依赖它的只读集成会立即失效。</p><button className="cancel-booking-button" disabled={tokenRevokingId === drawer.token.id} onClick={revokeIntegrationToken}>{tokenRevokingId === drawer.token.id ? "正在等待服务器确认…" : "确认撤销令牌"}</button><button className="secondary-button" disabled={tokenRevokingId === drawer.token.id} onClick={() => setDrawer(null)}>返回</button></div>;
     return null;
   }
@@ -2026,10 +2301,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   async function logout() {
     try {
       await api.logout();
+      clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
       onLoggedOut();
     } catch (error) {
       if (error?.code === "SYSTEM_RECOVERY_REQUIRED") onRecovery(error);
-      else if (error?.status === 401 || error?.code === "SESSION_REQUIRED" || error?.code === "SESSION_EXPIRED") onLoggedOut();
+      else if (error?.status === 401 || error?.code === "SESSION_REQUIRED" || error?.code === "SESSION_EXPIRED") {
+        clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
+        onLoggedOut();
+      }
       else handleError(error, "退出失败，请确认网络后重试");
     }
   }
@@ -2048,10 +2327,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人中心"} aria-label={itemName(currentUser) + "，个人中心"} onClick={openPersonalCenter}><UserCircle size={42} weight="thin" /></button>
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
+      {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
+      {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
     </div>
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>
-    {toast && <div className="toast visible" role="status" aria-live="polite"><CheckCircle size={20} weight="fill" /><span>{toast}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
-    {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
   </div></SessionIsolationBoundary>;
 }
 

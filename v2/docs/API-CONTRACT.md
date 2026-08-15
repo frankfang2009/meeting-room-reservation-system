@@ -1,6 +1,6 @@
 # V2 API v1 契约
 
-产品版本是 V2.0.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
+产品版本是 V2.1.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
 camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后缀以及创建、修改、
 事件和审计时间使用 UTC RFC3339。
 
@@ -28,13 +28,16 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 返回同值 `X-Request-Id`。恢复状态返回 503 `SYSTEM_RECOVERY_REQUIRED`；底层异常
 只写服务日志，不进入响应。
 
+`GET /healthz` 不需要登录。所有来源可读取通用健康状态；`install_id` 与
+`recovery_code` 仅在请求来源为回环地址时返回，局域网来源不得获得这两个字段。
+
 ## Setup 与 session
 
 `GET /api/v1/session`
 
 ```json
 {
-  "productVersion": "V2.0.0",
+  "productVersion": "V2.1.0",
   "setupComplete": true,
   "authenticated": true,
   "csrfToken": "...",
@@ -65,7 +68,7 @@ DNS rebinding 夺取首次管理员：
 
 ```json
 {
-  "productVersion": "V2.0.0",
+  "productVersion": "V2.1.0",
   "serverDate": "2026-08-10",
   "serverTime": "14:32:05",
   "currentUser": {},
@@ -93,6 +96,10 @@ DNS rebinding 夺取首次管理员：
 
 `GET /api/v1/reservations?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD&pageSize=...&cursor=...`
 返回认证用户可见的共享日历完整详情。
+
+`GET /api/v1/reservations/upcoming` 返回当前登录用户本人 `status=active` 且尚未结束的
+预约，按 `date/start` 升序排列。它不接受 owner、日期或分页参数，响应为
+`{ "items": [预约对象] }`；管理员也只获得本人即将到来的预约，不扩展为全单位列表。
 
 `GET /api/v1/reservations/history?month=YYYY-MM&ownerId=...&status=active|cancelled&tagId=...&query=...&pageSize=...&cursor=...`：
 员工始终由服务端收窄为本人，忽略或拒绝扩权参数。
@@ -138,31 +145,93 @@ DNS rebinding 夺取首次管理员：
 
 `PATCH /api/v1/reservations/{id}` 使用同样字段并增加 `expectedRevision`。`POST /api/v1/reservations/{id}/cancel` 请求 `{ "expectedRevision": 2 }`。
 
+`GET /api/v1/reservations/{id}` 对他人 `status=active` 的预约仍按共享日历契约
+返回完整详情；对他人 `status=cancelled` 的预约，普通员工稳定返回
+`403 FORBIDDEN`。预约本人与管理员仍可读取已取消详情。
+
 `purpose` 在创建和修改时均为必填、去除首尾空白后不得为空；缺失或空白返回
 `422 VALIDATION_ERROR`，`error.fields.purpose="请输入事项"`。服务端不会生成默认用途。
 
-slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date/start/end`。revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约对象。
+slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date/start/end`；
+预检后才由 SQLite 槽位唯一约束发现的竞争冲突也使用相同响应，不得降级为数据库不可用。
+revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约对象。
 
 预约开始后到结束前 `canEdit=false`、`canCancel=true`；结束后两者均为 false。
 `GET /api/v1/reservations/{id}/events` 只允许预约本人或管理员读取追加式变更时间线。
 
 ## 管理与个人设置
 
-- `GET|POST /api/v1/rooms`；`PATCH /api/v1/rooms/{id}`。
+- `PUT /api/v1/admin/settings` 仅管理员可用，请求
+  `{ "workStart": "08:30", "workEnd": "17:30" }`。两个时间必须是 `HH:MM`、
+  按 `slotMinutes` 对齐且结束晚于开始；非法返回 `422 VALIDATION_ERROR`
+  及 `fields.workStart/workEnd`。成功返回完整 `settings`，只影响后续时段生成，
+  不改写已有预约的日期或时间，并记录 `settings.updated` 安全审计。
+- `GET|POST /api/v1/rooms`；`PATCH|DELETE /api/v1/rooms/{id}`。管理员房间响应与
+  `POST/PATCH` 支持布尔字段 `showOnDisplay`，新房间默认 `true`；该字段只用于管理，
+  不进入员工 bootstrap、公开大屏或只读集成响应。其中管理页的周期性
+  `GET /api/v1/rooms` 是被动状态轮询，不刷新 30 分钟空闲会话计时。
+- `GET /api/v1/rooms/{id}/deletion-impact` 仅管理员可用，返回目标
+  `room: {id,name}`、所有未结束 active 预约计数 `total`，以及按日期/开始时间排序的
+  前 50 个完整预约投影 `items`；没有阻断项时 `total=0, items=[]`，房间不存在返回
+  `404 NOT_FOUND`。`DELETE /api/v1/rooms/{id}` 遇到阻断时返回
+  `409 ROOM_HAS_FUTURE_BOOKINGS`，其中 `error.current={roomId,roomName,total}`，
+  `error.conflicts` 与上述最多 50 条 `items` 一致；`total` 可能大于 conflicts 长度。
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
-- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、两项网页通知和个人标签 3、4。
+- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、默认标签、两项网页通知和个人标签 3、4。
+  `defaultTagSlot` 只接受 `null | 1 | 2 | 3 | 4`，表示本人标签槽位引用，不存储标签文案；
+  `reminderLeadMinutes` 只接受整数 `15 | 30 | 60`，新用户默认 `30`，关闭提醒不会清除该值；
+  `reminderTemplate` 是清理首尾空白后不超过 200 字的本人纯文本模板，空字符串回退系统
+  默认模板。服务端只存储和返回模板，不拼装成品文案；前端变量白名单仅为
+  `{当事人姓名} {日期} {开始时间} {结束时间} {笔录室}`，不含案号、用途或备注。
 - `GET /api/v1/activity` 返回当前登录用户的只读活动聚合。服务端按本地时间只统计
   `status=active` 且已经结束的本人预约，响应仅包含四项汇总，以及平均时长、常用
   笔录室和常用标签概览。响应不得接受或返回 `ownerId`、按日分布或预约明细。
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
+  临近提醒窗口以请求时的当前 `reminderLeadMinutes` 计算，不为预约保存历史快照。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
+  临近提醒确认与查询使用同一份当前窗口；缩短提前量后已移出窗口的提醒返回
+  `409 REMINDER_NOT_DUE`。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
-  `backupSequence/dataSequence/servicePort/bindMode`；`POST /api/v1/admin/backups`
-  返回备份文件、UTC 时间、备份序列与源数据序列；`GET /api/v1/admin/diagnostics`。
+  `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；其 `databaseVersion`
+  为当前 schema v2；`POST /api/v1/admin/backups`
+  返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
+  `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
+- 备份侧车的 `databaseSchemaVersion` 新建时为 `2`；恢复器仍接受通过完整性和安装身份
+  验证的 schema v1 备份，并在恢复原子替换后迁移至 v2。迁移或复检失败不得标记恢复成功。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。
+
+## 只读集成 API
+
+`/api/v1/integration/*` 不使用登录 Cookie 或 CSRF，必须携带
+`Authorization: Bearer mr2_...`。管理员创建令牌时的 scope 白名单严格限定为
+`rooms:read`、`availability:read`、`health:read`；接口全部为 GET，不提供预约内容写入能力。
+每个接口只接受对应 scope，成功使用会更新令牌的 `lastUsedAt`：
+
+- `GET /api/v1/integration/rooms` 需要 `rooms:read`，仅返回启用笔录室：
+  `{ "items": [{ "id": "...", "name": "笔录室 1" }] }`。
+- `GET /api/v1/integration/availability?date=YYYY-MM-DD` 需要 `availability:read`，返回：
+
+  ```json
+  {
+    "date": "2026-08-10",
+    "rooms": [{
+      "roomId": "...", "roomName": "笔录室 1",
+      "slots": [{ "start": "08:30", "available": true }]
+    }]
+  }
+  ```
+
+  日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
+- `GET /api/v1/integration/health` 需要 `health:read`，只返回
+  `{ "ok": true, "productVersion": "V2.1.0" }`。
+
+令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
+时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少
+目标 scope 时 `403 TOKEN_SCOPE_FORBIDDEN`。过期令牌不会退化为无效令牌，也不会继续执行
+目标查询。
 
 ## 公开大屏
 
@@ -183,3 +252,6 @@ slot 冲突返回 `409 SLOT_CONFLICT`，`error.conflicts` 只含 `id/roomId/date
 ```
 
 这一响应的允许键集合必须由服务端测试锁定，不能通过复用内部预约序列化器生成。
+只有 `is_active=1 AND show_on_display=1` 的笔录室及其预约能进入服务端查询和投影；
+全部隐藏时返回 `rooms: []`。`/integration/rooms` 与 `/integration/availability` 不受
+公开大屏开关影响。

@@ -30,7 +30,18 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "2791fece83d5cb22c1d1b636c6c517d4ffc02047971b8dc2b1ca0d55e8d2cc23";
+const frozenSourceSha256 = "adb693e59de0e0726d78d9bfa53764baea7f2b8b02899a4e8f5169d274d74962";
+
+function luminance(hex) {
+  const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
+  const linear = channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(left, right) {
+  const values = [luminance(left), luminance(right)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
 
 function importedFiles() {
   const manifest = fs.readFileSync(manifestPath, "utf8");
@@ -65,4 +76,36 @@ test("React keeps one global CSS entrypoint", () => {
   const main = fs.readFileSync(path.join(sourceRoot, "main.jsx"), "utf8");
   assert.match(main, /import "\.\/styles\.css";/);
   assert.doesNotMatch(main, /import "\.\/styles\//);
+});
+
+test("compact production actions retain at least a 44px hit target", () => {
+  const drawer = fs.readFileSync(path.join(stylesRoot, "drawer-shell.css"), "utf8");
+  const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
+  const system = fs.readFileSync(path.join(stylesRoot, "system.css"), "utf8");
+  const bookingForms = fs.readFileSync(path.join(stylesRoot, "booking-forms.css"), "utf8");
+  const users = fs.readFileSync(path.join(stylesRoot, "users.css"), "utf8");
+  assert.match(drawer, /\.drawer-back \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
+  assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
+  assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
+  assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
+  assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
+  assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("the three-room calendar can shrink to the 1024px workspace", () => {
+  const calendar = fs.readFileSync(path.join(stylesRoot, "calendar.css"), "utf8");
+  assert.match(calendar, /\.schedule \{\s*min-width: min\(860px, 100%\);/);
+  assert.match(calendar, /grid-template-columns: 70px repeat\(var\(--room-count\), minmax\(220px, 1fr\)\);/);
+});
+
+test("low-frequency controls keep semantic styles and readable cancelled status", () => {
+  const history = fs.readFileSync(path.join(stylesRoot, "history.css"), "utf8");
+  const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
+  const settings = fs.readFileSync(path.join(stylesRoot, "settings.css"), "utf8");
+  assert.match(history, /\.history-filter-popover input\[type="radio"\]/);
+  assert.match(flows, /\.booking-events-error button \{[\s\S]*?min-height: 44px;/);
+  assert.match(settings, /\.settings-save-button:disabled/);
+  const cancelledColor = history.match(/\.history-cancelled-status \{[\s\S]*?color: (#[0-9a-f]{6});/i)?.[1];
+  assert.ok(cancelledColor);
+  assert.ok(contrastRatio(cancelledColor, "#f5f4ed") >= 4.5);
 });

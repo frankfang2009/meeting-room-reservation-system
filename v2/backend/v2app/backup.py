@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from .db import SCHEMA_VERSION
 from .invariants import ApplicationInvariantError, validate_application_invariants
 
 
@@ -22,6 +23,7 @@ BACKUP_KIND = "meeting-room-v2-backup"
 BACKUP_SIDECAR_SCHEMA = 1
 BACKUP_PREFIX = "reservation-v2-backup-"
 BACKUP_KEEP_COUNT = 30
+SUPPORTED_BACKUP_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})
 _SQLITE_COMPANION_SUFFIXES = ("-wal", "-shm", "-journal")
 _LOCK_OPERATIONS = {"backup", "restore"}
 _LOCK_IDENTITY_METHODS = {
@@ -424,8 +426,14 @@ def _database_metadata(db: sqlite3.Connection) -> dict[str, Any]:
         meta = dict(db.execute("SELECT key, value FROM app_meta").fetchall())
     except sqlite3.Error as error:
         raise RuntimeError("备份源不是可识别的 V2 数据库") from error
-    if meta.get("product_generation") != "2" or meta.get("schema_version") != "1":
+    if meta.get("product_generation") != "2":
         raise RuntimeError("备份源数据库代际或结构版本无效")
+    raw_schema_version = meta.get("schema_version")
+    if raw_schema_version not in {
+        str(version) for version in SUPPORTED_BACKUP_SCHEMA_VERSIONS
+    }:
+        raise RuntimeError("备份源数据库结构版本无效")
+    schema_version = int(raw_schema_version)
     if meta.get("setup_complete") not in ("0", "1"):
         raise RuntimeError("备份源 setup_complete 无效")
     try:
@@ -437,7 +445,7 @@ def _database_metadata(db: sqlite3.Connection) -> dict[str, Any]:
         raise RuntimeError("备份源数据序列无效") from error
     return {
         "productGeneration": 2,
-        "databaseSchemaVersion": 1,
+        "databaseSchemaVersion": schema_version,
         "setupComplete": meta["setup_complete"] == "1",
         "sourceDataSequence": data_sequence,
     }
@@ -512,7 +520,8 @@ def load_backup_sidecar(
         value["schema"] != BACKUP_SIDECAR_SCHEMA
         or value["kind"] != BACKUP_KIND
         or value["productGeneration"] != 2
-        or value["databaseSchemaVersion"] != 1
+        or type(value["databaseSchemaVersion"]) is not int
+        or value["databaseSchemaVersion"] not in SUPPORTED_BACKUP_SCHEMA_VERSIONS
         or value["setupComplete"] is not True
     ):
         raise RuntimeError("备份 sidecar 不属于已设置的 V2")
@@ -668,7 +677,7 @@ def create_backup(
             "kind": BACKUP_KIND,
             "installId": install_id,
             "productGeneration": 2,
-            "databaseSchemaVersion": 1,
+            "databaseSchemaVersion": metadata["databaseSchemaVersion"],
             "setupComplete": True,
             "databaseSha256": sha256_file(target),
             "databaseBytes": target.stat().st_size,

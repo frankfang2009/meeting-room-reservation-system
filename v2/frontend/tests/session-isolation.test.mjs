@@ -3,7 +3,34 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { SessionIsolationBoundary } from "../src/session-isolation.js";
+import {
+  clearSessionBookingDraft,
+  consumeSessionBookingDraft,
+  serializeSessionBookingDraft,
+  SessionIsolationBoundary,
+  writeSessionBookingDraft,
+} from "../src/session-isolation.js";
+
+function memoryStorage() {
+  const values = new Map();
+  return {
+    getItem: (key) => values.get(key) ?? null,
+    removeItem: (key) => values.delete(key),
+    setItem: (key, value) => values.set(key, value),
+  };
+}
+
+const bookingDraft = {
+  partyName: "张晓燕",
+  caseNumber: "TEST-2026-007",
+  purpose: "补充笔录",
+  notes: "携带材料",
+  tagId: "tag-3",
+  roomId: "room-1",
+  date: "2026-08-17",
+  start: "09:30",
+  duration: 90,
+};
 
 function render(blocked, message = "请重新登录") {
   return renderToStaticMarkup(createElement(
@@ -39,4 +66,39 @@ test("failed reauthentication remains isolated and successful scope remount rend
   ));
   assert.match(verifiedNewScope, /普通员工工作台/);
   assert.doesNotMatch(verifiedNewScope, /ADMIN_TOKEN_PLAINTEXT|管理员审计/);
+});
+
+test("expired booking drafts serialize only the approved fields", () => {
+  const serialized = serializeSessionBookingDraft("user-1", {
+    bookingForm: { ...bookingDraft, secret: "never-store" },
+    preservedDraft: null,
+  });
+  const payload = JSON.parse(serialized);
+  assert.equal(payload.userId, "user-1");
+  assert.deepEqual(payload.bookingForm, bookingDraft);
+  assert.equal(payload.preservedDraft, null);
+  assert.doesNotMatch(serialized, /never-store|secret/);
+});
+
+test("session draft storage is isolated by user and consumed after recovery", () => {
+  const storage = memoryStorage();
+  assert.equal(writeSessionBookingDraft(storage, "user-1", {
+    bookingForm: bookingDraft,
+    preservedDraft: { ...bookingDraft, partyName: "待续草稿" },
+  }), true);
+  assert.equal(consumeSessionBookingDraft(storage, "user-2"), null);
+  assert.deepEqual(consumeSessionBookingDraft(storage, "user-1"), {
+    bookingForm: bookingDraft,
+    preservedDraft: { ...bookingDraft, partyName: "待续草稿" },
+  });
+  assert.equal(consumeSessionBookingDraft(storage, "user-1"), null);
+});
+
+test("active logout clears only the current user's stored draft", () => {
+  const storage = memoryStorage();
+  writeSessionBookingDraft(storage, "user-1", { bookingForm: bookingDraft });
+  writeSessionBookingDraft(storage, "user-2", { bookingForm: bookingDraft });
+  clearSessionBookingDraft(storage, "user-1");
+  assert.equal(consumeSessionBookingDraft(storage, "user-1"), null);
+  assert.ok(consumeSessionBookingDraft(storage, "user-2"));
 });

@@ -1,13 +1,21 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   adminApiFieldErrors,
   validatePasswordReset,
   validateRoomAdminForm,
+  validateSystemSettingsForm,
   validateUserAdminForm,
 } from "../src/features/admin/validation.js";
 import { buildTagSectionPayload } from "../src/features/tags/tag-drafts.js";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const app = fs.readFileSync(path.join(root, "src/App.jsx"), "utf8");
+const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
 
 test("administrator forms expose stable field-level validation", () => {
   assert.deepEqual(validateRoomAdminForm({ name: "", sortOrder: 0 }), {
@@ -20,6 +28,11 @@ test("administrator forms expose stable field-level validation", () => {
     password: "密码长度必须为 8–256 个字符",
   });
   assert.deepEqual(validatePasswordReset("long-enough"), {});
+  assert.deepEqual(validateSystemSettingsForm({ workStart: "08:30", workEnd: "17:30" }, 30), {});
+  assert.deepEqual(validateSystemSettingsForm({ workStart: "08:15", workEnd: "08:00" }, 30), {
+    workStart: "开始时间必须按 30 分钟对齐",
+    workEnd: "结束时间必须晚于开始时间",
+  });
   assert.deepEqual(adminApiFieldErrors({ code: "USERNAME_EXISTS" }), { username: "该用户名已存在" });
 });
 
@@ -38,4 +51,12 @@ test("unit and personal tag sections build independent payloads", () => {
     () => buildTagSectionPayload(tags, { ...drafts, "tag-3": " " }, "personal"),
     /名称不能为空/,
   );
+});
+
+test("room display visibility stays inside the administrator inspector", () => {
+  assert.match(adminForms, />在公开大屏显示</);
+  assert.match(adminForms, /onFieldChange\("showOnDisplay", event\.target\.checked\)/);
+  assert.match(app, /showOnDisplay: room\.showOnDisplay !== false/);
+  assert.match(app, /showOnDisplay: true/);
+  assert.doesNotMatch(app, /room-state[\s\S]{0,160}showOnDisplay/);
 });

@@ -197,6 +197,31 @@
   background: #d86f43;
 }
 
+.public-display-empty {
+  grid-row: 1 / -1;
+  min-height: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: #66635d;
+  text-align: center;
+}
+
+.public-display-empty svg {
+  margin-bottom: 6px;
+}
+
+.public-display-empty strong {
+  color: #33322f;
+  font-size: clamp(24px, 2vw, 38px);
+  font-weight: 520;
+}
+
+.public-display-empty span {
+  font-size: clamp(15px, 1.15vw, 21px);
+}
+
 .public-display-row h2,
 .public-display-row p {
   margin: 0;

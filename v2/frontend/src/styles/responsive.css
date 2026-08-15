@@ -365,20 +365,17 @@
     column-gap: 28px;
   }
 
-  .profile-activity-lower {
-    grid-template-columns: 1fr 1fr;
+  .personal-center-header {
+    align-items: flex-start;
   }
 
-  .profile-activity-overview {
-    padding-right: 30px;
+  .personal-center-header-side {
+    max-width: 54%;
+    flex-wrap: wrap;
   }
 
-  .profile-activity-data {
-    padding-left: 32px;
-  }
-
-  .profile-activity-data dl > div:nth-child(even) {
-    padding-left: 24px;
+  .profile-activity-data dl > div {
+    padding-inline: 20px;
   }
 
   .next-booking,
@@ -492,19 +489,28 @@
     gap: 18px;
   }
 
-  .personal-center-header {
+  .personal-center-header-side {
+    width: 100%;
+    max-width: none;
     align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .personal-center-header {
+    flex-wrap: wrap;
   }
 
   .personal-center-identity {
-    margin-top: 28px;
-    gap: 20px;
+    gap: 12px;
+    padding-left: 0;
+    border-left: 0;
   }
 
   .personal-center-avatar {
-    width: 64px;
-    height: 64px;
-    font-size: 28px;
+    width: 48px;
+    height: 48px;
+    font-size: 22px;
   }
 
   .personal-center-tab-row {
@@ -516,14 +522,54 @@
   }
 
   .profile-activity-overview {
-    padding-right: 0;
+    padding: 26px 0;
+  }
+
+  .profile-activity-overview dl {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-activity-overview dl > div,
+  .profile-activity-overview dl > div:first-child {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--hairline-strong);
+  }
+
+  .profile-activity-overview dl > div:last-child {
+    border-bottom: 0;
   }
 
   .profile-activity-data {
-    margin-top: 24px;
-    padding: 28px 0 0;
-    border-top: 1px solid var(--hairline-strong);
+    margin-top: 0;
+    padding: 28px 0;
+    border-top: 0;
     border-left: 0;
+  }
+
+  .profile-activity-data dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-activity-data dl > div {
+    min-height: 82px;
+    padding: 0 0 15px;
+    border-left: 0;
+  }
+
+  .profile-activity-data dl > div:nth-child(even) {
+    padding-left: 24px;
+    border-left: 1px solid var(--hairline-strong);
+  }
+
+  .profile-activity-data dl > div:nth-child(n + 3) {
+    padding-top: 16px;
+    border-top: 1px solid var(--hairline-strong);
   }
 
   .settings-header p {
@@ -570,7 +616,8 @@
     gap: 18px;
   }
 
-  .settings-notification-row > span {
+  .settings-notification-row > span,
+  .settings-notification-row > label {
     display: grid;
     gap: 4px;
   }

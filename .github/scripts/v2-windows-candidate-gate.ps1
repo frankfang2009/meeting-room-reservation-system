@@ -6,8 +6,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$artifactName = "会议室预约系统-V2.0.0-安装包.zip"
-$launcherName = "安装V2.0.0.bat"
+$version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
+$artifactName = "会议室预约系统-V$version-安装包.zip"
+$launcherName = "安装V$version.bat"
 $guideName = "安装说明.txt"
 $toolName = "_V2安装工具"
 

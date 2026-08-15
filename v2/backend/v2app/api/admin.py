@@ -13,16 +13,70 @@ from ..common import (
     parse_bool,
     parse_int,
     parse_json_object,
+    time_to_minutes,
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor, serialize_user
 from ..services.audit import write_security_audit
 from ..services.reservations import serialize_reservation
-from .core import serialize_room_with_metrics, serialize_rooms_with_metrics
+from .core import _serialize_settings, serialize_room_with_metrics, serialize_rooms_with_metrics
 
 
 bp = Blueprint("admin_api", __name__, url_prefix="/api/v1")
+
+
+@bp.put("/admin/settings")
+@admin_required
+def update_system_settings():
+    payload = parse_json_object()
+    db = get_db()
+    with transaction(db):
+        actor = locked_actor(db, admin=True)
+        current = db.execute("SELECT * FROM system_settings WHERE id = 1").fetchone()
+        if current is None:
+            raise RuntimeError("系统设置缺失")
+        work_start = clean_text(
+            payload.get("workStart"), field="workStart", label="工作开始时间", maximum=5
+        )
+        work_end = clean_text(
+            payload.get("workEnd"), field="workEnd", label="工作结束时间", maximum=5
+        )
+        start_minutes = time_to_minutes(work_start, field="workStart")
+        end_minutes = time_to_minutes(work_end, field="workEnd")
+        slot_minutes = int(current["slot_minutes"])
+        fields = {}
+        if start_minutes % slot_minutes:
+            fields["workStart"] = f"开始时间必须按 {slot_minutes} 分钟对齐"
+        if end_minutes % slot_minutes:
+            fields["workEnd"] = f"结束时间必须按 {slot_minutes} 分钟对齐"
+        if end_minutes <= start_minutes:
+            fields["workEnd"] = "结束时间必须晚于开始时间"
+        if fields:
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "请检查输入内容",
+                fields=fields,
+            )
+        before = {
+            "workStart": current["work_start"],
+            "workEnd": current["work_end"],
+        }
+        after = {"workStart": work_start, "workEnd": work_end}
+        db.execute(
+            "UPDATE system_settings SET work_start = ?, work_end = ? WHERE id = 1",
+            (work_start, work_end),
+        )
+        write_security_audit(
+            db,
+            actor_user_id=actor["id"],
+            action="settings.updated",
+            target_type="system",
+            target_id="work-hours",
+            details={"before": before, "after": after},
+        )
+    return jsonify(_serialize_settings(db))
 
 
 def _validate_role(value: Any) -> str:
@@ -129,6 +183,11 @@ def create_room():
         if "isActive" in payload
         else True
     )
+    show_on_display = (
+        parse_bool(payload["showOnDisplay"], field="showOnDisplay")
+        if "showOnDisplay" in payload
+        else True
+    )
     room_id = new_id()
     db = get_db()
     try:
@@ -136,10 +195,11 @@ def create_room():
             actor = locked_actor(db, admin=True)
             db.execute(
                 """
-                INSERT INTO rooms (id, name, sort_order, is_active)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO rooms (
+                    id, name, sort_order, is_active, show_on_display
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (room_id, name, sort_order, int(is_active)),
+                (room_id, name, sort_order, int(is_active), int(show_on_display)),
             )
             write_security_audit(
                 db,
@@ -147,7 +207,11 @@ def create_room():
                 action="room.created",
                 target_type="room",
                 target_id=room_id,
-                details={"name": name, "isActive": is_active},
+                details={
+                    "name": name,
+                    "isActive": is_active,
+                    "showOnDisplay": show_on_display,
+                },
             )
     except sqlite3.IntegrityError as error:
         raise ApiError(409, "ROOM_NAME_EXISTS", "笔录室名称已存在") from error
@@ -177,6 +241,11 @@ def update_room(room_id: str):
                 if "isActive" in payload
                 else bool(room["is_active"])
             )
+            show_on_display = (
+                parse_bool(payload["showOnDisplay"], field="showOnDisplay")
+                if "showOnDisplay" in payload
+                else bool(room["show_on_display"])
+            )
             sort_order = (
                 parse_int(payload["sortOrder"], field="sortOrder")
                 if "sortOrder" in payload
@@ -192,10 +261,11 @@ def update_room(room_id: str):
             db.execute(
                 """
                 UPDATE rooms SET name = ?, is_active = ?, sort_order = ?,
+                    show_on_display = ?,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                 WHERE id = ?
                 """,
-                (name, int(enabled), sort_order, room_id),
+                (name, int(enabled), sort_order, int(show_on_display), room_id),
             )
             write_security_audit(
                 db,
@@ -203,7 +273,12 @@ def update_room(room_id: str):
                 action="room.updated",
                 target_type="room",
                 target_id=room_id,
-                details={"name": name, "enabled": enabled, "sortOrder": sort_order},
+                details={
+                    "name": name,
+                    "enabled": enabled,
+                    "sortOrder": sort_order,
+                    "showOnDisplay": show_on_display,
+                },
             )
     except sqlite3.IntegrityError as error:
         raise ApiError(409, "ROOM_NAME_EXISTS", "笔录室名称已存在") from error

@@ -442,6 +442,13 @@
   cursor: pointer;
 }
 
+.room-availability-toggle + .room-display-toggle {
+  min-height: 82px;
+  margin-top: 0;
+  padding-top: 16px;
+  border-top: 0;
+}
+
 .room-availability-toggle > span {
   min-width: 0;
   display: grid;
@@ -530,7 +537,7 @@
 }
 
 .room-delete-button {
-  min-height: 42px;
+  min-height: 44px;
   margin-top: 28px;
   display: inline-flex;
   align-items: center;
@@ -757,8 +764,9 @@
 
 .booking-form .tag-choice {
   min-height: 44px;
-  gap: 7px;
-  padding-inline: 8px;
+  gap: 5px;
+  padding-inline: 5px;
+  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -865,6 +873,7 @@
 }
 
 .edit-booking-button,
+.copy-reminder-button,
 .cancel-booking-button,
 .confirm-cancel-button {
   width: 100%;
@@ -873,6 +882,22 @@
   cursor: pointer;
   font-size: 14px;
   transition: transform 130ms ease, background 130ms ease, border-color 130ms ease;
+}
+
+.copy-reminder-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  background: transparent;
+}
+
+.copy-reminder-button:hover {
+  color: var(--ink);
+  border-color: rgba(20, 20, 19, 0.3);
+  background: var(--paper);
 }
 
 .edit-booking-button {
@@ -901,6 +926,10 @@
 
 .booking-detail-close {
   margin-top: auto;
+}
+
+.booking-detail-actions .booking-detail-close {
+  margin-top: 0;
 }
 
 .cancel-confirmation-copy {

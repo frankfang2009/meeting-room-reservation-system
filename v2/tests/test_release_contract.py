@@ -18,11 +18,15 @@ def read(relative: str) -> str:
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.0.0")
+        self.assertEqual(read("VERSION").strip(), "2.1.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.0.0")
+        self.assertEqual(package["version"], "2.1.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(package["scripts"]["build"], "vite build")
+        self.assertIn('PRODUCT_VERSION = "V2.1.0"', read("backend/v2app/__init__.py"))
+        installer = read("installer/installer_core.py")
+        self.assertIn('VERSION = "2.1.0"', installer)
+        self.assertIn('RELEASE = "V2.1.0"', installer)
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -44,6 +48,37 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("getActivityDay", frontend)
         self.assertIn('url_prefix="/api/v1/activity"', backend)
 
+    def test_api_contract_covers_upcoming_room_impact_and_read_only_integrations(self) -> None:
+        contract = read("docs/API-CONTRACT.md")
+        reservations = read("backend/v2app/api/reservations.py")
+        reservation_service = read("backend/v2app/services/reservations.py")
+        admin = read("backend/v2app/api/admin.py")
+        system = read("backend/v2app/api/system.py")
+
+        self.assertIn('@bp.get("/upcoming")', reservations)
+        self.assertIn("GET /api/v1/reservations/upcoming", contract)
+        self.assertIn("当前登录用户本人", contract)
+        self.assertIn("r.owner_user_id = ? AND r.status = 'active'", reservation_service)
+
+        self.assertIn('@bp.get("/rooms/<room_id>/deletion-impact")', admin)
+        self.assertIn("GET /api/v1/rooms/{id}/deletion-impact", contract)
+        self.assertIn("LIMIT 50", admin)
+        for field in ('"room"', '"total"', '"items"'):
+            self.assertIn(field, admin)
+        self.assertIn("前 50 个完整预约投影", contract)
+        self.assertIn("ROOM_HAS_FUTURE_BOOKINGS", contract)
+        self.assertIn("total` 可能大于 conflicts 长度", contract)
+
+        self.assertIn('TOKEN_SCOPES = {"rooms:read", "availability:read", "health:read"}', system)
+        for endpoint in ("rooms", "availability", "health"):
+            self.assertIn(f'@bp.get("/integration/{endpoint}")', system)
+            self.assertIn(f"GET /api/v1/integration/{endpoint}", contract)
+        for code in ("TOKEN_REQUIRED", "TOKEN_INVALID", "TOKEN_EXPIRED", "TOKEN_SCOPE_FORBIDDEN"):
+            self.assertIn(code, system)
+            self.assertIn(code, contract)
+        self.assertIn('"slots": slots', system)
+        self.assertIn('"productVersion": current_app.config["PRODUCT_VERSION"]', system)
+
     def test_personal_activity_is_server_aggregated_and_current_user_scoped(self) -> None:
         activity = read("backend/v2app/api/activity.py")
         frontend = read("frontend/src/features/profile/PersonalCenter.jsx")
@@ -57,6 +92,40 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("活动数据", frontend)
         self.assertNotIn("最近完成", frontend)
         self.assertNotIn("profile-heatmap", frontend)
+
+    def test_external_reminder_template_default_and_privacy_match_across_layers(self) -> None:
+        default_template = (
+            "【笔录提醒】{当事人姓名}您好，您预约的笔录时间为{日期} {开始时间}，"
+            "地点：{笔录室}，请提前到达。如有变动我们会再联系您。"
+        )
+        database = read("backend/v2app/db.py")
+        frontend = read("frontend/src/features/reminders/reminder-template.js")
+        contract = read("docs/API-CONTRACT.md")
+        database_module = ast.parse(database)
+        backend_default = next(
+            ast.literal_eval(node.value)
+            for node in database_module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "DEFAULT_REMINDER_TEMPLATE"
+                for target in node.targets
+            )
+        )
+        frontend_default = json.loads(
+            re.search(
+                r"export const DEFAULT_REMINDER_TEMPLATE = (\".*\");",
+                frontend,
+            ).group(1)
+        )
+        self.assertEqual(backend_default, default_template)
+        self.assertEqual(frontend_default, default_template)
+        for token in ("{当事人姓名}", "{日期}", "{开始时间}", "{结束时间}", "{笔录室}"):
+            self.assertIn(token, frontend)
+            self.assertIn(token, contract)
+        variable_block = frontend.split("REMINDER_TEMPLATE_VARIABLES = [", 1)[1].split("];", 1)[0]
+        for forbidden in ("案号", "用途", "备注", "caseNumber", "purpose", "notes"):
+            self.assertNotIn(forbidden, variable_block)
 
     def test_production_frontend_has_no_synthetic_business_state(self) -> None:
         source = "\n".join(
@@ -84,7 +153,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('data_dir / "reservation.db"', app_factory)
         self.assertIn('"data" / "reservation.db"', updater)
         self.assertRegex(database, r"PRODUCT_GENERATION\s*=\s*2")
-        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*1")
+        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*2")
+        self.assertIn("SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})", database)
+        self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 
     def test_installer_and_backend_share_secret_and_health_contracts(self) -> None:
         installer = read("installer/installer_core.py")
@@ -239,7 +310,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.0.0.bat")
+        launcher = read("installer/安装V2.1.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/v2-baseline.yml").read_text(
             encoding="utf-8"
         )
@@ -283,6 +354,14 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("v2.installer.assemble_payload", reproducible)
         self.assertIn("v2.installer.build_package", reproducible)
         self.assertIn("v2-reproducible-build.sh", workflow)
+        self.assertIn('version=$(tr -d', reproducible)
+        self.assertIn('artifact="会议室预约系统-V${version}-安装包.zip"', reproducible)
+        self.assertIn('$version = (Get-Content -LiteralPath "v2/VERSION"', gate)
+        self.assertIn('$artifactName = "会议室预约系统-V$version-安装包.zip"', gate)
+        self.assertIn('$launcherName = "安装V$version.bat"', gate)
+        self.assertNotIn("V2.0.0-安装包.zip", workflow)
+        self.assertNotIn("V2.0.0-安装包.zip", reproducible)
+        self.assertNotIn("V2.0.0-安装包.zip", gate)
 
     def test_admin_edit_uses_owner_personal_tags_across_layers(self) -> None:
         bootstrap = read("backend/v2app/api/core.py")
@@ -293,12 +372,12 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('reason: "OWNER_TAGS_MISSING"', domain)
         self.assertIn("ownerTags.ownerTagsAvailable", app)
 
-    def test_v200_update_core_is_explicitly_non_production(self) -> None:
+    def test_v210_update_core_is_explicitly_non_production(self) -> None:
         updater = read("installer/update_core.py")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = False", updater)
-        self.assertIn("V2.0.0 非生产能力", installer_readme)
-        self.assertIn("不代表 V2.0.0 支持在线升级", installer_readme)
+        self.assertIn("V2.1.0 非生产能力", installer_readme)
+        self.assertIn("不代表 V2.1.0 支持在线升级", installer_readme)
 
     def test_operator_failure_messages_are_actionable_and_do_not_echo_exceptions(self) -> None:
         service = read("backend/service.py")

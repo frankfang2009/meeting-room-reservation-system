@@ -24,7 +24,7 @@ test("service readiness probes the root health endpoint", async () => {
 });
 
 test("unused bootstrap-duplicating API helpers stay removed", () => {
-  for (const name of ["getReservation", "getUsers", "getPreferences"]) {
+  for (const name of ["getUsers", "getPreferences"]) {
     assert.equal(Object.hasOwn(api, name), false, name);
   }
 });
@@ -39,6 +39,27 @@ test("room metrics use the dedicated administrator refresh endpoint", async () =
   try {
     await api.getRooms();
     assert.equal(captured, "/api/v1/rooms");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("administrator work-hour updates use the dedicated settings endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return new Response(JSON.stringify({ workStart: "09:00", workEnd: "17:00", slotMinutes: 30, maxDurationMinutes: 180 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    setCsrfToken("csrf-settings");
+    await api.updateSystemSettings({ workStart: "09:00", workEnd: "17:00" });
+    assert.equal(captured.url, "/api/v1/admin/settings");
+    assert.equal(captured.options.method, "PUT");
+    assert.equal(captured.options.body, JSON.stringify({ workStart: "09:00", workEnd: "17:00" }));
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -109,6 +130,25 @@ test("maps the uniform API error shape", async () => {
   globalThis.fetch = async () => new Response(JSON.stringify({ error: { code: "REVISION_CONFLICT", message: "changed", current: { id: "booking-1", revision: 2 } } }), { status: 409, headers: { "Content-Type": "application/json" } });
   try {
     await assert.rejects(request("/reservations/booking-1", { method: "PATCH", body: {}, headers: {} }), (error) => error.code === "REVISION_CONFLICT" && error.current.revision === 2);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("reservation conflict recheck reads the latest record by encoded id", async () => {
+  const previousFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = async (url) => {
+    capturedUrl = url;
+    return new Response(JSON.stringify({ id: "booking/1", revision: 3 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const latest = await api.getReservation("booking/1");
+    assert.equal(capturedUrl, "/api/v1/reservations/booking%2F1");
+    assert.equal(latest.revision, 3);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -186,7 +226,7 @@ test("sends opaque pagination cursors for reservation and history pages", async 
   try {
     const cursor = "signed+/opaque=value";
     await api.getReservations("2026-08-10", "2026-08-16", { pageSize: 200, cursor });
-    await api.getHistory({ month: "2026-08", ownerId: "user-1", status: "cancelled", pageSize: 25, cursor });
+    await api.getHistory({ month: "2026-08", ownerId: "user-1", roomId: "room-2", status: "cancelled", tagId: "tag-2", query: "案号 2026", pageSize: 25, cursor });
 
     const reservations = new URL(urls[0], "http://localhost");
     assert.equal(reservations.pathname, "/api/v1/reservations");
@@ -199,7 +239,10 @@ test("sends opaque pagination cursors for reservation and history pages", async 
     assert.equal(history.pathname, "/api/v1/reservations/history");
     assert.equal(history.searchParams.get("month"), "2026-08");
     assert.equal(history.searchParams.get("ownerId"), "user-1");
+    assert.equal(history.searchParams.get("roomId"), "room-2");
     assert.equal(history.searchParams.get("status"), "cancelled");
+    assert.equal(history.searchParams.get("tagId"), "tag-2");
+    assert.equal(history.searchParams.get("query"), "案号 2026");
     assert.equal(history.searchParams.get("pageSize"), "25");
     assert.equal(history.searchParams.get("cursor"), cursor);
   } finally {

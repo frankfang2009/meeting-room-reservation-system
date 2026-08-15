@@ -3,7 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, jsonify
 
 from ..common import clean_text, parse_bool, parse_int, parse_json_object
-from ..db import get_db, transaction
+from ..db import DEFAULT_REMINDER_TEMPLATE, get_db, transaction
 from ..errors import ApiError
 from ..security import current_user, locked_actor, login_required, serialize_user
 from ..services.audit import write_security_audit
@@ -66,6 +66,21 @@ def update_preferences():
                 "SELECT 1 FROM rooms WHERE id = ? AND is_active = 1", (room_id,)
             ).fetchone():
                 raise ApiError(422, "ROOM_UNAVAILABLE", "默认笔录室当前不可用")
+        default_tag_slot = existing["default_tag_slot"]
+        if "defaultTagSlot" in payload:
+            if payload["defaultTagSlot"] is None:
+                default_tag_slot = None
+            else:
+                default_tag_slot = parse_int(
+                    payload["defaultTagSlot"], field="defaultTagSlot"
+                )
+                if default_tag_slot not in (1, 2, 3, 4):
+                    raise ApiError(
+                        422,
+                        "VALIDATION_ERROR",
+                        "请检查输入内容",
+                        fields={"defaultTagSlot": "默认标签必须是槽位 1–4 或不指定"},
+                    )
         change_notifications = (
             parse_bool(
                 payload["bookingChangeNotifications"],
@@ -79,6 +94,27 @@ def update_preferences():
             if "bookingReminder" in payload
             else bool(existing["booking_reminder"])
         )
+        reminder_lead_minutes = (
+            parse_int(payload["reminderLeadMinutes"], field="reminderLeadMinutes")
+            if "reminderLeadMinutes" in payload
+            else int(existing["reminder_lead_minutes"])
+        )
+        if reminder_lead_minutes not in (15, 30, 60):
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "请检查输入内容",
+                fields={"reminderLeadMinutes": "提醒提前量必须是 15、30 或 60 分钟"},
+            )
+        reminder_template = existing["reminder_template"]
+        if "reminderTemplate" in payload:
+            reminder_template = clean_text(
+                payload["reminderTemplate"],
+                field="reminderTemplate",
+                label="对外提醒模板",
+                maximum=200,
+                required=False,
+            ) or DEFAULT_REMINDER_TEMPLATE
         personal = {3: existing["personal_tag_3_label"], 4: existing["personal_tag_4_label"]}
         if "personalTags" in payload:
             if not isinstance(payload["personalTags"], list):
@@ -106,14 +142,17 @@ def update_preferences():
         db.execute(
             """
             UPDATE user_preferences
-            SET default_duration = ?, default_room_id = ?,
+            SET default_duration = ?, default_room_id = ?, default_tag_slot = ?,
                 booking_change_notifications = ?, booking_reminder = ?,
+                reminder_lead_minutes = ?, reminder_template = ?,
                 personal_tag_3_label = ?, personal_tag_4_label = ?,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE user_id = ?
             """,
             (
-                duration, room_id, int(change_notifications), int(reminder),
+                duration, room_id, default_tag_slot,
+                int(change_notifications), int(reminder),
+                reminder_lead_minutes, reminder_template,
                 personal[3], personal[4], actor["id"],
             ),
         )
@@ -123,7 +162,16 @@ def update_preferences():
             action="preferences.updated",
             target_type="user",
             target_id=actor["id"],
-            details={"defaultDuration": duration, "defaultRoomId": room_id},
+            details={
+                "defaultDuration": duration,
+                "defaultRoomId": room_id,
+                "defaultTagSlot": default_tag_slot,
+                "reminderLeadMinutes": reminder_lead_minutes,
+                "reminderTemplateUpdated": (
+                    reminder_template != existing["reminder_template"]
+                ),
+                "reminderTemplateLength": len(reminder_template),
+            },
         )
     g_user = db.execute("SELECT * FROM users WHERE id = ?", (actor["id"],)).fetchone()
     return jsonify(

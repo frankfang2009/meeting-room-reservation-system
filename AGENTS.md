@@ -1,6 +1,6 @@
 # Repository working rules
 
-- `v2/` is the active Meeting Room Reservation System V2.0.0 codebase.
+- `v2/` is the active Meeting Room Reservation System V2.1.0 codebase.
 - V2 is a fresh installation. Never read, migrate, modify, or delete V1 data.
 - Preserve the roles `admin | employee`, the authenticated shared-calendar visibility rules,
   employee-owned history boundary, and the server-side public-display allowlist.
@@ -28,6 +28,9 @@
 - Upcoming-booking reminders use a small clock badge on the My Reservations rail action instead of
   a persistent bottom toast; opening My Reservations acknowledges that reminder. Change notices
   remain distinct and must not be mislabeled as an upcoming-booking clock.
+- Copying external reminder text is a manual clipboard-only action and must never connect to an
+  outbound channel, open WeChat, or claim/record a sent state. Its variable set is fixed to party
+  name, date, start, end, and room; case number, purpose, and notes must never enter the template.
 - Reservation status codes are never rendered directly. History keeps cancelled records visible
   with a restrained `已取消` treatment, while active records retain their tag-color marker.
 - A draft preserved after a slot conflict remains visibly identified on the calendar. Selecting a
@@ -45,6 +48,13 @@
 - The bottom account action opens Personal Center rather than adding another main-navigation item.
   Its activity tab is strictly current-user scoped and counts only active reservations that have
   ended according to server-local time. Keep the activity tab concise: no heatmap, date range,
-  month labels, daily drilldown, ranking, or recent-completions list. The lower-left overview stays
-  unchanged and the lower-right area contains the four summary metrics. Preferences remain a
-  separate tab in the same page and must not expose a heatmap-range setting.
+  month labels, daily drilldown, ranking, or recent-completions list. Keep the account identity in
+  the page header; present the three overview values and four summary metrics as two quiet,
+  full-width horizontal bands that collapse deliberately at narrow desktop widths. Preferences
+  remain a separate tab in the same page and must not expose a heatmap-range setting.
+- In System Status, work hours and recent backup are matching whole-row drawer entries with a
+  trailing chevron. Do not place a standalone edit button inside the work-hours value cell, and
+  keep the work-hours drawer action visibly separated from its final time field.
+- Booking drawers keep all four tag choices in one compact row. Custom tag names that exceed their
+  cell must stay inside the button with ellipsis while the full name remains available on hover and
+  through the button's accessible name; never let label text overlap an adjacent tag or form field.

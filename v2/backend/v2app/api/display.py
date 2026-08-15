@@ -31,14 +31,21 @@ def today_display():
     today = now.date().isoformat()
     current_time = now.strftime("%H:%M")
     room_rows = db.execute(
-        "SELECT id, name FROM rooms WHERE is_active = 1 ORDER BY sort_order, name"
+        """
+        SELECT id, name FROM rooms
+        WHERE is_active = 1 AND show_on_display = 1
+        ORDER BY sort_order, name
+        """
     ).fetchall()
     booking_rows = db.execute(
         """
-        SELECT room_id, party_name, start_time, end_time
-        FROM reservations
-        WHERE booking_date = ? AND status = 'active'
-        ORDER BY room_id, start_time, id
+        SELECT booking.room_id, booking.party_name,
+               booking.start_time, booking.end_time
+        FROM reservations booking
+        JOIN rooms room ON room.id = booking.room_id
+        WHERE booking.booking_date = ? AND booking.status = 'active'
+          AND room.is_active = 1 AND room.show_on_display = 1
+        ORDER BY booking.room_id, booking.start_time, booking.id
         """,
         (today,),
     ).fetchall()

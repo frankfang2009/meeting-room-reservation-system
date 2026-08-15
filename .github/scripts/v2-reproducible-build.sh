@@ -12,7 +12,8 @@ python_embed_zip=$3
 wheelhouse=$4
 export_root=$5
 python_bin=${PYTHON_BIN:-python}
-artifact="会议室预约系统-V2.0.0-安装包.zip"
+version=$(tr -d '\r\n' < "$source_root/v2/VERSION")
+artifact="会议室预约系统-V${version}-安装包.zip"
 
 git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null
 test -f "$python_embed_zip"

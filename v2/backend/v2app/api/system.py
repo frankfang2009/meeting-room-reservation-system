@@ -81,6 +81,9 @@ def _token_item(row: Any) -> dict[str, Any]:
 @admin_required
 def system_status():
     db = get_db()
+    settings = db.execute("SELECT * FROM system_settings WHERE id = 1").fetchone()
+    if settings is None:
+        raise RuntimeError("系统设置缺失")
     health = database_health(db)
     data_sequence_row = db.execute(
         "SELECT value FROM app_meta WHERE key = 'data_sequence'"
@@ -111,6 +114,8 @@ def system_status():
             "productVersion": current_app.config["PRODUCT_VERSION"],
             "productGeneration": PRODUCT_GENERATION,
             "databaseVersion": SCHEMA_VERSION,
+            "workStart": settings["work_start"],
+            "workEnd": settings["work_end"],
             "setupComplete": is_setup_complete(),
             "lanAddress": current_app.config.get("LAN_ADDRESS"),
             "lastBackupAt": (
@@ -190,13 +195,18 @@ def run_backup():
         raise
     except Exception:
         current_app.logger.exception("backup failed sequence=%s", sequence)
-        with transaction(db, track_change=False):
-            write_security_audit(
-                db,
-                actor_user_id=actor_snapshot["id"],
-                action="backup.failed",
-                target_type="system",
-                details={"sequence": sequence, "result": "failed"},
+        try:
+            with transaction(db, track_change=False):
+                write_security_audit(
+                    db,
+                    actor_user_id=actor_snapshot["id"],
+                    action="backup.failed",
+                    target_type="system",
+                    details={"sequence": sequence, "result": "failed"},
+                )
+        except Exception:
+            current_app.logger.exception(
+                "failed to record backup failure audit sequence=%s", sequence
             )
         raise ApiError(500, "BACKUP_FAILED", "备份未能完成，请查看诊断日志")
     with transaction(db, track_change=False):

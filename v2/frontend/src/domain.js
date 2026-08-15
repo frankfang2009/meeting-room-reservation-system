@@ -7,6 +7,7 @@ const ADMIN_DRAWER_PERMISSIONS = new Map([
   ["user-create", "manageUsers"],
   ["user-edit", "manageUsers"],
   ["user-reset", "manageUsers"],
+  ["system-settings", "manageSystem"],
   ["backup", "manageSystem"],
   ["token-create", "manageSystem"],
   ["token-created", "manageSystem"],
@@ -176,6 +177,71 @@ export function generateTimeSlots(start, end, step = 30) {
   return slots;
 }
 
+export function calendarTimeSlots({ workStart, workEnd, slotMinutes = 30, bookings = [] } = {}) {
+  const step = Number(slotMinutes || 30);
+  let visibleStart = parseTime(workStart);
+  let visibleEnd = parseTime(workEnd);
+  for (const booking of bookings) {
+    if (booking?.status === "cancelled" || !booking?.start || !booking?.end) continue;
+    const bookingStart = parseTime(booking.start);
+    const bookingEnd = parseTime(booking.end);
+    visibleStart = Math.min(visibleStart, Math.floor(bookingStart / step) * step);
+    visibleEnd = Math.max(visibleEnd, Math.ceil(bookingEnd / step) * step);
+  }
+  return generateTimeSlots(formatTime(visibleStart), formatTime(visibleEnd), step);
+}
+
+export function isWithinWorkingHours(start, end, workStart, workEnd) {
+  return parseTime(start) >= parseTime(workStart) && parseTime(end) <= parseTime(workEnd);
+}
+
+export function defaultBookingTagId({ tags = [], defaultTagSlot = null, draft = null } = {}) {
+  if (draft !== null) return typeof draft?.tagId === "string" ? draft.tagId : "";
+  const preferred = tags.find((tag) => Number(tag?.slot) === Number(defaultTagSlot));
+  return preferred?.id || "";
+}
+
+export function calendarFocusTarget(cells = [], current = null, key = "") {
+  const normalized = cells
+    .map((cell) => ({
+      row: Number(cell?.row),
+      column: Number(cell?.column),
+      enabled: Boolean(cell?.enabled),
+    }))
+    .filter((cell) => Number.isInteger(cell.row) && Number.isInteger(cell.column));
+  const enabled = normalized
+    .filter((cell) => cell.enabled)
+    .sort((left, right) => left.row - right.row || left.column - right.column);
+  if (!enabled.length) return null;
+  if (key === "Home") return enabled[0];
+  if (key === "End") return enabled.at(-1);
+  if (!current || !Number.isInteger(current.row) || !Number.isInteger(current.column)) {
+    return enabled[0];
+  }
+  const direction = {
+    ArrowLeft: { row: 0, column: -1 },
+    ArrowRight: { row: 0, column: 1 },
+    ArrowUp: { row: -1, column: 0 },
+    ArrowDown: { row: 1, column: 0 },
+  }[key];
+  if (!direction) return null;
+  const maximumRow = Math.max(...normalized.map((cell) => cell.row));
+  const maximumColumn = Math.max(...normalized.map((cell) => cell.column));
+  let row = current.row + direction.row;
+  let column = current.column + direction.column;
+  while (row >= 0 && row <= maximumRow && column >= 0 && column <= maximumColumn) {
+    const candidate = normalized.find(
+      (cell) => cell.row === row && cell.column === column,
+    );
+    if (candidate?.enabled) return candidate;
+    row += direction.row;
+    column += direction.column;
+  }
+  return enabled.find(
+    (cell) => cell.row === current.row && cell.column === current.column,
+  ) || null;
+}
+
 export function canManageBooking({ role, currentUserId, booking } = {}) {
   if (!VALID_ROLES.has(role) || !booking) return false;
   if (role === "admin") return true;
@@ -201,6 +267,14 @@ export function dateKey(date) {
 export function shiftDate(date, days) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
+  return next;
+}
+
+export function shiftDateByYears(date, years) {
+  const next = new Date(date);
+  const originalMonth = next.getMonth();
+  next.setFullYear(next.getFullYear() + Number(years));
+  if (next.getMonth() !== originalMonth) next.setDate(0);
   return next;
 }
 
@@ -294,6 +368,7 @@ export function calendarTimeLineOffset({
   serverTime,
   workStart,
   workEnd,
+  visibleStart = workStart,
   slotMinutes = 30,
   rowHeight = 76,
 } = {}) {
@@ -302,7 +377,7 @@ export function calendarTimeLineOffset({
   const start = parseTime(workStart);
   const end = parseTime(workEnd);
   if (current < start || current > end) return null;
-  return ((current - start) / Number(slotMinutes || 30)) * Number(rowHeight || 76);
+  return ((current - parseTime(visibleStart)) / Number(slotMinutes || 30)) * Number(rowHeight || 76);
 }
 
 export function reservationConflictDifferences(draft, latest, { rooms = [], tags = [] } = {}) {
@@ -362,11 +437,19 @@ export function bookingPayload(form, expectedRevision) {
   return payload;
 }
 
-export function validateBookingForm(form) {
+export function validateBookingForm(form, slotMinutes = 30) {
   const errors = {};
   if (!form.roomId) errors.roomId = "请选择笔录室";
   if (!form.date) errors.date = "请选择日期";
   if (!form.start) errors.start = "请选择开始时间";
+  if (form.start) {
+    const match = /^(\d{2}):(\d{2})$/.exec(String(form.start));
+    const step = Number(slotMinutes) || 30;
+    const minutes = match ? Number(match[1]) * 60 + Number(match[2]) : Number.NaN;
+    if (!match || Number(match[1]) > 23 || Number(match[2]) > 59 || minutes % step !== 0) {
+      errors.start = `开始时间必须按 ${step} 分钟对齐`;
+    }
+  }
   if (!form.partyName?.trim()) errors.partyName = "请输入预约对象";
   if (!form.caseNumber?.trim()) errors.caseNumber = "请输入案号";
   if (!form.purpose?.trim()) errors.purpose = "请输入预约用途";

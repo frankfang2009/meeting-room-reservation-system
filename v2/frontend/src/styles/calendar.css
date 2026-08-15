@@ -212,7 +212,7 @@
 .calendar-loading-head,
 .calendar-loading-row {
   display: grid;
-  grid-template-columns: 70px repeat(3, minmax(200px, 1fr));
+  grid-template-columns: 70px repeat(var(--room-count), minmax(200px, 1fr));
 }
 
 .calendar-loading-head {
@@ -296,7 +296,7 @@
 }
 
 .schedule {
-  min-width: 860px;
+  min-width: min(860px, 100%);
   padding-bottom: 16px;
 }
 
@@ -427,6 +427,22 @@
 
 .available-slot.past-slot .slot-affordance {
   color: rgba(92, 89, 83, 0.56);
+  opacity: 0;
+  transform: none;
+}
+
+.available-slot.outside-work-slot {
+  cursor: not-allowed;
+  background: rgba(20, 20, 19, 0.018);
+}
+
+.available-slot.outside-work-slot:hover,
+.available-slot.outside-work-slot:focus-visible {
+  border-color: transparent;
+  background: rgba(20, 20, 19, 0.018);
+}
+
+.available-slot.outside-work-slot .slot-affordance {
   opacity: 0;
   transform: none;
 }

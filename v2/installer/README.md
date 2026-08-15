@@ -1,6 +1,6 @@
 # V2 安装与累计更新基线
 
-本目录只实现 V2.0.0 全新安装和未来 V2 累计更新的安全基础，不包含 V1
+本目录只实现 V2.1.0 全新安装和未来 V2 累计更新的安全基础，不包含 V1
 迁移、导入、目录搜索或自动删除。
 
 ## 先组装客户 payload
@@ -13,7 +13,7 @@ python3 -m v2.installer.assemble_payload \
   --backend-root /absolute/path/to/v2/backend \
   --frontend-dist /absolute/path/to/v2/frontend/dist/client \
   --frontend-lock /absolute/path/to/v2/frontend/package-lock.json \
-  --output /absolute/path/to/payload-v2.0.0
+  --output /absolute/path/to/payload-v2.1.0
 ```
 
 组装器要求正式 `service.py`、其 `server.py` 运行依赖、`backup.py`、
@@ -40,7 +40,7 @@ python3 -m v2.installer.build_runtime \
   --python-embed-zip /absolute/path/to/python-3.13.14-embed-amd64.zip \
   --wheelhouse /absolute/path/to/verified-wheels \
   --lock-file /absolute/path/to/v2/backend/requirements-win-amd64.lock \
-  --output /absolute/path/to/runtime-v2.0.0
+  --output /absolute/path/to/runtime-v2.1.0
 ```
 
 输出目录必须不存在。正式 `Bundle.load` 还要求 lock 摘要和包含 provenance 在内的
@@ -70,7 +70,7 @@ wheel 文件冲突、路径穿越、链接、`.data` 特殊安装布局和许可
 python3 -m v2.installer.build_package \
   --payload-root /absolute/path/to/payload \
   --runtime-root /absolute/path/to/runtime \
-  --output /absolute/path/to/会议室预约系统-V2.0.0-安装包.zip
+  --output /absolute/path/to/会议室预约系统-V2.1.0-安装包.zip
 ```
 
 构建器生成 ZIP、外部 SHA-256、发布清单、制品级 SBOM、第三方许可证说明和 runtime
@@ -78,7 +78,7 @@ python3 -m v2.installer.build_package \
 CPython/Python 依赖及前端 package-lock 中的生产依赖；runtime provenance 仍与 ZIP 内
 同名材料逐字节一致。所有侧车哈希、正式 package-lock 摘要都写入内外清单。payload、runtime、`install.py` 和
 `installer_core.py` 均有文件级和树级 SHA-256 清单并反向加载验证。ZIP 顶层
-只有零参数 `安装V2.0.0.bat`、安装说明和 `_V2安装工具`。SHA-256 只能证明与
+只有零参数 `安装V2.1.0.bat`、安装说明和 `_V2安装工具`。SHA-256 只能证明与
 已知摘要一致，不能代替代码签名、上游制品签名复核或可信发布渠道。
 构建时还会要求 payload 中随正式后端交付的 `requirements-win-amd64.lock` 与
 runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 package-lock SHA，
@@ -94,7 +94,8 @@ runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 pa
   文件镜像为 `true` 而数据库缺失、损坏或未设置时则进入回环恢复态；
 - `setup_complete=false` 时只绑定 `127.0.0.1:8080`；
 - 首次设置必须在一个数据库事务中写入首个管理员、至少一个笔录室、工作时间、
-  `product_generation=2`、`schema_version=1` 和 `setup_complete=true`；
+  `product_generation=2`、`schema_version=2` 和 `setup_complete=true`；升级预检仍接受
+  可在服务启动前就地迁移的 schema v1 基线数据库；
 - 数据库事务提交后原子镜像 `install.json.setup_complete=true`，再由 supervisor
   重启服务，才可绑定 `0.0.0.0:8080`；
 - CLI 固定支持无参数启动、`--check` 和 `--stop`；`MEETING_ROOM_OPEN_BROWSER=1`
@@ -129,15 +130,15 @@ runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 pa
 - 写入版本后失败，保留全部 V2 文件和可能产生的新数据，只允许修复。
 - 安装器从不枚举、读取、迁移或删除任何 V1 业务目录。
 
-## 后续 V2 更新（V2.0.0 非生产能力）
+## 后续 V2 更新（V2.1.0 非生产能力）
 
 `update_core.py` 目前只是未来 V2.0.1+ 累计更新器的实验性共同前置层，不在
-V2.0.0 payload、安装包入口或客户操作路径中，也不代表 V2.0.0 支持在线升级。
+V2.1.0 payload、安装包入口或客户操作路径中，也不代表 V2.1.0 支持在线升级。
 它只从明确路径、环境变量
 或 V2 专属 HKLM 记录取得安装根；严格拒绝 V1/未知数据库；以 SQLite 交叉验证
 generation、schema、setup 状态和基本业务状态，不单信 install.json 镜像；禁止
-更新负载携带现场可变文件；在写程序前复制并哈希整个 data 树。V2.0.0 本身不
-交付尚未经过 V2.0.0 → V2.0.1 实机验证的正式更新入口。
+更新负载携带现场可变文件；在写程序前复制并哈希整个 data 树。V2.1.0 本身不
+交付尚未经过 V2.1.0 → 后续版本实机验证的正式更新入口。
 
 ## 验证
 

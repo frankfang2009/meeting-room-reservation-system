@@ -23,6 +23,7 @@ import backup as backup_entrypoint
 import restore as restore_entrypoint
 import service as service_entrypoint
 import v2app.backup as backup_module
+import v2app.db as db_module
 from tests.test_backend import BackendTestCase, INSTALL_ID
 from v2app.backup import (
     backup_records,
@@ -103,6 +104,26 @@ class ApiAndAuthenticationHardeningTests(BackendTestCase):
             ]
         self.assertIn("idle_timeout", reasons)
         self.assertIn("absolute_timeout", reasons)
+
+    def test_room_poll_is_passive_while_calendar_read_renews_idle_session(self):
+        self.setup_system()
+        clock = [1_000.0]
+        self.app.config["SESSION_TIME_PROVIDER"] = lambda: clock[0]
+        self.login()
+
+        clock[0] = 1_100.0
+        rooms = self.client.get("/api/v1/rooms")
+        self.assertEqual(rooms.status_code, 200, rooms.get_json())
+        with self.client.session_transaction() as stored:
+            self.assertEqual(stored["_last_active_at"], 1_000.0)
+
+        clock[0] = 1_200.0
+        reservations = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        )
+        self.assertEqual(reservations.status_code, 200, reservations.get_json())
+        with self.client.session_transaction() as stored:
+            self.assertEqual(stored["_last_active_at"], 1_200.0)
 
     def test_login_uses_dummy_hash_ip_limit_and_hmac_audit_fingerprints(self):
         self.setup_system()
@@ -492,6 +513,28 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.setup_system()
         self.login()
 
+    @staticmethod
+    def downgrade_backup_to_schema_v1(backup: Path) -> None:
+        with closing(sqlite3.connect(backup)) as db, db:
+            db.execute("ALTER TABLE rooms DROP COLUMN show_on_display")
+            db.execute("ALTER TABLE user_preferences DROP COLUMN default_tag_slot")
+            db.execute(
+                "ALTER TABLE user_preferences DROP COLUMN reminder_lead_minutes"
+            )
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
+            db.execute(
+                "UPDATE app_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+        sidecar_path = backup.with_suffix(".json")
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        sidecar["databaseSchemaVersion"] = 1
+        sidecar["databaseBytes"] = backup.stat().st_size
+        sidecar["databaseSha256"] = sha256_file(backup)
+        sidecar_path.write_text(
+            json.dumps(sidecar, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+
     def test_backup_sidecar_monotonic_sequence_rotation_and_failure_audit(self):
         first = self.write("POST", "/api/v1/admin/backups")
         self.assertEqual(first.status_code, 201, first.get_json())
@@ -504,6 +547,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         )
         self.assertEqual(sidecar["databaseSha256"], sha256_file(first_path))
         self.assertEqual(sidecar["sequence"], 1)
+        self.assertEqual(sidecar["databaseSchemaVersion"], 2)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
         self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
         self.assertFalse(Path(str(first_path) + "-wal").exists())
@@ -578,6 +622,18 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         body = response.get_json()
         self.assertEqual(body["error"]["code"], "FORBIDDEN")
         self.assertNotEqual(body["error"]["code"], "BACKUP_FAILED")
+
+    def test_backup_failure_code_survives_failure_audit_error(self):
+        with mock.patch(
+            "v2app.api.system.maintenance_lock",
+            side_effect=RuntimeError("backup pipeline failed"),
+        ), mock.patch(
+            "v2app.api.system.write_security_audit",
+            side_effect=RuntimeError("failure audit failed"),
+        ):
+            response = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(response.status_code, 500, response.get_json())
+        self.assertEqual(response.get_json()["error"]["code"], "BACKUP_FAILED")
 
     def test_scheduled_backup_is_due_on_new_local_day_before_exact_24_hours(self):
         backup_dir = self.root / "backups"
@@ -738,6 +794,93 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                     install_id=INSTALL_ID,
                 )
         self.assertEqual(hashlib.sha256(self.database.read_bytes()).hexdigest(), before)
+
+    def test_schema_v1_backup_migrates_and_failed_migration_restores_live_database(self):
+        created = self.write("POST", "/api/v1/admin/backups").get_json()
+        backup = self.root / "backups" / created["fileName"]
+        self.downgrade_backup_to_schema_v1(backup)
+        legacy_sidecar = load_backup_sidecar(
+            backup.with_suffix(".json"),
+            expected_install_id=INSTALL_ID,
+            verify_hash=True,
+        )
+        self.assertEqual(legacy_sidecar["databaseSchemaVersion"], 1)
+
+        live_room = self.write(
+            "POST",
+            "/api/v1/rooms",
+            {"name": "恢复前现场", "sortOrder": 99},
+        ).get_json()
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        before = hashlib.sha256(self.database.read_bytes()).hexdigest()
+        original_add = db_module._add_column_if_missing
+        calls = 0
+
+        def fail_after_first_column(db, table, column, declaration):
+            nonlocal calls
+            original_add(db, table, column, declaration)
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("C0 restore migration failpoint")
+
+        with mock.patch.object(
+            db_module,
+            "_add_column_if_missing",
+            side_effect=fail_after_first_column,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "恢复后数据库复检失败"):
+                restore_entrypoint.restore_backup(
+                    database=self.database,
+                    backup=backup,
+                    backup_dir=self.root / "backups",
+                    data_dir=self.data_dir,
+                    install_id=INSTALL_ID,
+                )
+        self.assertEqual(hashlib.sha256(self.database.read_bytes()).hexdigest(), before)
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT name FROM rooms WHERE id = ?", (live_room["id"],)
+                ).fetchone()[0],
+                "恢复前现场",
+            )
+
+        result = restore_entrypoint.restore_backup(
+            database=self.database,
+            backup=backup,
+            backup_dir=self.root / "backups",
+            data_dir=self.data_dir,
+            install_id=INSTALL_ID,
+        )
+        self.assertTrue(result["restored"])
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'schema_version'"
+                ).fetchone()[0],
+                "2",
+            )
+            self.assertIsNone(
+                db.execute(
+                    "SELECT name FROM rooms WHERE id = ?", (live_room["id"],)
+                ).fetchone()
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM rooms WHERE show_on_display = 1"
+                ).fetchone()[0],
+                2,
+            )
+            self.assertEqual(
+                {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT DISTINCT reminder_template FROM user_preferences"
+                    )
+                },
+                {db_module.DEFAULT_REMINDER_TEMPLATE},
+            )
 
     def test_production_cli_layout_catch_up_and_expected_identity_contract(self):
         self.assertEqual(backup_entrypoint.PROGRAM_DIR, backup_entrypoint.APP_DIR.parent)

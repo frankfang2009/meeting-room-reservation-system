@@ -13,7 +13,13 @@ const productionSource = fs.readdirSync(path.join(root, "src"), { recursive: tru
 const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
 const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
+const bookingFormStyles = fs.readFileSync(path.join(root, "src/styles/booking-forms.css"), "utf8");
 const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
+const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.css"), "utf8");
+const settingsStyles = fs.readFileSync(path.join(root, "src/styles/settings.css"), "utf8");
+const systemStyles = fs.readFileSync(path.join(root, "src/styles/system.css"), "utf8");
+const systemExtensionStyles = fs.readFileSync(path.join(root, "src/styles/system-extensions.css"), "utf8");
+const designContract = fs.readFileSync(path.join(root, "DESIGN-CONTRACT.md"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
   for (const forbidden of ["demo123", "demo1234", "URLSearchParams", "loginState=", "bookingState=", "feedbackState=", "displayState=", "dataState="]) {
@@ -29,6 +35,8 @@ test("production entry does not generate business ids in the browser", () => {
 
 test("public display consumes the dedicated server projection", () => {
   assert.match(app, /api\.getPublicDisplay\(controller\.signal\)/);
+  assert.match(app, /payload && payload\.rooms\.length === 0/);
+  assert.match(app, />当前暂无公开引导的笔录室</);
   assert.equal(app.includes("maskDisplayName"), false);
   assert.equal(app.includes("derivePublicDisplayRows"), false);
 });
@@ -36,6 +44,12 @@ test("public display consumes the dedicated server projection", () => {
 test("shared-computer users have a visible logout action in personal settings", () => {
   assert.match(productionSource, /className="settings-logout-button"[^>]*onClick=\{onLogout\}/);
   assert.equal(app.includes('className="sr-only" onClick={logout}'), false);
+});
+
+test("every authenticated main canvas is a keyboard-scrollable focus target", () => {
+  const canvases = productionSource.match(/<main className="main-canvas[^>]+>/g) || [];
+  assert.ok(canvases.length >= 8);
+  for (const canvas of canvases) assert.match(canvas, /tabIndex=\{0\}/);
 });
 
 test("login validation returns keyboard focus to the first correctable field", () => {
@@ -58,6 +72,28 @@ test("personal center keeps a concise real summary without heatmap clutter", () 
   assert.doesNotMatch(productionSource, /预约活动|profile-heatmap|activityMonths|getActivityDay|本人当天已完成的预约/);
 });
 
+test("personal center uses a compact identity header and full-width activity bands", () => {
+  assert.match(productionSource, /className="personal-center-header-side"/);
+  assert.match(productionSource, /personal-center-header-side"><section className="personal-center-identity"/);
+  assert.match(settingsStyles, /\.profile-activity-overview dl \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(settingsStyles, /\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(responsiveStyles, /@media \(max-width: 620px\)[\s\S]*?\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+});
+
+test("system work hours use a whole-row drawer entry with a separated footer", () => {
+  assert.match(app, /<button type="button" className="system-status-row system-action-row system-work-hours-row"[^>]*onClick=/);
+  assert.match(app, /system-work-hours-row"[\s\S]{0,500}<CaretRight size=\{17\}/);
+  assert.doesNotMatch(app, /system-edit-settings/);
+  assert.match(systemStyles, /\.system-action-row:focus-visible/);
+  assert.match(systemExtensionStyles, /\.system-settings-form \.drawer-fixed-footer \{[\s\S]*?margin-top: auto;[\s\S]*?padding-top: 40px;/);
+});
+
+test("booking tag choices contain long custom labels without changing the compact row", () => {
+  assert.match(app, /className=\{`tag-choice[\s\S]{0,260}title=\{tag\.label\}[\s\S]{0,160}<i \/><span>\{tag\.label\}<\/span><\/button>/);
+  assert.match(bookingFormStyles, /\.booking-form \.tag-choice-grid \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(bookingFormStyles, /\.booking-form \.tag-choice span \{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;[\s\S]*?text-overflow: ellipsis;/);
+});
+
 test("personal center exposes preferences through one tab entry", () => {
   assert.equal(productionSource.match(/>偏好设置<\/button>/g)?.length, 1);
   assert.doesNotMatch(productionSource, /personal-center-preference-link/);
@@ -78,6 +114,8 @@ test("personal preferences expose real scoped defaults and server-backed persona
   assert.match(productionSource, />登录后默认打开</);
   assert.doesNotMatch(productionSource, />活动图显示范围</);
   assert.match(productionSource, />个人标签</);
+  assert.match(productionSource, />默认标签</);
+  assert.match(app, /defaultBookingTagId\(\{[\s\S]{0,180}defaultTagSlot: bootstrap\.preferences\?\.defaultTagSlot,[\s\S]{0,100}draft/);
   assert.match(productionSource, /onChange\("personalTags"/);
 });
 
@@ -85,6 +123,18 @@ test("revision conflicts rebase the drawer baseline while preserving the draft",
   assert.match(app, /rebaseBookingEdit\(bookingForm, error\.current\)/);
   assert.match(app, /setDrawer\(\(current\) => \(\{ \.\.\.current, booking: rebased\.baseline \}\)\)/);
   assert.match(app, /setBookingForm\(rebased\.draft\)/);
+});
+
+test("conflict panels expose busy rechecks and explicit results", () => {
+  assert.match(app, /async function recheckSlotConflict\(\)/);
+  assert.match(app, /occupied \? "该时段仍被占用" : "该时段已可用，可以返回日历重新选择"/);
+  assert.match(app, /booking-conflict-recheck" disabled=\{conflictCheck\.busy\} onClick=\{recheckSlotConflict\}/);
+  assert.match(app, /booking-conflict-check-result[\s\S]{0,160}conflictCheck\.message/);
+  assert.match(app, /async function recheckRevisionConflict\(\)/);
+  assert.match(app, /await api\.getReservation\(drawer\.booking\.id\)/);
+  assert.match(app, /预约仍有新的变化，已更新最新内容/);
+  assert.match(app, /booking-modified-recheck" type="button" disabled=\{conflictCheck\.busy\}/);
+  for (const action of ["使用最新内容", "返回继续调整", "重新检查"]) assert.match(app, new RegExp(action));
 });
 
 test("preserved booking drafts stay visible and require explicit relocation", () => {
@@ -97,6 +147,15 @@ test("preserved booking drafts stay visible and require explicit relocation", ()
   assert.doesNotMatch(app, /\.\.\.\(preservedDraft \|\| \{\}\)/);
 });
 
+test("calendar loading isolates the previous date and retains its schedule frame", () => {
+  assert.match(app, /const visibleCalendarBookings = calendarDataDate === dateKey\(currentDate\) \? bookings : \[\]/);
+  assert.match(app, /calendarDataDateRef\.current !== requestedDate\) setBookings\(\[\]\)/);
+  assert.match(app, /calendarDataDateRef\.current = requestedDate;\s+setCalendarDataDate\(requestedDate\)/);
+  assert.match(app, /calendarPending && activeRooms\.length \? <div className="calendar-loading-state"/);
+  assert.match(app, /className="calendar-loading-head"[\s\S]{0,180}activeRooms\.map/);
+  assert.match(app, /className="calendar-loading-row"[\s\S]{0,220}calendar-loading-time/);
+});
+
 test("calendar success notices expire and clear when their context changes", () => {
   assert.match(app, /window\.setTimeout\(\(\) => setSuccessNotice\(null\), 8000\)/);
   assert.match(app, /setSuccessNotice\(null\);\n {2}}, \[currentDate\]\)/);
@@ -106,8 +165,39 @@ test("calendar success notices expire and clear when their context changes", () 
   assert.match(app, /error\.code === "SLOT_CONFLICT"[\s\S]{0,120}setSuccessNotice\(null\)/);
 });
 
+test("toast tones map success, information, and errors to honest icons", () => {
+  assert.match(app, /tone === "success" \? CheckCircle : tone === "error" \? WarningCircle : Info/);
+  assert.match(app, /className=\{`toast visible \$\{toast\.tone\}`\} role="status" aria-live="polite"/);
+  assert.match(app, /<ToastIcon tone=\{toast\.tone\} \/><span>\{toast\.message\}<\/span>/);
+  assert.match(app, /setToast\(userFacingError\(error, fallback\), "error"\)/);
+  assert.match(app, /该时段已经开始，请选择当前时间之后的空白时段", "error"/);
+  assert.match(app, /个人设置已保存", "success"/);
+});
+
 test("change notifications start the same due-reminder poller", () => {
   assert.match(app, /bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications/);
+});
+
+test("reminder lead preference controls both visible copy and editability", () => {
+  assert.match(productionSource, /开始前 \{draft\.reminderLeadMinutes \|\| 30\} 分钟提醒我/);
+  assert.match(productionSource, /value=\{draft\.reminderLeadMinutes \|\| 30\}/);
+  assert.match(productionSource, /disabled=\{!draft\.bookingReminder\}/);
+  assert.match(productionSource, /\[15, 30, 60\]\.map/);
+  assert.match(productionSource, /onChange\("reminderLeadMinutes", Number\(event\.target\.value\)\)/);
+  assert.doesNotMatch(productionSource, /开始前30分钟提醒我/);
+});
+
+test("external reminder copy stays manual, scoped, and recoverable", () => {
+  assert.match(app, /canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /canCopyReminder && <button className="copy-reminder-button"/);
+  assert.match(app, /renderReminderTemplate\(bootstrap\?\.preferences\?\.reminderTemplate/);
+  assert.match(app, /提醒信息已复制，可在微信中粘贴发送", "success"/);
+  assert.match(app, /无法自动复制，请手动复制提醒信息", "error"/);
+  assert.match(productionSource, />对外提醒模板</);
+  assert.match(productionSource, /仅复制到剪贴板，由您自行发送/);
+  assert.match(productionSource, /maxLength=\{200\}/);
+  assert.match(app, /setPreferencesDraft\(bootstrap\?\.preferences \|\| \{\}\)/);
+  assert.doesNotMatch(app, /已发送|跳转微信|window\.open\([^)]*微信/);
 });
 
 test("acknowledging a change refreshes affected views and fetches the next notice", () => {
@@ -128,8 +218,24 @@ test("upcoming reminders use the mine navigation clock badge instead of a bottom
 
 test("the frozen empty-state action consumes a valid default room", () => {
   assert.match(app, /defaultRoomId\) \|\| activeRooms\[0\]/);
-  assert.match(app, /onClick=\{openDefaultCreate\}>前往预约日历/);
+  assert.match(app, /onClick=\{openDefaultCreate\}>\{!activeRooms\.length/);
   assert.match(app, /openCreate\(preferredRoom\.id, start, dayKey\)/);
+});
+
+test("low-frequency UX safeguards remain explicit and testable", () => {
+  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminder\?\.kind === "change"[\s\S]*<Drawer/);
+  assert.match(app, /historyMonth <= historyMonths\.at\(-1\)\.id/);
+  assert.match(app, /nextMonth < earliestMonth \|\| nextMonth > latestMonth/);
+  assert.match(app, /min=\{calendarDateMinimum\} max=\{calendarDateMaximum\}/);
+  assert.match(app, /name="history-room"/);
+  assert.match(app, /name="history-tag"/);
+  assert.doesNotMatch(app, /name="history-(?:room|tag)"[^>]*type="checkbox"/);
+  assert.match(productionSource, /className="settings-save-button"[^>]*disabled=\{saving\}/);
+  assert.match(productionSource, /name="profile-name"[^>]*aria-invalid=\{Boolean\(errors\.name\)\}/);
+  assert.match(app, /booking-events-error[^>]*>暂时无法读取变更记录<button type="button" onClick=\{onRetryEvents\}>重新读取/);
+  assert.match(app, /validateBookingForm\(bookingForm, settings\.slotMinutes\)/);
+  assert.match(app, /当前没有可用笔录室，请联系管理员启用后再预约/);
+  assert.match(app, /if \(!preferredRoom\) \{[\s\S]{0,420}return;[\s\S]{0,80}navigate\("calendar"\)/);
 });
 
 test("system recovery has a dedicated gate with recovery and request references", () => {
@@ -144,8 +250,17 @@ test("reservation and history views consume opaque cursor pages", () => {
   assert.match(app, /fetchAllReservations/);
   assert.match(app, /page\?\.nextCursor/);
   assert.match(app, /pageSize: 100, cursor/);
-  assert.match(app, /loadHistory\(\{ append: true, cursor: historyPage\.nextCursor \}\)/);
+  assert.match(app, /loadHistory\(\{ append: true, cursor: section\.nextCursor, month: section\.id \}\)/);
   assert.match(app, /history-count">\{historyPage\.total\} 场/);
+});
+
+test("history appends older months in place with the same filters and dividers", () => {
+  assert.match(app, /api\.getHistory\(\{ month, ownerId:[\s\S]{0,260}roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery\.trim\(\), pageSize: 50, cursor \}\)/);
+  assert.match(app, /loadHistory\(\{ append: true, month: monthKey\(new Date\(year, month - 2, 1\)\) \}\)/);
+  assert.match(app, /className="history-month-divider" role="separator">\{section\.label\}/);
+  assert.match(app, /historySections\.map\(\(section, sectionIndex\)/);
+  assert.match(app, /onClick=\{loadPreviousHistoryMonth\}/);
+  assert.doesNotMatch(app, /onClick=\{\(\) => setHistoryMonth\(previousHistoryMonth\.id\)\}/);
 });
 
 test("reservation details separate edit and cancellation capabilities", () => {
@@ -196,7 +311,7 @@ test("filter races cannot let stale history or audit responses win", () => {
 });
 
 test("logout only leaves the authenticated shell after server confirmation", () => {
-  assert.match(app, /await api\.logout\(\);\s+onLoggedOut\(\)/);
+  assert.match(app, /await api\.logout\(\);[\s\S]{0,120}clearSessionBookingDraft[\s\S]{0,120}onLoggedOut\(\)/);
   assert.match(app, /退出失败，请确认网络后重试/);
   assert.match(app, /SYSTEM_RECOVERY_REQUIRED"\) onRecovery\(error\)/);
 });
@@ -227,6 +342,18 @@ test("mine, history, and users expose the frozen visual tools", () => {
   assert.match(app, /historyUserSelectRef\.current\?\.focus\(\)/);
   assert.match(app, /加载\{previousHistoryMonth\.label\}的记录/);
   assert.match(app, /aria-label=\{userSearchOpen \? "关闭搜索" : "搜索用户"\}/);
+});
+
+test("non-modal popovers share escape, outside-click, and focus-return behavior", () => {
+  assert.match(app, /function useDismissiblePopover\(active, onClose\)/);
+  assert.match(app, /document\.addEventListener\("pointerdown", handlePointerDown\)/);
+  assert.match(app, /event\.key !== "Escape"/);
+  assert.match(app, /triggerRef\.current\?\.focus\(\{ preventScroll: true \}\)/);
+  for (const name of ["bookingFilterPopover", "calendarFilterPopover", "historySearchPopover", "historyFilterPopover", "historyMonthPopover", "userSearchPopover", "auditFilterPopover"]) {
+    assert.match(app, new RegExp(`ref=\\{${name}\\.triggerRef\\}`));
+    assert.match(app, new RegExp(`ref=\\{${name}\\.popoverRef\\}`));
+  }
+  assert.ok((app.match(/aria-haspopup="true"/g) || []).length >= 7);
 });
 
 test("first-run setup keeps the frozen safety and summary hierarchy without demo copy", () => {
@@ -268,6 +395,24 @@ test("reauthentication remounts scoped state only after session and bootstrap va
   assert.doesNotMatch(app, /catch \(caught\) \{[\s\S]{0,240}onRecovered/);
 });
 
+test("expired sessions preserve and restore an account-scoped booking draft", () => {
+  assert.match(app, /本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复/);
+  assert.match(app, /writeSessionBookingDraft\(window\.sessionStorage, latest\?\.userId/);
+  assert.match(app, /consumeSessionBookingDraft\([\s\S]{0,80}window\.sessionStorage/);
+  assert.match(app, /setToast\("已恢复未保存的预约草稿", "info"\)/);
+  assert.match(app, /clearSessionBookingDraft\(window\.sessionStorage, currentUser\?\.id\)/);
+});
+
+test("approved F19 decisions keep production UI and the frozen contract aligned", () => {
+  assert.match(app, /<p>\{dateLabel\(booking\.date\)\}<\/p>\{booking\.status && <span className=\{`drawer-status \$\{booking\.status\}`\}/);
+  assert.match(designContract, /adjacent status badge remains visible/);
+  for (const width of [960, 720, 620]) {
+    assert.match(responsiveStyles, new RegExp(`@media \\(max-width: ${width}px\\)`));
+  }
+  assert.match(designContract, /960px, 720px, and 620px rules are defensive fallbacks/);
+  assert.match(designContract, /本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复/);
+});
+
 test("editing another user's booking resolves personal tags from the owner", () => {
   assert.match(app, /bookingTagContext\(\{/);
   assert.match(app, /booking: drawer\?\.type === "edit" \? drawer\.booking : null/);
@@ -277,11 +422,18 @@ test("editing another user's booking resolves personal tags from the owner", () 
 });
 
 test("resetting the signed-in administrator password enters reauthentication immediately", () => {
-  assert.match(app, /result\?\.reauthenticate[\s\S]*setSessionExpired\(true\)/);
+  assert.match(app, /result\?\.reauthenticate[\s\S]*expireSession\(\)/);
 });
 
 test("duration slider visual thumb shares the inset track coordinate system", () => {
-  assert.match(app, /duration-slider-track[\s\S]{0,240}duration-slider-knob[\s\S]{0,160}<\/div><input className="duration-range-input"/);
+  assert.match(app, /duration-slider-track[\s\S]{0,1800}duration-slider-knob[\s\S]{0,160}<\/div><input className="duration-range-input"/);
+});
+
+test("duration slider renders four interior stops with dynamic availability states", () => {
+  assert.match(app, /DURATION_STEPS\.slice\(1, -1\)\.map/);
+  assert.match(app, /step > maximum \? "unavailable" : step <= Number\(form\.duration\) \? "reached" : "available"/);
+  assert.match(app, /className=\{`duration-slider-stop \$\{state\} \$\{step === Number\(form\.duration\) \? "selected" : ""\}`\}/);
+  assert.match(app, /disabled=\{busy \|\| step > maximum\}/);
 });
 
 test("room deletion is confirmed and blocking bookings lead directly to adjustment", () => {
@@ -301,7 +453,8 @@ test("room deletion is confirmed and blocking bookings lead directly to adjustme
 
 test("past server-local slots cannot open or submit a create flow", () => {
   assert.match(app, /hasBookingStarted\(\{[\s\S]{0,180}serverDate: businessClock\.date/);
-  assert.match(app, /disabled=\{networkOffline \|\| slotStarted\}/);
+  assert.match(app, /const unavailable = slotStarted \|\| outsideWorkHours/);
+  assert.match(app, /disabled=\{networkOffline \|\| unavailable\}/);
   assert.match(app, /error\.code === "BOOKING_STARTED"[\s\S]{0,500}setPreservedDraft\(bookingForm\)/);
   assert.match(app, /drawer\.type === "edit"[\s\S]{0,180}预约已经开始，不能再修改/);
   assert.match(app, /预约内容已保留。请选择当前时间之后的空白时段/);
@@ -368,4 +521,14 @@ test("security audit is Chinese, collapsible, and counts newly received rows", (
   assert.match(app, /auditHiddenRef\.current = nextHidden/);
   assert.match(app, /if \(!nextHidden\) \{[\s\S]{0,120}setAuditUnreadCount\(0\);[\s\S]{0,80}loadAudit\(\)/);
   assert.match(app, /system-audit-unread/);
+});
+
+test("system status offers a quiet administrator work-hours editor", () => {
+  assert.match(app, /system-work-hours-row/);
+  assert.match(app, /type: "system-settings"/);
+  assert.match(app, /api\.updateSystemSettings/);
+  assert.match(app, /validateSystemSettingsForm\(drawer\.form, settings\.slotMinutes\)/);
+  assert.match(app, /已有预约保持不变/);
+  assert.match(app, /outside-work-slot/);
+  assert.match(app, /slots: workingTimeSlots/);
 });

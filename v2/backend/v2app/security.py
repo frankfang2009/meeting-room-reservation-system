@@ -21,6 +21,7 @@ _LOGIN_LOCK = threading.RLock()
 _LOGIN_BUCKET_LIMIT = 4096
 _PASSIVE_SESSION_PATHS = {
     "/api/v1/reminders/due",
+    "/api/v1/rooms",
     "/api/v1/admin/system",
     "/api/v1/admin/audit",
     "/api/v1/admin/tokens",
