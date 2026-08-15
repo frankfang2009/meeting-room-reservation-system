@@ -20,10 +20,26 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - name: Check public repository contracts
         run: python -m unittest v2.tests.test_open_source_contract -v
       - name: Check whitespace
-        run: git diff --check
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"
+          elif [[ "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff-tree --check --root "$PUSH_HEAD_SHA"
+          else
+            git diff --check "$PUSH_BEFORE_SHA..$PUSH_HEAD_SHA"
+          fi
 
   v2-linux:
     name: v2-linux
@@ -77,9 +93,6 @@ jobs:
             echo "production bundle contains forbidden synthetic state"
             exit 1
           fi
-      - name: Check whitespace
-        run: git diff --check
-
   v2-windows:
     name: v2-windows
     runs-on: windows-latest

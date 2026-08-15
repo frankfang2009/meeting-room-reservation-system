@@ -98,6 +98,9 @@ class OpenSourceRepositoryContractTests(unittest.TestCase):
         workflow = (WORKFLOW_ROOT / "ci.yml").read_text(encoding="utf-8")
         for job in ("repository-policy", "v2-linux", "v2-windows"):
             self.assertIn(f"  {job}:", workflow)
+        self.assertIn("fetch-depth: 0", workflow)
+        self.assertIn('git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"', workflow)
+        self.assertIn('git diff --check "$PUSH_BEFORE_SHA..$PUSH_HEAD_SHA"', workflow)
         self.assertNotIn("upload-artifact", workflow)
         self.assertNotIn("v2-reproducible-build.sh", workflow)
         self.assertNotIn("build_package", workflow)
