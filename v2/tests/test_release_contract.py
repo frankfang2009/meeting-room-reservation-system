@@ -89,6 +89,40 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("最近完成", frontend)
         self.assertNotIn("profile-heatmap", frontend)
 
+    def test_external_reminder_template_default_and_privacy_match_across_layers(self) -> None:
+        default_template = (
+            "【笔录提醒】{当事人姓名}您好，您预约的笔录时间为{日期} {开始时间}，"
+            "地点：{笔录室}，请提前到达。如有变动我们会再联系您。"
+        )
+        database = read("backend/v2app/db.py")
+        frontend = read("frontend/src/features/reminders/reminder-template.js")
+        contract = read("docs/API-CONTRACT.md")
+        database_module = ast.parse(database)
+        backend_default = next(
+            ast.literal_eval(node.value)
+            for node in database_module.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "DEFAULT_REMINDER_TEMPLATE"
+                for target in node.targets
+            )
+        )
+        frontend_default = json.loads(
+            re.search(
+                r"export const DEFAULT_REMINDER_TEMPLATE = (\".*\");",
+                frontend,
+            ).group(1)
+        )
+        self.assertEqual(backend_default, default_template)
+        self.assertEqual(frontend_default, default_template)
+        for token in ("{当事人姓名}", "{日期}", "{开始时间}", "{结束时间}", "{笔录室}"):
+            self.assertIn(token, frontend)
+            self.assertIn(token, contract)
+        variable_block = frontend.split("REMINDER_TEMPLATE_VARIABLES = [", 1)[1].split("];", 1)[0]
+        for forbidden in ("案号", "用途", "备注", "caseNumber", "purpose", "notes"):
+            self.assertNotIn(forbidden, variable_block)
+
     def test_production_frontend_has_no_synthetic_business_state(self) -> None:
         source = "\n".join(
             path.read_text(encoding="utf-8")

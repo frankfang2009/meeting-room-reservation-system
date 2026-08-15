@@ -625,3 +625,104 @@
   outline: 2px solid rgba(20, 20, 19, 0.38);
   outline-offset: 3px;
 }
+
+.settings-reminder-template-section {
+  display: grid;
+  gap: 14px;
+  border-bottom: 0;
+}
+
+.settings-reminder-template-section .settings-section-copy {
+  margin-bottom: 0;
+}
+
+.settings-template-field {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-template-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink-secondary);
+  font-size: 14px;
+}
+
+.settings-template-field > span small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-template-field textarea {
+  width: 100%;
+  min-height: 108px;
+  padding: 13px 15px;
+  resize: vertical;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(250, 249, 245, 0.72);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.settings-template-field textarea:focus {
+  border-color: rgba(20, 20, 19, 0.42);
+  background: var(--paper-raised);
+}
+
+.settings-template-field textarea[aria-invalid="true"] {
+  border-color: #a34f3b;
+}
+
+.settings-template-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-template-variables button,
+.settings-template-restore {
+  min-height: 36px;
+  padding: 0 12px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-template-variables button:hover,
+.settings-template-restore:hover {
+  color: var(--ink);
+  border-color: rgba(20, 20, 19, 0.3);
+  background: rgba(20, 20, 19, 0.035);
+}
+
+.settings-template-preview {
+  padding: 14px 16px;
+  border-left: 2px solid var(--hairline-strong);
+  background: rgba(250, 249, 245, 0.58);
+}
+
+.settings-template-preview span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-template-preview p {
+  margin: 7px 0 0;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.settings-template-restore {
+  min-height: 40px;
+  justify-self: start;
+  border-radius: 8px;
+}

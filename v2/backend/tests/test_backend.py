@@ -937,6 +937,64 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(bootstrap_a["preferences"]["defaultTagSlot"], 3)
         self.assertEqual(bootstrap_a["personalTags"][0]["label"], "A 的个人标签")
 
+    def test_reminder_template_validation_default_audit_and_user_isolation(self):
+        default_template = db_module.DEFAULT_REMINDER_TEMPLATE
+        self.assertEqual(
+            self.bootstrap()["preferences"]["reminderTemplate"], default_template
+        )
+        accepted = "请于{日期} {开始时间}到{笔录室}，{当事人姓名}。" + "好" * 172
+        self.assertEqual(len(accepted), 200)
+        saved = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": accepted}
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["reminderTemplate"], accepted)
+        rejected = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": "字" * 201}
+        )
+        self.assertEqual(rejected.status_code, 422, rejected.get_json())
+        self.assertIn(
+            "reminderTemplate", rejected.get_json()["error"].get("fields", {})
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            audit_json = db.execute(
+                "SELECT details_json FROM security_audit_log "
+                "WHERE action = 'preferences.updated' "
+                "ORDER BY occurred_at DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertNotIn(accepted, audit_json)
+        details = json.loads(audit_json)
+        self.assertTrue(details["reminderTemplateUpdated"])
+        self.assertEqual(details["reminderTemplateLength"], 200)
+
+        reset = self.write(
+            "PUT", "/api/v1/preferences", {"reminderTemplate": " \n\t "}
+        )
+        self.assertEqual(reset.status_code, 200, reset.get_json())
+        self.assertEqual(reset.get_json()["reminderTemplate"], default_template)
+
+        self.add_employee("employee-a")
+        self.add_employee("employee-b")
+        employee_a = self.app.test_client()
+        employee_b = self.app.test_client()
+        self.login("employee-a", "employee-pass-123", employee_a)
+        self.login("employee-b", "employee-pass-123", employee_b)
+        custom_a = "A 的提醒：{当事人姓名}，{日期} {开始时间}。"
+        response_a = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"reminderTemplate": custom_a},
+            client=employee_a,
+        )
+        self.assertEqual(response_a.status_code, 200, response_a.get_json())
+        self.assertEqual(
+            self.bootstrap(employee_a)["preferences"]["reminderTemplate"], custom_a
+        )
+        self.assertEqual(
+            self.bootstrap(employee_b)["preferences"]["reminderTemplate"],
+            default_template,
+        )
+
     def test_admin_bootstrap_supplies_owner_personal_tags(self):
         employee = self.add_employee()
         selected = next(

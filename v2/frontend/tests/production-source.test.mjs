@@ -159,6 +159,19 @@ test("reminder lead preference controls both visible copy and editability", () =
   assert.doesNotMatch(productionSource, /开始前30分钟提醒我/);
 });
 
+test("external reminder copy stays manual, scoped, and recoverable", () => {
+  assert.match(app, /canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /canCopyReminder && <button className="copy-reminder-button"/);
+  assert.match(app, /renderReminderTemplate\(bootstrap\?\.preferences\?\.reminderTemplate/);
+  assert.match(app, /提醒信息已复制，可在微信中粘贴发送", "success"/);
+  assert.match(app, /无法自动复制，请手动复制提醒信息", "error"/);
+  assert.match(productionSource, />对外提醒模板</);
+  assert.match(productionSource, /仅复制到剪贴板，由您自行发送/);
+  assert.match(productionSource, /maxLength=\{200\}/);
+  assert.match(app, /setPreferencesDraft\(bootstrap\?\.preferences \|\| \{\}\)/);
+  assert.doesNotMatch(app, /已发送|跳转微信|window\.open\([^)]*微信/);
+});
+
 test("acknowledging a change refreshes affected views and fetches the next notice", () => {
   assert.match(app, /acknowledged\.kind === "change"/);
   assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)\]\)/);

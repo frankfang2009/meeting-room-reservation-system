@@ -30,7 +30,7 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "cff805e2ea4f32246075700629aa1543424b5b5dff637f97f5844f834856dc26";
+const frozenSourceSha256 = "a2258bf3013bbd3a76ae64c4c8da49a88b7a90988d93ff94fc52f47fe203ba10";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -88,6 +88,7 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
+  assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
 });
 

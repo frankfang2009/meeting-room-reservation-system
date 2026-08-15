@@ -53,6 +53,7 @@ import {
 import { RoomAdminForm, RoomDeleteBlocked, RoomDeleteConfirmation, UserAdminForm } from "./features/admin/AdminForms.jsx";
 import { PersonalCenter } from "./features/profile/PersonalCenter.jsx";
 import { readUiPreferences, writeUiPreferences } from "./features/profile/ui-preferences.js";
+import { renderReminderTemplate } from "./features/reminders/reminder-template.js";
 import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
 import {
   dateLabel,
@@ -879,7 +880,7 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
   </form>;
 }
 
-function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState, eventsAllowed, onEdit, onCancel, onClose, onRetryEvents }) {
+function BookingDetails({ booking, tag, canCopyReminder, canEdit, canCancel, events, eventsState, eventsAllowed, onCopyReminder, onEdit, onCancel, onClose, onRetryEvents }) {
   return <div className="booking-details">
     <div className="selection-summary"><h2>{booking.start}–{booking.end}</h2><p>{dateLabel(booking.date)}</p>{booking.status && <span className={`drawer-status ${booking.status}`}><i />{reservationStatusLabel(booking.status)}</span>}</div>
     <dl>
@@ -895,7 +896,7 @@ function BookingDetails({ booking, tag, canEdit, canCancel, events, eventsState,
       <h3 id="booking-events-heading">变更记录</h3>
       {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note booking-events-error">暂时无法读取变更记录<button type="button" onClick={onRetryEvents}>重新读取</button></p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
     </section>}
-    {(canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
+    {(canCopyReminder || canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCopyReminder && <button className="copy-reminder-button" onClick={onCopyReminder}><CopySimple size={17} />复制提醒信息</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}{!canEdit && !canCancel && <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
   </div>;
 }
 
@@ -1341,6 +1342,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openPersonalCenter() {
+    setPreferencesDraft(bootstrap?.preferences || {});
+    setPreferencesErrors({});
+    setUiPreferencesDraft(readUiPreferences(currentUser.id));
     setProfileTab("activity");
     navigate("settings");
   }
@@ -2228,7 +2232,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       setUiPreferencesDraft(nextUiPreferences);
       setToast("个人设置已保存", "success");
     } catch (error) {
-      if (error?.fields?.name) setPreferencesErrors({ name: error.fields.name });
+      if (error?.fields) setPreferencesErrors(error.fields);
       handleError(error, "保存个人设置失败");
     } finally {
       setPreferencesSaving(false);
@@ -2276,7 +2280,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer.type === "details") {
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";
-      return <BookingDetails booking={booking} tag={tagFor(booking)} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
+      const canCopyReminder = canManage && booking.status === "active" && !hasBookingStarted({ date: booking.date, start: booking.start, serverDate: businessClock.date, serverTime: businessClock.time });
+      return <BookingDetails booking={booking} tag={tagFor(booking)} canCopyReminder={canCopyReminder} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onCopyReminder={async () => { const message = renderReminderTemplate(bootstrap?.preferences?.reminderTemplate, { partyName: booking.partyName, date: dateLabel(booking.date).split(" · ")[0], start: booking.start, end: booking.end, roomName: booking.roomName }); try { await copyText(message); setToast("提醒信息已复制，可在微信中粘贴发送", "success"); } catch { setToast("无法自动复制，请手动复制提醒信息", "error"); } }} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {dateLabel(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking, false, drawer.returnTo)}>返回</button></div></div>;
     if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;

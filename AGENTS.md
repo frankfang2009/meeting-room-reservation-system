@@ -28,6 +28,9 @@
 - Upcoming-booking reminders use a small clock badge on the My Reservations rail action instead of
   a persistent bottom toast; opening My Reservations acknowledges that reminder. Change notices
   remain distinct and must not be mislabeled as an upcoming-booking clock.
+- Copying external reminder text is a manual clipboard-only action and must never connect to an
+  outbound channel, open WeChat, or claim/record a sent state. Its variable set is fixed to party
+  name, date, start, end, and room; case number, purpose, and notes must never enter the template.
 - Reservation status codes are never rendered directly. History keeps cancelled records visible
   with a restrained `已取消` treatment, while active records retain their tag-color marker.
 - A draft preserved after a slot conflict remains visibly identified on the calendar. Selecting a
