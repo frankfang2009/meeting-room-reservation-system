@@ -1,0 +1,20 @@
+/* Global cascade manifest. Keep imports in this order. */
+@import "./styles/foundation.css";
+@import "./styles/login.css";
+@import "./styles/setup.css";
+@import "./styles/shell.css";
+@import "./styles/dashboard.css";
+@import "./styles/history.css";
+@import "./styles/rooms.css";
+@import "./styles/calendar.css";
+@import "./styles/drawer-shell.css";
+@import "./styles/booking-forms.css";
+@import "./styles/settings.css";
+@import "./styles/system.css";
+@import "./styles/users.css";
+@import "./styles/public-display.css";
+@import "./styles/runtime-states.css";
+@import "./styles/responsive.css";
+@import "./styles/production-flows.css";
+@import "./styles/system-extensions.css";
+@import "./styles/accessibility.css";

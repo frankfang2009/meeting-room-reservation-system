@@ -1,6 +1,7 @@
 .DS_Store
 .venv-local/
 .venv/
+.tools/
 .playwright-cli/
 
 **/__pycache__/
@@ -12,6 +13,9 @@
 **/logs/
 **/backups/
 **/runtime/
+!v2/backend/v2app/runtime/
+!v2/backend/v2app/runtime/**
+v2/backend/v2app/runtime/**/__pycache__/
 **/_升级回滚/
 **/_升级状态.json
 **/_升级锁
@@ -33,3 +37,5 @@
 ci-artifacts/
 coverage.xml
 .coverage
+v2/out/
+v2/frontend/qa/

@@ -13,6 +13,18 @@
         <a class="button button-secondary" href="{{ url_for('index', date=prev_date) }}">前一天</a>
         <a class="button {% if current_date == today %}button-primary{% else %}button-secondary{% endif %}" href="{{ url_for('index') }}">今天</a>
         <a class="button button-secondary" href="{{ url_for('index', date=next_date) }}">后一天</a>
+        <form class="date-jump-form" action="{{ url_for('index') }}" method="get">
+            <label>
+                <span>直达日期</span>
+                <input
+                    type="date"
+                    name="date"
+                    value="{{ current_date.isoformat() }}"
+                    aria-label="选择要查看的日期"
+                >
+            </label>
+            <button class="button button-secondary" type="submit">前往</button>
+        </form>
     </div>
 </section>
 
@@ -39,9 +51,23 @@
                     {% for room in rooms %}
                         {% set reservation = room.slot_map.get(slot) %}
                         {% if reservation %}
-                        <td class="calendar-slot busy-slot" title="{{ reservation.party_name or '' }} {{ reservation.case_number or '' }}（{{ reservation.start_time }}–{{ reservation.end_time }}，预约人：{{ reservation.display_name }}）">
-                            <strong>{{ reservation.display_name }}</strong>
-                            {% if reservation.party_name %}<span>{{ reservation.party_name }}</span>{% endif %}
+                        <td class="calendar-slot busy-slot">
+                            <button
+                                class="busy-slot-button"
+                                type="button"
+                                data-reservation-details
+                                data-reservation-person="{{ reservation.display_name }}"
+                                data-reservation-party="{{ reservation.party_name or '' }}"
+                                data-reservation-case="{{ reservation.case_number or '' }}"
+                                data-reservation-room="{{ room.name }}"
+                                data-reservation-date="{{ reservation.reserve_date }}"
+                                data-reservation-start="{{ reservation.start_time }}"
+                                data-reservation-end="{{ reservation.end_time }}"
+                                aria-label="查看预约详情：{{ reservation.start_time }}至{{ reservation.end_time }}，预约人{{ reservation.display_name }}"
+                            >
+                                <strong>{{ reservation.display_name }}</strong>
+                                {% if reservation.party_name %}<span>{{ reservation.party_name }}</span>{% endif %}
+                            </button>
                         </td>
                         {% elif slot in past_slots %}
                         <td class="calendar-slot expired-slot">
@@ -62,8 +88,27 @@
 <div class="calendar-legend">
     <span><i class="legend-dot free-dot"></i>空闲可预约</span>
     <span><i class="legend-dot busy-dot"></i>已预约</span>
-    <span class="legend-help">点击“空闲”即可预约</span>
+    <span class="legend-help">点击“空闲”预约，点击已预约时段查看详情</span>
 </div>
+<dialog id="reservation-details-dialog" class="edit-dialog reservation-details-dialog" aria-labelledby="reservation-details-title">
+    <div class="dialog-form">
+        <div class="dialog-heading">
+            <h2 id="reservation-details-title">预约详情</h2>
+            <button class="dialog-close" type="button" data-close-dialog aria-label="关闭">×</button>
+        </div>
+        <dl class="reservation-details-list">
+            <div><dt>会议室</dt><dd data-reservation-detail="room">—</dd></div>
+            <div><dt>日期</dt><dd data-reservation-detail="date">—</dd></div>
+            <div><dt>时间</dt><dd data-reservation-detail="time">—</dd></div>
+            <div><dt>预约人</dt><dd data-reservation-detail="person">—</dd></div>
+            <div><dt>当事人/单位</dt><dd data-reservation-detail="party">—</dd></div>
+            <div><dt>案号</dt><dd data-reservation-detail="case">—</dd></div>
+        </dl>
+        <div class="dialog-actions">
+            <button class="button button-primary" type="button" data-close-dialog>知道了</button>
+        </div>
+    </div>
+</dialog>
 {% else %}
 <div class="empty-state card">
     <h2>暂无可用会议室</h2>

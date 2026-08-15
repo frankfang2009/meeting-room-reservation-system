@@ -1,0 +1,65 @@
+:root {
+  color: #141413;
+  background: #f5f4ed;
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --paper: #f5f4ed;
+  --paper-soft: #f0eee6;
+  --paper-raised: #faf9f5;
+  --ink: #141413;
+  --ink-secondary: #3d3d3a;
+  --muted: #66655f;
+  --faint: #6d6c66;
+  --hairline: rgba(20, 20, 19, 0.075);
+  --hairline-strong: rgba(20, 20, 19, 0.16);
+  --terracotta: #d97757;
+  --terracotta-text: #a4523d;
+  --terracotta-soft: #faede7;
+  --terracotta-line: #efc4b5;
+  --focus: #3d3d3a;
+  --rail-width: 80px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--paper);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--paper);
+}

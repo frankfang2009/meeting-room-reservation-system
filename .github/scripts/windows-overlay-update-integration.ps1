@@ -4,6 +4,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $toolRoot = Join-Path $repoRoot '02_开发工作区\升级包工具'
 $builder = Join-Path $toolRoot '制作覆盖更新包.py'
+$formalBuilder = Join-Path $toolRoot '制作正式更新包.py'
+$v100Reference = Join-Path $repoRoot '02_开发工作区\Windows部署目录-V1.0.0'
 $v101Reference = Join-Path $repoRoot '02_开发工作区\Windows部署目录-V1.0.1-待实机验收'
 $workRoot = Join-Path $env:RUNNER_TEMP 'meeting-room-overlay-ci'
 $releaseRoot = Join-Path $workRoot 'release'
@@ -154,13 +156,22 @@ function Assert-TreeUnchanged {
 }
 
 function New-TestInstall {
-    param([string]$Root)
-    Copy-TreeWithRobocopy -Source $v101Reference -Destination $Root
+    param(
+        [string]$Root,
+        [string]$SourceRoot = $v101Reference,
+        [string]$ExpectedVersion = '1.0.1'
+    )
+    Copy-TreeWithRobocopy -Source $SourceRoot -Destination $Root
     $programRoot = Join-Path $Root '_程序文件'
     $runtimePython = Join-Path $programRoot 'runtime\python.exe'
+    if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) {
+        Copy-TreeWithRobocopy `
+            -Source (Join-Path $v101Reference '_程序文件\runtime') `
+            -Destination (Join-Path $programRoot 'runtime')
+    }
     Assert-True (
         Test-Path -LiteralPath $runtimePython -PathType Leaf
-    ) "冻结 V1.0.1 安装缺少 runtime\python.exe：$Root"
+    ) "测试安装缺少 runtime\python.exe：$Root"
 
     $hadPassword = Test-Path -LiteralPath 'Env:MEETING_ROOM_INITIAL_ADMIN_PASSWORD'
     $oldPassword = [Environment]::GetEnvironmentVariable(
@@ -250,9 +261,18 @@ database.close()
         [byte[]](0, 1, 2, 3, 13, 10, 255, 128, 64)
     )
 
-    Assert-True (
-        (Get-Content -LiteralPath (Join-Path $programRoot '版本.txt') -Raw).Trim() -eq '1.0.1'
-    ) "测试安装不是冻结 V1.0.1：$Root"
+    $versionPath = Join-Path $programRoot '版本.txt'
+    if ($ExpectedVersion -eq '1.0.0') {
+        Assert-True (
+            -not (Test-Path -LiteralPath $versionPath)
+        ) "V1.0.0 测试安装不应存在版本.txt：$Root"
+    }
+    else {
+        Assert-True (
+            (Get-Content -LiteralPath $versionPath -Raw).Trim() -eq
+                $ExpectedVersion
+        ) "测试安装版本不是 $ExpectedVersion：$Root"
+    }
     return $Root
 }
 
@@ -269,6 +289,22 @@ function Expand-RepairPackage {
     Assert-True (
         Test-Path -LiteralPath (Join-Path $Destination '_V1.0.2更新工具\update.py') -PathType Leaf
     ) "修复 ZIP 缺少 update.py：$Destination"
+    return $specialLauncher
+}
+
+function Expand-FormalPackage {
+    param([string]$Artifact, [string]$Destination)
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Expand-Archive -LiteralPath $Artifact -DestinationPath $Destination -Force
+    $originalLauncher = Join-Path $Destination '更新到V1.0.3-候选版.bat'
+    $specialLauncher = Join-Path $Destination '更新到V1.0.3 候选版 (1) & CI.bat'
+    Assert-True (
+        Test-Path -LiteralPath $originalLauncher -PathType Leaf
+    ) "候选更新 ZIP 缺少零参数 BAT：$originalLauncher"
+    Move-Item -LiteralPath $originalLauncher -Destination $specialLauncher
+    Assert-True (
+        Test-Path -LiteralPath (Join-Path $Destination '_V1.0.3更新工具\update.py') -PathType Leaf
+    ) "候选更新 ZIP 缺少 update.py：$Destination"
     return $specialLauncher
 }
 
@@ -403,6 +439,31 @@ print(bundle.release, bundle.baseline.version, bundle.target.version)
         Out-Null
 }
 
+function Assert-FormalPackageContract {
+    param([string]$PackageRoot)
+    $tool = Join-Path $PackageRoot '_V1.0.3更新工具'
+    $runtimePython = Join-Path $tool 'runtime\python.exe'
+    $code = @'
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path(sys.argv[1])
+engine_path = tool / "_formal_engine.py"
+spec = importlib.util.spec_from_file_location("formal_ci_engine", engine_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+bundle = module.Bundle.load(tool)
+print(bundle.release, bundle.baseline.version, bundle.target.version)
+'@
+    Invoke-PythonCodeChecked `
+        -Python $runtimePython `
+        -Code $code `
+        -Arguments @($tool) |
+        Out-Null
+}
+
 function Assert-InstalledPayload {
     param(
         [string]$PackageRoot,
@@ -440,6 +501,40 @@ print("installed-payload-ok", payload.version)
         Out-Null
 }
 
+function Assert-FormalInstalledPayload {
+    param(
+        [string]$PackageRoot,
+        [string]$InstallRoot,
+        [ValidateSet('baseline', 'target')]
+        [string]$Payload
+    )
+    $tool = Join-Path $PackageRoot '_V1.0.3更新工具'
+    $runtimePython = Join-Path $tool 'runtime\python.exe'
+    $code = @'
+import importlib.util
+import pathlib
+import sys
+
+tool = pathlib.Path(sys.argv[1])
+install = pathlib.Path(sys.argv[2])
+payload_name = sys.argv[3]
+engine_path = tool / "_formal_engine.py"
+spec = importlib.util.spec_from_file_location("formal_ci_engine", engine_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+bundle = module.Bundle.load(tool)
+payload = bundle.baseline if payload_name == "baseline" else bundle.target
+module._assert_installed_payload(install, payload, include_version=True)
+print("installed-formal-payload-ok", payload.version)
+'@
+    Invoke-PythonCodeChecked `
+        -Python $runtimePython `
+        -Code $code `
+        -Arguments @($tool, $InstallRoot, $Payload) |
+        Out-Null
+}
+
 function Get-LatestRepairLog {
     param([string]$InstallRoot)
     $logs = @(
@@ -450,6 +545,19 @@ function Get-LatestRepairLog {
             Sort-Object LastWriteTimeUtc, Name
     )
     Assert-True ($logs.Count -gt 0) "没有找到 repair-update 日志：$InstallRoot"
+    return $logs[-1].FullName
+}
+
+function Get-LatestFormalLog {
+    param([string]$InstallRoot)
+    $logs = @(
+        Get-ChildItem `
+            -LiteralPath (Join-Path $InstallRoot '_程序文件\logs') `
+            -File `
+            -Filter 'formal-update-*.log' |
+            Sort-Object LastWriteTimeUtc, Name
+    )
+    Assert-True ($logs.Count -gt 0) "没有找到 formal-update 日志：$InstallRoot"
     return $logs[-1].FullName
 }
 
@@ -494,8 +602,11 @@ function Assert-RepeatNoOpLog {
 }
 
 function Set-TargetHealthCheckFailure {
-    param([string]$PackageRoot)
-    $tool = Join-Path $PackageRoot '_V1.0.2更新工具'
+    param(
+        [string]$PackageRoot,
+        [string]$ToolFolder = '_V1.0.2更新工具'
+    )
+    $tool = Join-Path $PackageRoot $ToolFolder
     $runtimePython = Join-Path $tool 'runtime\python.exe'
     $code = @'
 import hashlib
@@ -592,6 +703,14 @@ $results = [ordered]@{
     lock_exit_code = $null
     target_failure_exit_code = $null
     target_failure_baseline_restored = $false
+    formal_candidate_manifest = $false
+    formal_v100_success = $false
+    formal_v101_success = $false
+    formal_clean_v102_success = $false
+    formal_r1_residue_success = $false
+    formal_repeat_success = $false
+    formal_target_failure_exit_code = $null
+    formal_target_failure_baseline_restored = $false
 }
 
 try {
@@ -925,6 +1044,209 @@ with module.ExclusiveLock(lock_path):
     $results.target_failure_exit_code = [int]$failureExit
     $results.target_failure_baseline_restored = $true
 
+    # 构建后续正式更新通道的 V1.0.3 候选 ZIP。该 ZIP 顶层仍是零参数 BAT，
+    # 提权由包内 Python 直接完成；这里的 hosted runner 已提升，不能替代
+    # 普通用户 Explorer -> UAC / SmartScreen / EDR 人工验收。
+    $formalReleaseRoot = Join-Path $workRoot 'formal-release'
+    New-Item -ItemType Directory -Path $formalReleaseRoot -Force | Out-Null
+    Invoke-NativeChecked `
+        -FilePath $hostPython `
+        -Arguments @($formalBuilder, '--release-root', $formalReleaseRoot) |
+        Out-Null
+    $formalReleaseDir = Join-Path $formalReleaseRoot 'V1.0.3-candidate'
+    $formalArtifact = Join-Path $formalReleaseDir '会议室预约系统-V1.0.3-候选更新.zip'
+    $formalManifestPath = Join-Path $formalReleaseDir 'V1.0.3-候选更新清单.json'
+    Assert-True (
+        Test-Path -LiteralPath $formalArtifact -PathType Leaf
+    ) "构建没有生成 V1.0.3 候选更新 ZIP：$formalArtifact"
+    $formalManifest = Get-Content -LiteralPath $formalManifestPath -Raw |
+        ConvertFrom-Json
+    Assert-True (
+        [string]$formalManifest.status -eq 'windows_acceptance_candidate_only'
+    ) 'V1.0.3 清单没有标记为仅供 Windows 实机验收的候选版'
+    Assert-True (
+        -not ([bool]$formalManifest.acceptance.formal_external_release_allowed)
+    ) 'V1.0.3 候选清单错误允许正式外发'
+    Assert-True (
+        [bool]$formalManifest.acceptance.automation_is_not_uac_smartscreen_edr_or_lan_acceptance
+    ) 'V1.0.3 候选清单缺少自动化验收边界'
+    $formalHash = (
+        Get-FileHash -LiteralPath $formalArtifact -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    Assert-True (
+        $formalHash -eq [string]$formalManifest.artifact.sha256
+    ) 'V1.0.3 候选 ZIP 与清单 SHA-256 不一致'
+    $results.formal_candidate_manifest = $true
+
+    $formalPackage = Join-Path $workRoot 'formal-package 中文 空格 & (1)'
+    $formalLauncher = Expand-FormalPackage `
+        -Artifact $formalArtifact `
+        -Destination $formalPackage
+    Assert-FormalPackageContract -PackageRoot $formalPackage
+
+    # 实际 V1.0.0 没有版本.txt；保留 V1.0.1 冻结 runtime，只让受管程序保持
+    # V1.0.0 形态，验证完整正式更新无需旧累计 RunAs BAT。
+    $formalV100Install = Join-Path $installsRoot '正式通道-V1.0.0-无版本文件'
+    New-TestInstall `
+        -Root $formalV100Install `
+        -SourceRoot $v100Reference `
+        -ExpectedVersion '1.0.0' |
+        Out-Null
+    $formalV100Data = Join-Path $formalV100Install '_程序文件\data'
+    $formalV100Before = Get-TreeFingerprint -Root $formalV100Data
+    $formalV100Exit = Invoke-ZeroArgumentBat `
+        -BatPath $formalLauncher `
+        -InstallRoot $formalV100Install
+    Assert-True ($formalV100Exit -eq 0) "V1.0.0 正式通道退出码不是 0：$formalV100Exit"
+    Assert-TreeUnchanged `
+        -Root $formalV100Data `
+        -ExpectedFingerprint $formalV100Before `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-v100-data-after.json') `
+        -Description 'V1.0.0 正式通道后的真实 data'
+    Assert-FormalInstalledPayload `
+        -PackageRoot $formalPackage `
+        -InstallRoot $formalV100Install `
+        -Payload target
+    $results.formal_v100_success = $true
+
+    $formalV101Install = Join-Path $installsRoot '正式通道-V1.0.1'
+    New-TestInstall -Root $formalV101Install | Out-Null
+    $formalV101Data = Join-Path $formalV101Install '_程序文件\data'
+    $formalV101Before = Get-TreeFingerprint -Root $formalV101Data
+    $formalV101Exit = Invoke-ZeroArgumentBat `
+        -BatPath $formalLauncher `
+        -InstallRoot $formalV101Install
+    Assert-True ($formalV101Exit -eq 0) "V1.0.1 正式通道退出码不是 0：$formalV101Exit"
+    Assert-TreeUnchanged `
+        -Root $formalV101Data `
+        -ExpectedFingerprint $formalV101Before `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-v101-data-after.json') `
+        -Description 'V1.0.1 正式通道后的真实 data'
+    Assert-FormalInstalledPayload `
+        -PackageRoot $formalPackage `
+        -InstallRoot $formalV101Install `
+        -Payload target
+    $results.formal_v101_success = $true
+
+    # successInstall 是前面通过真实 r1 零参数 BAT 得到的干净 V1.0.2。
+    $formalV102Before = Get-TreeFingerprint -Root $successData
+    $formalV102Exit = Invoke-ZeroArgumentBat `
+        -BatPath $formalLauncher `
+        -InstallRoot $successInstall
+    Assert-True ($formalV102Exit -eq 0) "干净 V1.0.2 正式通道退出码不是 0：$formalV102Exit"
+    Assert-TreeUnchanged `
+        -Root $successData `
+        -ExpectedFingerprint $formalV102Before `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-v102-data-after.json') `
+        -Description '干净 V1.0.2 正式通道后的真实 data'
+    Assert-FormalInstalledPayload `
+        -PackageRoot $formalPackage `
+        -InstallRoot $successInstall `
+        -Payload target
+    $results.formal_clean_v102_success = $true
+
+    $formalRepeatExit = Invoke-ZeroArgumentBat `
+        -BatPath $formalLauncher `
+        -InstallRoot $successInstall
+    Assert-True ($formalRepeatExit -eq 0) "V1.0.3 重复执行退出码不是 0：$formalRepeatExit"
+    Assert-TreeUnchanged `
+        -Root $successData `
+        -ExpectedFingerprint $formalV102Before `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-repeat-data-after.json') `
+        -Description 'V1.0.3 重复执行后的真实 data'
+    $formalRepeatLog = Get-LatestFormalLog -InstallRoot $successInstall
+    $formalRepeatText = [IO.File]::ReadAllText(
+        $formalRepeatLog,
+        (New-Object Text.UTF8Encoding($false, $true))
+    )
+    Assert-True (
+        $formalRepeatText.Contains(
+            '当前受管程序和 runtime 已严格匹配 V1.0.3-candidate；本次无需停机、无需回写 data'
+        )
+    ) 'V1.0.3 重复执行日志没有证明严格匹配后的无写入收敛'
+    $results.formal_repeat_success = $true
+
+    # failureInstall 保留 r1 的 baseline_rollback_complete 状态。正式入口必须
+    # 先用随包冻结 r1 恢复负载收敛，再进入 V1.0.3 自己的事务。
+    # 该状态最初来自“篡改目标包后注入健康检查失败”的测试包，所以其中的
+    # target 哈希和安装身份都不属于待模拟的正式 r1 残留。真实 r1 残留不会
+    # 有这种差异；这里只校正 fixture 的身份字段，不修改事务阶段、事务 ID、
+    # 快照、程序或 data。
+    $failureState.target_zip_sha256 = [string](
+        $formalManifest.recovery.target_payload_zip_sha256
+    )
+    $failureState.install_root = [string](
+        (Resolve-Path -LiteralPath $failureInstall).Path
+    )
+    Write-Utf8NoBom `
+        -Path $failureStatePath `
+        -Content (($failureState | ConvertTo-Json -Depth 8) + "`n")
+    $formalR1Data = Join-Path $failureInstall '_程序文件\data'
+    $formalR1Before = Get-TreeFingerprint -Root $formalR1Data
+    $formalR1Exit = Invoke-ZeroArgumentBat `
+        -BatPath $formalLauncher `
+        -InstallRoot $failureInstall
+    Assert-True ($formalR1Exit -eq 0) "r1 修复残留正式通道退出码不是 0：$formalR1Exit"
+    Assert-TreeUnchanged `
+        -Root $formalR1Data `
+        -ExpectedFingerprint $formalR1Before `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-r1-residue-data-after.json') `
+        -Description 'r1 修复残留收敛后的真实 data'
+    Assert-FormalInstalledPayload `
+        -PackageRoot $formalPackage `
+        -InstallRoot $failureInstall `
+        -Payload target
+    Assert-True (
+        -not (Test-Path -LiteralPath (Join-Path $failureProgram '_V102覆盖更新状态.json'))
+    ) 'V1.0.3 成功后仍保留未完成的 r1 状态'
+    Assert-True (
+        -not (Test-Path -LiteralPath (Join-Path $failureProgram '_正式更新状态.json'))
+    ) 'V1.0.3 成功后仍保留正式更新状态'
+    $results.formal_r1_residue_success = $true
+
+    # 独立包注入 V1.0.3 目标健康检查失败：应返回 1、data 不变，并回到
+    # 已逐文件校验的 V1.0.2 安全基线。
+    $formalFailurePackage = Join-Path $workRoot 'formal-failure-package'
+    $formalFailureLauncher = Expand-FormalPackage `
+        -Artifact $formalArtifact `
+        -Destination $formalFailurePackage
+    Set-TargetHealthCheckFailure `
+        -PackageRoot $formalFailurePackage `
+        -ToolFolder '_V1.0.3更新工具'
+    Assert-FormalPackageContract -PackageRoot $formalFailurePackage
+    $formalFailureInstall = Join-Path $installsRoot '正式通道-目标失败回滚'
+    New-TestInstall -Root $formalFailureInstall | Out-Null
+    $formalFailureProgram = Join-Path $formalFailureInstall '_程序文件'
+    $formalFailureData = Join-Path $formalFailureProgram 'data'
+    $formalFailureBefore = Get-TreeFingerprint -Root $formalFailureData
+    $formalFailureExit = Invoke-ZeroArgumentBat `
+        -BatPath $formalFailureLauncher `
+        -InstallRoot $formalFailureInstall
+    Assert-True (
+        $formalFailureExit -eq 1
+    ) "V1.0.3 目标失败退出码不是 1：$formalFailureExit"
+    Assert-TreeUnchanged `
+        -Root $formalFailureData `
+        -ExpectedFingerprint $formalFailureBefore `
+        -EvidencePath (Join-Path $evidenceRoot 'formal-failure-data-after.json') `
+        -Description 'V1.0.3 目标失败回滚后的真实 data'
+    Assert-FormalInstalledPayload `
+        -PackageRoot $formalFailurePackage `
+        -InstallRoot $formalFailureInstall `
+        -Payload baseline
+    Assert-True (
+        (Get-Content -LiteralPath (Join-Path $formalFailureProgram '版本.txt') -Raw).Trim() -eq
+            '1.0.2'
+    ) 'V1.0.3 目标失败后没有回到 V1.0.2 安全基线'
+    $formalFailureStatePath = Join-Path $formalFailureProgram '_正式更新状态.json'
+    $formalFailureState = Get-Content -LiteralPath $formalFailureStatePath -Raw |
+        ConvertFrom-Json
+    Assert-True (
+        [string]$formalFailureState.stage -eq 'baseline_rollback_complete'
+    ) "V1.0.3 目标失败状态错误：$($formalFailureState.stage)"
+    $results.formal_target_failure_exit_code = [int]$formalFailureExit
+    $results.formal_target_failure_baseline_restored = $true
+
     Write-Utf8NoBom `
         -Path (Join-Path $evidenceRoot 'summary.json') `
         -Content (($results | ConvertTo-Json -Depth 8) + "`n")
@@ -951,6 +1273,15 @@ finally {
         Copy-Item `
             -LiteralPath $launcherLog `
             -Destination (Join-Path $evidenceRoot 'meetingroom_v102_repair_launcher.log') `
+            -Force
+    }
+    $formalLauncherLog = Join-Path ([IO.Path]::GetTempPath()) (
+        'meetingroom_formal_update_launcher.log'
+    )
+    if (Test-Path -LiteralPath $formalLauncherLog -PathType Leaf) {
+        Copy-Item `
+            -LiteralPath $formalLauncherLog `
+            -Destination (Join-Path $evidenceRoot 'meetingroom_formal_update_launcher.log') `
             -Force
     }
 }

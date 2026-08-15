@@ -1,0 +1,125 @@
+name: V2 baseline
+
+on:
+  pull_request:
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-baseline.yml"
+      - ".github/scripts/v2-reproducible-build.sh"
+      - ".github/scripts/v2-windows-candidate-gate.ps1"
+  push:
+    branches:
+      - "codex/v2.0.0-baseline"
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-baseline.yml"
+      - ".github/scripts/v2-reproducible-build.sh"
+      - ".github/scripts/v2-windows-candidate-gate.ps1"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            v2/backend/requirements.txt
+            v2/backend/requirements-dev.txt
+      - name: Install backend runtime dependencies
+        run: python -m pip install --requirement v2/backend/requirements.txt --requirement v2/backend/requirements-dev.txt
+      - name: Python static gate
+        run: python -m ruff check v2/backend v2/installer v2/tests
+      - name: Backend tests
+        working-directory: v2/backend
+        env:
+          PYTHONWARNINGS: error::ResourceWarning
+        run: python -m unittest discover -s tests -v
+      - name: Installer and updater tests
+        run: python -m unittest discover -s v2/installer/tests -v
+      - name: Cross-layer release contracts
+        run: python -m unittest discover -s v2/tests -v
+      - name: Python compile gate
+        run: python -m compileall -q v2/backend v2/installer v2/tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Frontend locked install
+        working-directory: v2/frontend
+        run: npm ci
+      - name: Frontend contracts
+        working-directory: v2/frontend
+        run: npm run check
+      - name: Production bundle leak gate
+        shell: bash
+        run: |
+          if grep -R -E "demo123|TEST-2026|INITIAL_CALENDAR_BOOKINGS|/api/v2" v2/frontend/dist/client; then
+            echo "production bundle contains forbidden synthetic state"
+            exit 1
+          fi
+      - name: Independently rebuild source-to-candidate twice
+        shell: bash
+        env:
+          CANDIDATE_OUTPUT: ${{ runner.temp }}/meeting-room-v2-candidate
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/meeting-room-v2-approved-inputs"
+          mkdir -p "$input_root/wheels"
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform win_amd64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$input_root/wheels" \
+            --requirement v2/backend/requirements-win-amd64.lock
+          curl --fail --location --silent --show-error \
+            --output "$input_root/python-3.13.14-embed-amd64.zip" \
+            https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip
+          .github/scripts/v2-reproducible-build.sh \
+            "$GITHUB_WORKSPACE" \
+            "$RUNNER_TEMP/meeting-room-v2-independent-builds" \
+            "$input_root/python-3.13.14-embed-amd64.zip" \
+            "$input_root/wheels" \
+            "$CANDIDATE_OUTPUT"
+      - name: Upload independently reproduced candidate six-pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: meeting-room-v2-candidate
+          path: ${{ runner.temp }}/meeting-room-v2-candidate
+          if-no-files-found: error
+          retention-days: 7
+      - name: Repository whitespace gate
+        run: git diff --check
+
+  windows-installer-contracts:
+    needs: linux-contracts
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile Windows delivery Python
+        run: python -m compileall -q v2/installer
+      - name: Run cross-platform installer transaction tests
+        run: python -m unittest discover -s v2/installer/tests -v
+      - name: Download real candidate six-pack
+        uses: actions/download-artifact@v4
+        with:
+          name: meeting-room-v2-candidate
+          path: ${{ runner.temp }}/meeting-room-v2-candidate
+      - name: Gate real zero-argument candidate entrypoints
+        shell: pwsh
+        run: .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V2.0.0-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"

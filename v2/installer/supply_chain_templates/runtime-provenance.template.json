@@ -1,0 +1,47 @@
+{
+  "artifacts": {
+    "requirements_lock": {
+      "file": "supply-chain/requirements.lock",
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    },
+    "sbom": {
+      "file": "supply-chain/sbom.cdx.json",
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    },
+    "third_party_notices": {
+      "file": "supply-chain/THIRD-PARTY-NOTICES.txt",
+      "sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+    }
+  },
+  "components": {
+    "blinker": "1.9.0",
+    "click": "8.4.2",
+    "colorama": "0.4.6",
+    "Flask": "3.1.3",
+    "importlib-metadata": "9.0.0",
+    "itsdangerous": "2.2.0",
+    "Jinja2": "3.1.6",
+    "MarkupSafe": "3.0.3",
+    "waitress": "3.0.2",
+    "Werkzeug": "3.1.8",
+    "zipp": "4.1.0"
+  },
+  "python": {
+    "architecture": "amd64",
+    "implementation": "CPython",
+    "source_sha256": "90b4e5b9898b72d744650524bff92377c367f44bd5fbd09e3148656c080ad907",
+    "source_url": "https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip",
+    "version": "3.13.14"
+  },
+  "runtime": {
+    "files": [
+      {
+        "path": "REPLACE_WITH_SORTED_RUNTIME_FILE_RECORDS",
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+        "size": 0
+      }
+    ],
+    "tree_sha256": "REPLACE_WITH_64_LOWERCASE_HEX"
+  },
+  "schema": 1
+}

@@ -8,40 +8,101 @@
     </div>
 </section>
 
-{% if reservations %}
-<section class="card table-card">
-    <div class="table-scroll">
-        <table class="data-table">
-            <thead>
-                <tr>
-                    <th>日期</th><th>时间</th><th>会议室</th><th>当事人/单位</th>
-                    <th>案号</th><th>备注</th><th>状态</th><th>操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for reservation in reservations %}
-                <tr>
-                    <td>{{ reservation.reserve_date }}</td>
-                    <td class="nowrap">{{ reservation.start_time }}–{{ reservation.end_time }}</td>
-                    <td>{{ reservation.room_name }}</td>
-                    <td>{{ reservation.party_name or '—' }}</td>
-                    <td>{{ reservation.case_number or '—' }}</td>
-                    <td>{{ reservation.notes or '—' }}</td>
-                    <td><span class="status status-{{ 'pending' if reservation.display_status == '待使用' else ('cancelled' if reservation.display_status == '已取消' else 'done') }}">{{ reservation.display_status }}</span></td>
-                    <td>
-                        {% if reservation.display_status == '待使用' %}
-                        <form method="post" action="{{ url_for('cancel_reservation', res_id=reservation.id) }}" data-confirm="取消后该时段会重新开放，确定取消吗？">
-                            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-                            <button class="button button-danger button-small" type="submit">取消预约</button>
-                        </form>
-                        {% else %}—{% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+{% macro status_badge(reservation) -%}
+<span class="status status-{{ 'pending' if reservation.display_status == '待使用' else ('cancelled' if reservation.display_status == '已取消' else 'done') }}">{{ reservation.display_status }}</span>
+{%- endmacro %}
+
+{% macro cancel_action(reservation) -%}
+{% if reservation.display_status == '待使用' %}
+<form method="post" action="{{ url_for('cancel_reservation', res_id=reservation.id) }}" data-confirm="取消后该时段会重新开放，确定取消吗？">
+    <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+    <button class="button button-danger button-small" type="submit">取消预约</button>
+</form>
+{% else %}—{% endif %}
+{%- endmacro %}
+
+{% macro reservation_table(items) -%}
+<div class="table-scroll reservation-table-desktop">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>日期</th><th>时间</th><th>会议室</th><th>当事人/单位</th>
+                <th>案号</th><th>备注</th><th>状态</th><th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for reservation in items %}
+            <tr>
+                <td>{{ reservation.reserve_date }}</td>
+                <td class="nowrap">{{ reservation.start_time }}–{{ reservation.end_time }}</td>
+                <td>{{ reservation.room_name }}</td>
+                <td>{{ reservation.party_name or '—' }}</td>
+                <td>{{ reservation.case_number or '—' }}</td>
+                <td>{{ reservation.notes or '—' }}</td>
+                <td>{{ status_badge(reservation) }}</td>
+                <td>{{ cancel_action(reservation) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{%- endmacro %}
+
+{% macro reservation_cards(items) -%}
+<div class="reservation-card-list">
+    {% for reservation in items %}
+    <article class="reservation-card">
+        <div class="reservation-card-heading">
+            <div>
+                <strong>{{ reservation.reserve_date }}</strong>
+                <span>{{ reservation.start_time }}–{{ reservation.end_time }}</span>
+            </div>
+            {{ status_badge(reservation) }}
+        </div>
+        <dl class="reservation-card-details">
+            <div><dt>会议室</dt><dd>{{ reservation.room_name }}</dd></div>
+            <div><dt>当事人/单位</dt><dd>{{ reservation.party_name or '—' }}</dd></div>
+            <div><dt>案号</dt><dd>{{ reservation.case_number or '—' }}</dd></div>
+            <div class="reservation-card-notes"><dt>备注</dt><dd>{{ reservation.notes or '—' }}</dd></div>
+        </dl>
+        {% if reservation.display_status == '待使用' %}
+        <div class="reservation-card-action">{{ cancel_action(reservation) }}</div>
+        {% endif %}
+    </article>
+    {% endfor %}
+</div>
+{%- endmacro %}
+
+{% if upcoming_reservations or history_reservations %}
+{% if upcoming_reservations %}
+<section class="card table-card reservation-section" data-reservation-section="upcoming">
+    <header class="reservation-section-heading">
+        <div>
+            <p class="eyebrow">优先处理</p>
+            <h2>待使用预约</h2>
+        </div>
+        <span class="reservation-count">{{ upcoming_reservations|length }} 条</span>
+    </header>
+    {{ reservation_table(upcoming_reservations) }}
+    {{ reservation_cards(upcoming_reservations) }}
 </section>
+{% endif %}
+
+{% if history_reservations %}
+<details class="reservation-history">
+    <summary>
+        <span>
+            <strong>历史记录</strong>
+            <small>已结束与已取消的预约</small>
+        </span>
+        <span class="reservation-count">{{ history_reservations|length }} 条</span>
+    </summary>
+    <div class="card table-card reservation-section">
+        {{ reservation_table(history_reservations) }}
+        {{ reservation_cards(history_reservations) }}
+    </div>
+</details>
+{% endif %}
 {% else %}
 <div class="empty-state card">
     <h2>还没有预约记录</h2>

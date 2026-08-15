@@ -1,0 +1,386 @@
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 69;
+  padding: 0;
+  border: 0;
+  background: rgba(20, 20, 19, 0.07);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.drawer-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.booking-drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 70;
+  width: min(430px, calc(100vw - var(--rail-width)));
+  overflow-y: auto;
+  border-left: 1px solid var(--hairline-strong);
+  background: var(--paper-raised);
+  box-shadow: -18px 0 50px rgba(20, 20, 19, 0.075);
+  transform: translateX(101%);
+  visibility: hidden;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 220ms;
+}
+
+.booking-drawer.open {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 0s;
+}
+
+.drawer-topline {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 31px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+}
+
+.drawer-topline-leading {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.drawer-back {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  margin-left: -10px;
+  padding: 0;
+  color: var(--ink-secondary);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.drawer-back:hover {
+  color: var(--ink);
+  background: rgba(20, 20, 19, 0.05);
+}
+
+.drawer-back:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.28);
+  outline-offset: 2px;
+}
+
+.drawer-close {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #6d6d68;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.drawer-close:hover {
+  background: rgba(20, 20, 19, 0.05);
+}
+
+.drawer-close:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.28);
+  outline-offset: 2px;
+}
+
+.room-form,
+.booking-details,
+.booking-cancel-confirmation {
+  padding: 34px 32px 40px;
+}
+
+.booking-form {
+  height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.booking-form-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px 32px 30px;
+  scrollbar-gutter: stable;
+}
+
+.booking-form-footer {
+  flex: 0 0 auto;
+  padding: 20px 32px 24px;
+  border-top: 1px solid var(--hairline);
+  background: var(--paper-raised);
+}
+
+.booking-form-footer .submit-button {
+  margin-top: 0;
+}
+
+.booking-details,
+.booking-cancel-confirmation {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+}
+
+.booking-conflict-resolution {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.booking-conflict-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: clamp(42px, 6vh, 68px) 32px 28px;
+}
+
+.booking-conflict-copy {
+  text-align: center;
+}
+
+.booking-conflict-icon {
+  width: 78px;
+  height: 78px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 31px;
+  color: #cf704d;
+  border-radius: 50%;
+  background: #f8ebe5;
+}
+
+.booking-conflict-copy h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 560;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+
+.booking-conflict-copy p {
+  margin: 22px 0 0;
+  color: #56544f;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.booking-conflict-copy p + p {
+  margin-top: 12px;
+}
+
+.booking-conflict-draft {
+  margin: 43px 0 0;
+  padding: 18px 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.booking-conflict-draft > div {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+}
+
+.booking-conflict-draft dt {
+  display: grid;
+  place-items: center;
+  color: #68665f;
+}
+
+.booking-conflict-draft dd {
+  margin: 0;
+  color: #393834;
+  font-size: 15px;
+  font-weight: 470;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.booking-conflict-actions {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 11px;
+  padding: 22px 32px 28px;
+  border-top: 1px solid var(--hairline);
+  background: var(--paper-raised);
+}
+
+.booking-conflict-actions .submit-button,
+.booking-conflict-actions .secondary-button {
+  width: 100%;
+  min-height: 46px;
+  margin: 0;
+}
+
+.booking-conflict-recheck {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: #464540;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 520;
+  cursor: pointer;
+}
+
+.booking-conflict-recheck:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(20, 20, 19, 0.045);
+}
+
+.booking-conflict-recheck:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.booking-conflict-recheck .spin {
+  animation: system-spin 850ms linear infinite;
+}
+
+.booking-conflict-check-result {
+  min-height: 18px;
+  margin: -3px 0 0;
+  color: #8a5b4b;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  opacity: 0;
+}
+
+.booking-conflict-check-result.visible {
+  opacity: 1;
+}
+
+.booking-draft-relocation {
+  min-height: calc(100dvh - 76px);
+  display: flex;
+  flex-direction: column;
+  padding: clamp(38px, 6vh, 64px) 32px 28px;
+}
+
+.booking-draft-relocation-copy > span {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  color: #71836d;
+  border-radius: 50%;
+  background: #eef1e9;
+}
+
+.booking-draft-relocation-copy h2 {
+  margin: 24px 0 0;
+  color: var(--ink);
+  font-size: 23px;
+  font-weight: 580;
+  line-height: 1.35;
+}
+
+.booking-draft-relocation-copy p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.booking-draft-relocation dl {
+  display: grid;
+  gap: 0;
+  margin: 34px 0 28px;
+  border-top: 1px solid var(--hairline);
+}
+
+.booking-draft-relocation dl > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.booking-draft-relocation dt {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.booking-draft-relocation dd {
+  margin: 0;
+  color: #4e4c47;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.booking-draft-relocation dd strong,
+.booking-draft-relocation dd span {
+  display: block;
+}
+
+.booking-draft-relocation dd strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.booking-draft-relocation dd span {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.booking-draft-relocation-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.booking-draft-relocation-actions .submit-button,
+.booking-draft-relocation-actions .secondary-button {
+  width: 100%;
+  min-height: 46px;
+  margin: 0;
+}
+
+.selection-summary {
+  padding-bottom: 29px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.selection-summary h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 25px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.selection-summary p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
