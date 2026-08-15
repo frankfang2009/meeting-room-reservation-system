@@ -59,7 +59,7 @@ class UpdateCoreTests(unittest.TestCase):
 
     def test_explicit_v2_identity_is_accepted_before_setup(self) -> None:
         identity = load_v2_identity(self.install_root)
-        self.assertEqual(identity.version, "2.0.0")
+        self.assertEqual(identity.version, "2.1.0")
         self.assertFalse(identity.setup_complete)
         self.assertFalse(identity.database.exists())
 
@@ -152,18 +152,18 @@ class UpdateCoreTests(unittest.TestCase):
 
     def test_update_state_binds_root_identity_version_and_payload_hash(self) -> None:
         identity = load_v2_identity(self.install_root)
-        state = build_update_state(identity, "2.0.1", "a" * 64)
+        state = build_update_state(identity, "2.1.1", "a" * 64)
         self.assertEqual(state["install_root"], str(self.install_root.resolve()))
         self.assertEqual(state["install_id"], identity.install_id)
-        self.assertEqual(state["source_version"], "2.0.0")
-        self.assertEqual(state["target_version"], "2.0.1")
+        self.assertEqual(state["source_version"], "2.1.0")
+        self.assertEqual(state["target_version"], "2.1.1")
         with self.assertRaises(UpdatePolicyError):
-            build_update_state(identity, "2.0.0", "a" * 64)
+            build_update_state(identity, "2.1.0", "a" * 64)
 
     def test_preflight_snapshots_before_future_program_writes(self) -> None:
         preflight = V2UpdatePreflight(
             self.install_root,
-            "2.0.1",
+            "2.1.1",
             "b" * 64,
             [{"path": "_程序文件/app/routes.py"}],
         )

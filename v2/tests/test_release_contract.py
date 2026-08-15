@@ -18,11 +18,15 @@ def read(relative: str) -> str:
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.0.0")
+        self.assertEqual(read("VERSION").strip(), "2.1.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.0.0")
+        self.assertEqual(package["version"], "2.1.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(package["scripts"]["build"], "vite build")
+        self.assertIn('PRODUCT_VERSION = "V2.1.0"', read("backend/v2app/__init__.py"))
+        installer = read("installer/installer_core.py")
+        self.assertIn('VERSION = "2.1.0"', installer)
+        self.assertIn('RELEASE = "V2.1.0"', installer)
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -306,7 +310,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.0.0.bat")
+        launcher = read("installer/安装V2.1.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/v2-baseline.yml").read_text(
             encoding="utf-8"
         )
@@ -360,12 +364,12 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('reason: "OWNER_TAGS_MISSING"', domain)
         self.assertIn("ownerTags.ownerTagsAvailable", app)
 
-    def test_v200_update_core_is_explicitly_non_production(self) -> None:
+    def test_v210_update_core_is_explicitly_non_production(self) -> None:
         updater = read("installer/update_core.py")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = False", updater)
-        self.assertIn("V2.0.0 非生产能力", installer_readme)
-        self.assertIn("不代表 V2.0.0 支持在线升级", installer_readme)
+        self.assertIn("V2.1.0 非生产能力", installer_readme)
+        self.assertIn("不代表 V2.1.0 支持在线升级", installer_readme)
 
     def test_operator_failure_messages_are_actionable_and_do_not_echo_exceptions(self) -> None:
         service = read("backend/service.py")

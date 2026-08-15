@@ -1,6 +1,6 @@
 # Repository working rules
 
-- `v2/` is the active Meeting Room Reservation System V2.0.0 codebase.
+- `v2/` is the active Meeting Room Reservation System V2.1.0 codebase.
 - V2 is a fresh installation. Never read, migrate, modify, or delete V1 data.
 - Preserve the roles `admin | employee`, the authenticated shared-calendar visibility rules,
   employee-owned history boundary, and the server-side public-display allowlist.

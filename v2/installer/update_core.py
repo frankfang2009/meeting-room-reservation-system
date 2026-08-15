@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """后续 V2 累计更新的身份与数据保护基线。
 
-V2.0.0 暂不交付更新包；本模块先锁定未来更新器必须遵守的边界：只读取明确
+V2.1.0 暂不交付更新包；本模块先锁定未来更新器必须遵守的边界：只读取明确
 登记或明确传入的 V2 根目录、拒绝 V1、保护全部现场可变目录，并在写程序前
 生成可核验的数据快照。它有意不包含任何 V1 兼容桥或磁盘扫描。
 """
@@ -68,7 +68,7 @@ except ImportError:
     )
 
 
-# This module is deliberately excluded from the V2.0.0 payload and customer
+# This module is deliberately excluded from the V2.1.0 payload and customer
 # entrypoints.  It is a tested design foundation, not a supported updater.
 PRODUCTION_UPDATE_SUPPORTED = False
 REGISTRY_SUBKEY = r"Software\MeetingRoomReservationV2"

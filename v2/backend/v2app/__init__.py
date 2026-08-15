@@ -28,7 +28,7 @@ from .runtime.install_state import load_install_json, sync_install_json
 from .security import register_security
 
 
-PRODUCT_VERSION = "V2.0.0"
+PRODUCT_VERSION = "V2.1.0"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
