@@ -8,12 +8,12 @@
 
 ## Evidence
 
-- Slider source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-a14b815d-64de-425e-9eff-a18aa019e337.png` (764×210).
-- Calendar annotation source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-d154007b-2019-4383-a089-da524d64d226.png` (2494×992).
-- Duration-limit implementation: `/private/tmp/meeting-room-v2-duration-limit.png` (1424×890), room 2 at 08:30 with an active booking beginning at 09:00.
-- Aligned-calendar implementation: `/private/tmp/meeting-room-v2-aligned-calendar.png` (1424×890).
-- Current-time implementation: `/private/tmp/meeting-room-v2-current-time-line.png` (1280×720), isolated server clock fixed at 2026-08-10 10:15 +08:00.
-- Combined comparison inputs: `/private/tmp/meeting-room-v2-slider-comparison.png` and `/private/tmp/meeting-room-v2-calendar-comparison.png`.
+- Slider source: `codex-clipboard-a14b815d-64de-425e-9eff-a18aa019e337.png` (764×210).
+- Calendar annotation source: `codex-clipboard-d154007b-2019-4383-a089-da524d64d226.png` (2494×992).
+- Duration-limit implementation: `meeting-room-v2-duration-limit.png` (1424×890), room 2 at 08:30 with an active booking beginning at 09:00.
+- Aligned-calendar implementation: `meeting-room-v2-aligned-calendar.png` (1424×890).
+- Current-time implementation: `meeting-room-v2-current-time-line.png` (1280×720), isolated server clock fixed at 2026-08-10 10:15 +08:00.
+- Combined comparison inputs: `meeting-room-v2-slider-comparison.png` and `meeting-room-v2-calendar-comparison.png`.
 
 ## Interaction checks
 
@@ -54,11 +54,11 @@
 
 ### Evidence
 
-- Calendar reference: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-d2d04af7-6fd0-4d83-b209-564f89a23a16.png`.
-- Room reference: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-c456e13e-6918-4e52-a1a7-9871cf89a0af.png`.
-- Audit reference: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-63909e53-a8e0-49a9-a94b-811b1cd3e28c.png`.
-- Implementation captures: `/private/tmp/meeting-room-v2-one-room-calendar-final.png`, `/private/tmp/meeting-room-v2-two-room-calendar-final.png`, `/private/tmp/meeting-room-v2-one-room-management-final.png`, `/private/tmp/meeting-room-v2-two-room-management-final.png`, `/private/tmp/meeting-room-v2-audit-visible-final.png`, and `/private/tmp/meeting-room-v2-audit-hidden-unread-final.png`.
-- Combined comparison inputs: `/private/tmp/meeting-room-v2-calendar-comparison-final.png`, `/private/tmp/meeting-room-v2-rooms-comparison-final.png`, and `/private/tmp/meeting-room-v2-audit-comparison-final.png`.
+- Calendar reference: `codex-clipboard-d2d04af7-6fd0-4d83-b209-564f89a23a16.png`.
+- Room reference: `codex-clipboard-c456e13e-6918-4e52-a1a7-9871cf89a0af.png`.
+- Audit reference: `codex-clipboard-63909e53-a8e0-49a9-a94b-811b1cd3e28c.png`.
+- Implementation captures: `meeting-room-v2-one-room-calendar-final.png`, `meeting-room-v2-two-room-calendar-final.png`, `meeting-room-v2-one-room-management-final.png`, `meeting-room-v2-two-room-management-final.png`, `meeting-room-v2-audit-visible-final.png`, and `meeting-room-v2-audit-hidden-unread-final.png`.
+- Combined comparison inputs: `meeting-room-v2-calendar-comparison-final.png`, `meeting-room-v2-rooms-comparison-final.png`, and `meeting-room-v2-audit-comparison-final.png`.
 
 ### Interaction checks
 
@@ -91,10 +91,10 @@
 
 ### Evidence
 
-- Calendar-control source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-6b264a40-157d-4c85-8e90-c91d602c2fad.png`.
-- Room-deletion source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-6d92f199-e36f-4011-95c5-3118877f092e.png`.
-- 1280×890 implementation captures: `/private/tmp/meeting-room-v2-calendar-toolbar-after.png`, `/private/tmp/meeting-room-v2-lan-copy-final.png`, `/private/tmp/meeting-room-v2-room-delete-button.png`, and `/private/tmp/meeting-room-v2-room-delete-blocked.png`.
-- Combined comparison inputs: `/private/tmp/meeting-room-v2-calendar-toolbar-comparison.png` and `/private/tmp/meeting-room-v2-room-delete-comparison.png`.
+- Calendar-control source: `codex-clipboard-6b264a40-157d-4c85-8e90-c91d602c2fad.png`.
+- Room-deletion source: `codex-clipboard-6d92f199-e36f-4011-95c5-3118877f092e.png`.
+- 1280×890 implementation captures: `meeting-room-v2-calendar-toolbar-after.png`, `meeting-room-v2-lan-copy-final.png`, `meeting-room-v2-room-delete-button.png`, and `meeting-room-v2-room-delete-blocked.png`.
+- Combined comparison inputs: `meeting-room-v2-calendar-toolbar-comparison.png` and `meeting-room-v2-room-delete-comparison.png`.
 
 ### Interaction checks
 
@@ -126,17 +126,17 @@
 
 ### Source visual truth
 
-- Segmented navigation: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-1f692450-ef8c-421d-8e4e-8703e7825c89.png` (512×184).
-- Direct date picker: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-1c912deb-a275-4828-b29b-734b756e9aa0.png` (626×310).
-- Previous room-delete section: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-6d92f199-e36f-4011-95c5-3118877f092e.png` (790×198).
+- Segmented navigation: `codex-clipboard-1f692450-ef8c-421d-8e4e-8703e7825c89.png` (512×184).
+- Direct date picker: `codex-clipboard-1c912deb-a275-4828-b29b-734b756e9aa0.png` (626×310).
+- Previous room-delete section: `codex-clipboard-6d92f199-e36f-4011-95c5-3118877f092e.png` (790×198).
 
 ### Implementation evidence
 
-- Calendar toolbar: `/private/tmp/meeting-room-v2-calendar-tools-v2.png` (1280×720).
-- Blocking-booking list: `/private/tmp/meeting-room-v2-room-delete-blocked-v2.png` (1280×720).
-- Adjustment screen with back action: `/private/tmp/meeting-room-v2-room-edit-back-v2.png` (1280×720).
-- Clear-room confirmation: `/private/tmp/meeting-room-v2-room-delete-clear-confirm-v2.png` (1280×720).
-- Combined full-view comparisons: `/private/tmp/meeting-room-v2-calendar-tools-comparison-v2.png` (1280×1060) and `/private/tmp/meeting-room-v2-room-delete-comparison-v2.png` (1280×1500).
+- Calendar toolbar: `meeting-room-v2-calendar-tools-v2.png` (1280×720).
+- Blocking-booking list: `meeting-room-v2-room-delete-blocked-v2.png` (1280×720).
+- Adjustment screen with back action: `meeting-room-v2-room-edit-back-v2.png` (1280×720).
+- Clear-room confirmation: `meeting-room-v2-room-delete-clear-confirm-v2.png` (1280×720).
+- Combined full-view comparisons: `meeting-room-v2-calendar-tools-comparison-v2.png` (1280×1060) and `meeting-room-v2-room-delete-comparison-v2.png` (1280×1500).
 - Density normalization: source controls were proportionally contained without resampling the implementation; comparison judges composition and component language, not false pixel-for-pixel equality across different crops.
 
 ### Focused comparison and interactions
@@ -186,12 +186,12 @@
 
 ### Source and implementation evidence
 
-- History-list source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-050294a6-af78-45a6-bcfc-40079e0ba13e.png` (2848×1678).
-- Cancelled-detail source: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-fad8087a-5ffa-44e1-af5c-72e2ccb570b1.png` (756×1524).
-- Navigation badge implementation: `/private/tmp/meeting-room-v2-upcoming-rail-badge.png` (1280×720).
-- History implementation: `/private/tmp/meeting-room-v2-history-cancelled-zh.png` (1280×720).
-- Cancelled details implementation: `/private/tmp/meeting-room-v2-cancelled-details-zh.png` (1280×720).
-- Combined visual input: `/private/tmp/meeting-room-v2-history-status-comparison.png` (1600×1600).
+- History-list source: `codex-clipboard-050294a6-af78-45a6-bcfc-40079e0ba13e.png` (2848×1678).
+- Cancelled-detail source: `codex-clipboard-fad8087a-5ffa-44e1-af5c-72e2ccb570b1.png` (756×1524).
+- Navigation badge implementation: `meeting-room-v2-upcoming-rail-badge.png` (1280×720).
+- History implementation: `meeting-room-v2-history-cancelled-zh.png` (1280×720).
+- Cancelled details implementation: `meeting-room-v2-cancelled-details-zh.png` (1280×720).
+- Combined visual input: `meeting-room-v2-history-status-comparison.png` (1600×1600).
 - Density normalization: the source crops and full implementation captures were proportionally contained in one board. The comparison evaluates hierarchy and state treatment, not false pixel equality across different source crops.
 
 ### Interaction and focused comparison
@@ -236,9 +236,9 @@
 
 ### Evidence
 
-- Source visual truth: `/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-fc22e34b-e389-4eb9-bd02-fa3698288dfe.png`, 2730×1170 px. The user explicitly rejected the visible red left rule and requested a more restrained treatment.
-- Rendered list: `/private/tmp/meeting-room-v2-history-restrained-status.jpg`, 1280×720 px at a 1280×720 CSS viewport and device scale 1.
-- Rendered filter: `/private/tmp/meeting-room-v2-history-status-filter.jpg`, 1280×720 px at a 1280×720 CSS viewport and device scale 1.
+- Source visual truth: `codex-clipboard-fc22e34b-e389-4eb9-bd02-fa3698288dfe.png`, 2730×1170 px. The user explicitly rejected the visible red left rule and requested a more restrained treatment.
+- Rendered list: `meeting-room-v2-history-restrained-status.jpg`, 1280×720 px at a 1280×720 CSS viewport and device scale 1.
+- Rendered filter: `meeting-room-v2-history-status-filter.jpg`, 1280×720 px at a 1280×720 CSS viewport and device scale 1.
 - State: authenticated administrator, August 2026 history, four mixed-status records; filter was exercised in `全部`, `正常预约`, and `已取消` states.
 - Density normalization: the source and implementation use different viewport sizes, so comparison was limited to the focused row treatment, typography hierarchy, trailing status control, and filter composition rather than claiming pixel-level full-page parity.
 

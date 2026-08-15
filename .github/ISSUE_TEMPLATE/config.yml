@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 私密报告安全漏洞
+    url: https://github.com/frankfang2009/meeting-room-reservation-system/security/advisories/new
+    about: 安全问题不要创建公开 Issue，请使用 GitHub Private Vulnerability Reporting。
+  - name: 使用与支持说明
+    url: https://github.com/frankfang2009/meeting-room-reservation-system/blob/main/SUPPORT.md
+    about: 先阅读支持范围、脱敏要求和部署边界。

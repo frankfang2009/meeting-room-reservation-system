@@ -27,6 +27,12 @@ test("production entry contains no demo credentials or query-state router", () =
   }
 });
 
+test("login uses the project-owned neutral illustration", () => {
+  assert.match(app, /\/assets\/login\/schedule-portal\.svg/);
+  assert.equal(fs.existsSync(path.join(root, "public/assets/login/schedule-portal.svg")), true);
+  assert.doesNotMatch(app, /doorway-time\.png/);
+});
+
 test("production entry does not generate business ids in the browser", () => {
   assert.equal(app.includes("crypto.randomUUID"), false);
   assert.doesNotMatch(app, /(?:booking|reservation)Id\s*:\s*[^\n]*Date\.now\(\)/);
