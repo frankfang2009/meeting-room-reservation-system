@@ -13,16 +13,70 @@ from ..common import (
     parse_bool,
     parse_int,
     parse_json_object,
+    time_to_minutes,
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor, serialize_user
 from ..services.audit import write_security_audit
 from ..services.reservations import serialize_reservation
-from .core import serialize_room_with_metrics, serialize_rooms_with_metrics
+from .core import _serialize_settings, serialize_room_with_metrics, serialize_rooms_with_metrics
 
 
 bp = Blueprint("admin_api", __name__, url_prefix="/api/v1")
+
+
+@bp.put("/admin/settings")
+@admin_required
+def update_system_settings():
+    payload = parse_json_object()
+    db = get_db()
+    with transaction(db):
+        actor = locked_actor(db, admin=True)
+        current = db.execute("SELECT * FROM system_settings WHERE id = 1").fetchone()
+        if current is None:
+            raise RuntimeError("系统设置缺失")
+        work_start = clean_text(
+            payload.get("workStart"), field="workStart", label="工作开始时间", maximum=5
+        )
+        work_end = clean_text(
+            payload.get("workEnd"), field="workEnd", label="工作结束时间", maximum=5
+        )
+        start_minutes = time_to_minutes(work_start, field="workStart")
+        end_minutes = time_to_minutes(work_end, field="workEnd")
+        slot_minutes = int(current["slot_minutes"])
+        fields = {}
+        if start_minutes % slot_minutes:
+            fields["workStart"] = f"开始时间必须按 {slot_minutes} 分钟对齐"
+        if end_minutes % slot_minutes:
+            fields["workEnd"] = f"结束时间必须按 {slot_minutes} 分钟对齐"
+        if end_minutes <= start_minutes:
+            fields["workEnd"] = "结束时间必须晚于开始时间"
+        if fields:
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "请检查输入内容",
+                fields=fields,
+            )
+        before = {
+            "workStart": current["work_start"],
+            "workEnd": current["work_end"],
+        }
+        after = {"workStart": work_start, "workEnd": work_end}
+        db.execute(
+            "UPDATE system_settings SET work_start = ?, work_end = ? WHERE id = 1",
+            (work_start, work_end),
+        )
+        write_security_audit(
+            db,
+            actor_user_id=actor["id"],
+            action="settings.updated",
+            target_type="system",
+            target_id="work-hours",
+            details={"before": before, "after": after},
+        )
+    return jsonify(_serialize_settings(db))
 
 
 def _validate_role(value: Any) -> str:

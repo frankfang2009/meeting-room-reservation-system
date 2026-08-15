@@ -401,7 +401,8 @@ test("room deletion is confirmed and blocking bookings lead directly to adjustme
 
 test("past server-local slots cannot open or submit a create flow", () => {
   assert.match(app, /hasBookingStarted\(\{[\s\S]{0,180}serverDate: businessClock\.date/);
-  assert.match(app, /disabled=\{networkOffline \|\| slotStarted\}/);
+  assert.match(app, /const unavailable = slotStarted \|\| outsideWorkHours/);
+  assert.match(app, /disabled=\{networkOffline \|\| unavailable\}/);
   assert.match(app, /error\.code === "BOOKING_STARTED"[\s\S]{0,500}setPreservedDraft\(bookingForm\)/);
   assert.match(app, /drawer\.type === "edit"[\s\S]{0,180}预约已经开始，不能再修改/);
   assert.match(app, /预约内容已保留。请选择当前时间之后的空白时段/);
@@ -468,4 +469,14 @@ test("security audit is Chinese, collapsible, and counts newly received rows", (
   assert.match(app, /auditHiddenRef\.current = nextHidden/);
   assert.match(app, /if \(!nextHidden\) \{[\s\S]{0,120}setAuditUnreadCount\(0\);[\s\S]{0,80}loadAudit\(\)/);
   assert.match(app, /system-audit-unread/);
+});
+
+test("system status offers a quiet administrator work-hours editor", () => {
+  assert.match(app, /system-work-hours-row/);
+  assert.match(app, /type: "system-settings"/);
+  assert.match(app, /api\.updateSystemSettings/);
+  assert.match(app, /validateSystemSettingsForm\(drawer\.form, settings\.slotMinutes\)/);
+  assert.match(app, /已有预约保持不变/);
+  assert.match(app, /outside-work-slot/);
+  assert.match(app, /slots: workingTimeSlots/);
 });

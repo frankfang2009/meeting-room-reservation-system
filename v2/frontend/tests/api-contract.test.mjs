@@ -44,6 +44,27 @@ test("room metrics use the dedicated administrator refresh endpoint", async () =
   }
 });
 
+test("administrator work-hour updates use the dedicated settings endpoint", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url, options };
+    return new Response(JSON.stringify({ workStart: "09:00", workEnd: "17:00", slotMinutes: 30, maxDurationMinutes: 180 }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    setCsrfToken("csrf-settings");
+    await api.updateSystemSettings({ workStart: "09:00", workEnd: "17:00" });
+    assert.equal(captured.url, "/api/v1/admin/settings");
+    assert.equal(captured.options.method, "PUT");
+    assert.equal(captured.options.body, JSON.stringify({ workStart: "09:00", workEnd: "17:00" }));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("personal activity uses the current-user aggregate endpoint", async () => {
   const previousFetch = globalThis.fetch;
   let captured = "";

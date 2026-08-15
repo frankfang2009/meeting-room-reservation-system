@@ -178,6 +178,27 @@
   background: var(--paper-raised);
 }
 
+.system-edit-settings {
+  min-width: 58px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  color: var(--ink-secondary);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.system-edit-settings:hover {
+  color: var(--ink);
+  border-color: rgba(20, 20, 19, 0.3);
+  background: var(--paper-raised);
+}
+
 .system-backup-row {
   width: 100%;
   cursor: pointer;

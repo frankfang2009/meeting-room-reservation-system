@@ -165,6 +165,7 @@ export const api = {
   }),
 
   getSystem: () => request("/admin/system"),
+  updateSystemSettings: (input) => request("/admin/settings", { method: "PUT", body: input }),
   createBackup: () => request("/admin/backups", { method: "POST" }),
   getDiagnostics: () => request("/admin/diagnostics"),
   getAudit: (filters = {}) => request(query("/admin/audit", filters)),

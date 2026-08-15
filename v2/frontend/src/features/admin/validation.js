@@ -27,6 +27,33 @@ export function validatePasswordReset(password) {
     : {};
 }
 
+export function validateSystemSettingsForm(form = {}, slotMinutes = 30) {
+  const errors = {};
+  const parse = (field, label) => {
+    const value = String(form[field] || "");
+    if (!/^\d{2}:\d{2}$/.test(value)) {
+      errors[field] = `${label}格式应为 HH:MM`;
+      return null;
+    }
+    const [hours, minutes] = value.split(":").map(Number);
+    if (hours > 23 || minutes > 59) {
+      errors[field] = `${label}无效`;
+      return null;
+    }
+    const total = hours * 60 + minutes;
+    if (total % Number(slotMinutes || 30)) {
+      errors[field] = `${label}必须按 ${Number(slotMinutes || 30)} 分钟对齐`;
+    }
+    return total;
+  };
+  const start = parse("workStart", "开始时间");
+  const end = parse("workEnd", "结束时间");
+  if (start !== null && end !== null && end <= start) {
+    errors.workEnd = "结束时间必须晚于开始时间";
+  }
+  return errors;
+}
+
 export function adminApiFieldErrors(error) {
   if (error?.fields && typeof error.fields === "object") return error.fields;
   if (error?.code === "ROOM_NAME_EXISTS") return { name: "该名称已被其他笔录室使用" };

@@ -161,6 +161,11 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
 ## 管理与个人设置
 
+- `PUT /api/v1/admin/settings` 仅管理员可用，请求
+  `{ "workStart": "08:30", "workEnd": "17:30" }`。两个时间必须是 `HH:MM`、
+  按 `slotMinutes` 对齐且结束晚于开始；非法返回 `422 VALIDATION_ERROR`
+  及 `fields.workStart/workEnd`。成功返回完整 `settings`，只影响后续时段生成，
+  不改写已有预约的日期或时间，并记录 `settings.updated` 安全审计。
 - `GET|POST /api/v1/rooms`；`PATCH|DELETE /api/v1/rooms/{id}`。其中管理页的周期性
   `GET /api/v1/rooms` 是被动状态轮询，不刷新 30 分钟空闲会话计时。
 - `GET /api/v1/rooms/{id}/deletion-impact` 仅管理员可用，返回目标
@@ -178,7 +183,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
-  `backupSequence/dataSequence/servicePort/bindMode`；`POST /api/v1/admin/backups`
+  `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；`POST /api/v1/admin/backups`
   返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
   `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，

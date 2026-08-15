@@ -7,6 +7,7 @@ const ADMIN_DRAWER_PERMISSIONS = new Map([
   ["user-create", "manageUsers"],
   ["user-edit", "manageUsers"],
   ["user-reset", "manageUsers"],
+  ["system-settings", "manageSystem"],
   ["backup", "manageSystem"],
   ["token-create", "manageSystem"],
   ["token-created", "manageSystem"],
@@ -176,6 +177,24 @@ export function generateTimeSlots(start, end, step = 30) {
   return slots;
 }
 
+export function calendarTimeSlots({ workStart, workEnd, slotMinutes = 30, bookings = [] } = {}) {
+  const step = Number(slotMinutes || 30);
+  let visibleStart = parseTime(workStart);
+  let visibleEnd = parseTime(workEnd);
+  for (const booking of bookings) {
+    if (booking?.status === "cancelled" || !booking?.start || !booking?.end) continue;
+    const bookingStart = parseTime(booking.start);
+    const bookingEnd = parseTime(booking.end);
+    visibleStart = Math.min(visibleStart, Math.floor(bookingStart / step) * step);
+    visibleEnd = Math.max(visibleEnd, Math.ceil(bookingEnd / step) * step);
+  }
+  return generateTimeSlots(formatTime(visibleStart), formatTime(visibleEnd), step);
+}
+
+export function isWithinWorkingHours(start, end, workStart, workEnd) {
+  return parseTime(start) >= parseTime(workStart) && parseTime(end) <= parseTime(workEnd);
+}
+
 export function calendarFocusTarget(cells = [], current = null, key = "") {
   const normalized = cells
     .map((cell) => ({
@@ -343,6 +362,7 @@ export function calendarTimeLineOffset({
   serverTime,
   workStart,
   workEnd,
+  visibleStart = workStart,
   slotMinutes = 30,
   rowHeight = 76,
 } = {}) {
@@ -351,7 +371,7 @@ export function calendarTimeLineOffset({
   const start = parseTime(workStart);
   const end = parseTime(workEnd);
   if (current < start || current > end) return null;
-  return ((current - start) / Number(slotMinutes || 30)) * Number(rowHeight || 76);
+  return ((current - parseTime(visibleStart)) / Number(slotMinutes || 30)) * Number(rowHeight || 76);
 }
 
 export function reservationConflictDifferences(draft, latest, { rooms = [], tags = [] } = {}) {

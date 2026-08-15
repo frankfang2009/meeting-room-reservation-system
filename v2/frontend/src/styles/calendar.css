@@ -431,6 +431,22 @@
   transform: none;
 }
 
+.available-slot.outside-work-slot {
+  cursor: not-allowed;
+  background: rgba(20, 20, 19, 0.018);
+}
+
+.available-slot.outside-work-slot:hover,
+.available-slot.outside-work-slot:focus-visible {
+  border-color: transparent;
+  background: rgba(20, 20, 19, 0.018);
+}
+
+.available-slot.outside-work-slot .slot-affordance {
+  opacity: 0;
+  transform: none;
+}
+
 .booked-slot {
   z-index: 5;
   height: calc(var(--booking-span, 1) * 76px - 6px);

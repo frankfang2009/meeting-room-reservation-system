@@ -4,6 +4,7 @@ import {
   bookingTagContext,
   bookingPayload,
   calendarFocusTarget,
+  calendarTimeSlots,
   calendarTimeLineOffset,
   canManageBooking,
   canViewBookingDetails,
@@ -13,6 +14,7 @@ import {
   generateTimeSlots,
   hasBookingStarted,
   isDrawerAllowed,
+  isWithinWorkingHours,
   isSameBooking,
   maximumAvailableDuration,
   projectServerClock,
@@ -42,6 +44,37 @@ test("generates adjacent working-hour slots", () => {
     ["08:30", "09:00"], ["09:00", "09:30"], ["09:30", "10:00"],
   ]);
   assert.throws(() => generateTimeSlots("08:30", "09:10"), /divide evenly/);
+});
+
+test("calendar keeps existing bookings outside updated work hours without enabling new slots", () => {
+  const slots = calendarTimeSlots({
+    workStart: "10:00",
+    workEnd: "16:00",
+    slotMinutes: 30,
+    bookings: [{ start: "09:00", end: "10:00", status: "active" }],
+  });
+  assert.deepEqual(slots[0], ["09:00", "09:30"]);
+  assert.deepEqual(slots.at(-1), ["15:30", "16:00"]);
+  assert.equal(isWithinWorkingHours("09:00", "09:30", "10:00", "16:00"), false);
+  assert.equal(isWithinWorkingHours("10:00", "10:30", "10:00", "16:00"), true);
+  assert.equal(calendarTimeLineOffset({
+    selectedDate: "2026-08-10",
+    serverDate: "2026-08-10",
+    serverTime: "10:00",
+    workStart: "10:00",
+    workEnd: "16:00",
+    visibleStart: slots[0][0],
+    slotMinutes: 30,
+    rowHeight: 76,
+  }), 152);
+  assert.equal(calendarTimeLineOffset({
+    selectedDate: "2026-08-10",
+    serverDate: "2026-08-10",
+    serverTime: "09:30",
+    workStart: "10:00",
+    workEnd: "16:00",
+    visibleStart: slots[0][0],
+  }), null);
 });
 
 test("calendar arrow navigation preserves grid coordinates around disabled cells", () => {

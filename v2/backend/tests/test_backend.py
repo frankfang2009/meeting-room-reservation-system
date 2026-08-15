@@ -528,6 +528,95 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.get_json()["error"]["code"], "VALIDATION_ERROR")
 
+    def test_admin_updates_work_hours_without_rewriting_existing_bookings(self):
+        room_id = self.bootstrap()["rooms"][0]["id"]
+        existing = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, start="09:00", caseNumber="C1-EXISTING"),
+        )
+        self.assertEqual(existing.status_code, 201, existing.get_json())
+        token_response = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {"name": "C1 可用时段", "scopes": ["availability:read"]},
+        )
+        raw_token = token_response.get_json()["token"]
+
+        updated = self.write(
+            "PUT",
+            "/api/v1/admin/settings",
+            {"workStart": "10:00", "workEnd": "16:00"},
+        )
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        self.assertEqual(updated.get_json()["workStart"], "10:00")
+        self.assertEqual(updated.get_json()["workEnd"], "16:00")
+        self.assertEqual(self.bootstrap()["settings"], updated.get_json())
+        system = self.client.get("/api/v1/admin/system").get_json()
+        self.assertEqual((system["workStart"], system["workEnd"]), ("10:00", "16:00"))
+        availability = self.client.get(
+            "/api/v1/integration/availability?date=2026-08-10",
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        self.assertEqual(availability.status_code, 200, availability.get_json())
+        slots = availability.get_json()["rooms"][0]["slots"]
+        self.assertEqual(slots[0]["start"], "10:00")
+        self.assertEqual(slots[-1]["start"], "15:30")
+        calendar = self.client.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertEqual([item["caseNumber"] for item in calendar], ["C1-EXISTING"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = db.execute(
+                "SELECT details_json FROM security_audit_log "
+                "WHERE action = 'settings.updated' ORDER BY occurred_at DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertEqual(
+            json.loads(details),
+            {
+                "before": {"workEnd": "17:30", "workStart": "08:30"},
+                "after": {"workEnd": "16:00", "workStart": "10:00"},
+            },
+        )
+
+    def test_work_hours_permissions_validation_and_transaction_rollback(self):
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        denied = self.write(
+            "PUT",
+            "/api/v1/admin/settings",
+            {"workStart": "09:00", "workEnd": "17:00"},
+            client=employee,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+
+        invalid_cases = (
+            ({"workStart": "8:30", "workEnd": "17:30"}, "workStart"),
+            ({"workStart": "08:15", "workEnd": "17:30"}, "workStart"),
+            ({"workStart": "18:00", "workEnd": "17:30"}, "workEnd"),
+        )
+        for payload, field in invalid_cases:
+            with self.subTest(payload=payload):
+                response = self.write("PUT", "/api/v1/admin/settings", payload)
+                self.assertEqual(response.status_code, 422, response.get_json())
+                self.assertIn(field, response.get_json()["error"]["fields"])
+
+        with mock.patch(
+            "v2app.api.admin.write_security_audit",
+            side_effect=RuntimeError("C1 audit failpoint"),
+        ):
+            failed = self.write(
+                "PUT",
+                "/api/v1/admin/settings",
+                {"workStart": "09:00", "workEnd": "17:00"},
+            )
+        self.assertEqual(failed.status_code, 500, failed.get_json())
+        self.assertEqual(
+            (self.bootstrap()["settings"]["workStart"], self.bootstrap()["settings"]["workEnd"]),
+            ("08:30", "17:30"),
+        )
+
     def test_create_room_and_user_preserve_explicit_disabled_state(self):
         room = self.write(
             "POST",
