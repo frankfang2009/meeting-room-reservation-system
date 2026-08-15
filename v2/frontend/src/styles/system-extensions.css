@@ -312,6 +312,17 @@
   line-height: 1.45;
 }
 
+.system-settings-form .drawer-fixed-footer {
+  margin-top: auto;
+  padding-top: 40px;
+}
+
+.system-settings-form .drawer-fixed-footer .primary-button {
+  width: 100%;
+  min-height: 50px;
+  margin: 0;
+}
+
 .system-settings-form .drawer-fixed-footer button:disabled {
   cursor: wait;
   opacity: 0.58;

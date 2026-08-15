@@ -178,45 +178,29 @@
   background: var(--paper-raised);
 }
 
-.system-edit-settings {
-  min-width: 58px;
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 12px;
-  color: var(--ink-secondary);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
-  background: transparent;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.system-edit-settings:hover {
-  color: var(--ink);
-  border-color: rgba(20, 20, 19, 0.3);
-  background: var(--paper-raised);
-}
-
-.system-backup-row {
+.system-action-row {
   width: 100%;
   cursor: pointer;
   transition: color 140ms ease, background 140ms ease;
 }
 
-.system-backup-row:hover {
+.system-action-row:hover {
   color: var(--ink);
   background: rgba(20, 20, 19, 0.025);
 }
 
-.system-backup-row svg {
+.system-action-row:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.38);
+  outline-offset: -3px;
+}
+
+.system-action-row svg {
   justify-self: end;
   color: var(--faint);
   transition: transform 140ms ease, color 140ms ease;
 }
 
-.system-backup-row:hover svg {
+.system-action-row:hover svg {
   color: var(--ink-secondary);
   transform: translateX(2px);
 }

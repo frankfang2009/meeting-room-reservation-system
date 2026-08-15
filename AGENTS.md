@@ -48,6 +48,10 @@
 - The bottom account action opens Personal Center rather than adding another main-navigation item.
   Its activity tab is strictly current-user scoped and counts only active reservations that have
   ended according to server-local time. Keep the activity tab concise: no heatmap, date range,
-  month labels, daily drilldown, ranking, or recent-completions list. The lower-left overview stays
-  unchanged and the lower-right area contains the four summary metrics. Preferences remain a
-  separate tab in the same page and must not expose a heatmap-range setting.
+  month labels, daily drilldown, ranking, or recent-completions list. Keep the account identity in
+  the page header; present the three overview values and four summary metrics as two quiet,
+  full-width horizontal bands that collapse deliberately at narrow desktop widths. Preferences
+  remain a separate tab in the same page and must not expose a heatmap-range setting.
+- In System Status, work hours and recent backup are matching whole-row drawer entries with a
+  trailing chevron. Do not place a standalone edit button inside the work-hours value cell, and
+  keep the work-hours drawer action visibly separated from its final time field.

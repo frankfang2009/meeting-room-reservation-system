@@ -15,6 +15,9 @@ const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "u
 const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
 const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
 const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.css"), "utf8");
+const settingsStyles = fs.readFileSync(path.join(root, "src/styles/settings.css"), "utf8");
+const systemStyles = fs.readFileSync(path.join(root, "src/styles/system.css"), "utf8");
+const systemExtensionStyles = fs.readFileSync(path.join(root, "src/styles/system-extensions.css"), "utf8");
 const designContract = fs.readFileSync(path.join(root, "DESIGN-CONTRACT.md"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
@@ -66,6 +69,22 @@ test("personal center keeps a concise real summary without heatmap clutter", () 
   assert.match(productionSource, /<h2 id="profile-overview-heading">活动概览<\/h2>/);
   assert.match(productionSource, /<h2 id="profile-data-heading">活动数据<\/h2>/);
   assert.doesNotMatch(productionSource, /预约活动|profile-heatmap|activityMonths|getActivityDay|本人当天已完成的预约/);
+});
+
+test("personal center uses a compact identity header and full-width activity bands", () => {
+  assert.match(productionSource, /className="personal-center-header-side"/);
+  assert.match(productionSource, /personal-center-header-side"><section className="personal-center-identity"/);
+  assert.match(settingsStyles, /\.profile-activity-overview dl \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
+  assert.match(settingsStyles, /\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(responsiveStyles, /@media \(max-width: 620px\)[\s\S]*?\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+});
+
+test("system work hours use a whole-row drawer entry with a separated footer", () => {
+  assert.match(app, /<button type="button" className="system-status-row system-action-row system-work-hours-row"[^>]*onClick=/);
+  assert.match(app, /system-work-hours-row"[\s\S]{0,500}<CaretRight size=\{17\}/);
+  assert.doesNotMatch(app, /system-edit-settings/);
+  assert.match(systemStyles, /\.system-action-row:focus-visible/);
+  assert.match(systemExtensionStyles, /\.system-settings-form \.drawer-fixed-footer \{[\s\S]*?margin-top: auto;[\s\S]*?padding-top: 40px;/);
 });
 
 test("personal center exposes preferences through one tab entry", () => {
