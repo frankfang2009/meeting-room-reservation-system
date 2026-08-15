@@ -183,6 +183,11 @@ def create_room():
         if "isActive" in payload
         else True
     )
+    show_on_display = (
+        parse_bool(payload["showOnDisplay"], field="showOnDisplay")
+        if "showOnDisplay" in payload
+        else True
+    )
     room_id = new_id()
     db = get_db()
     try:
@@ -190,10 +195,11 @@ def create_room():
             actor = locked_actor(db, admin=True)
             db.execute(
                 """
-                INSERT INTO rooms (id, name, sort_order, is_active)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO rooms (
+                    id, name, sort_order, is_active, show_on_display
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
-                (room_id, name, sort_order, int(is_active)),
+                (room_id, name, sort_order, int(is_active), int(show_on_display)),
             )
             write_security_audit(
                 db,
@@ -201,7 +207,11 @@ def create_room():
                 action="room.created",
                 target_type="room",
                 target_id=room_id,
-                details={"name": name, "isActive": is_active},
+                details={
+                    "name": name,
+                    "isActive": is_active,
+                    "showOnDisplay": show_on_display,
+                },
             )
     except sqlite3.IntegrityError as error:
         raise ApiError(409, "ROOM_NAME_EXISTS", "笔录室名称已存在") from error
@@ -231,6 +241,11 @@ def update_room(room_id: str):
                 if "isActive" in payload
                 else bool(room["is_active"])
             )
+            show_on_display = (
+                parse_bool(payload["showOnDisplay"], field="showOnDisplay")
+                if "showOnDisplay" in payload
+                else bool(room["show_on_display"])
+            )
             sort_order = (
                 parse_int(payload["sortOrder"], field="sortOrder")
                 if "sortOrder" in payload
@@ -246,10 +261,11 @@ def update_room(room_id: str):
             db.execute(
                 """
                 UPDATE rooms SET name = ?, is_active = ?, sort_order = ?,
+                    show_on_display = ?,
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
                 WHERE id = ?
                 """,
-                (name, int(enabled), sort_order, room_id),
+                (name, int(enabled), sort_order, int(show_on_display), room_id),
             )
             write_security_audit(
                 db,
@@ -257,7 +273,12 @@ def update_room(room_id: str):
                 action="room.updated",
                 target_type="room",
                 target_id=room_id,
-                details={"name": name, "enabled": enabled, "sortOrder": sort_order},
+                details={
+                    "name": name,
+                    "enabled": enabled,
+                    "sortOrder": sort_order,
+                    "showOnDisplay": show_on_display,
+                },
             )
     except sqlite3.IntegrityError as error:
         raise ApiError(409, "ROOM_NAME_EXISTS", "笔录室名称已存在") from error

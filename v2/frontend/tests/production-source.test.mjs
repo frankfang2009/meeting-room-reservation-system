@@ -31,6 +31,8 @@ test("production entry does not generate business ids in the browser", () => {
 
 test("public display consumes the dedicated server projection", () => {
   assert.match(app, /api\.getPublicDisplay\(controller\.signal\)/);
+  assert.match(app, /payload && payload\.rooms\.length === 0/);
+  assert.match(app, />当前暂无公开引导的笔录室</);
   assert.equal(app.includes("maskDisplayName"), false);
   assert.equal(app.includes("derivePublicDisplayRows"), false);
 });

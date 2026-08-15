@@ -773,6 +773,7 @@ function PublicDisplay() {
             <p className="public-display-next"><span>下一位</span><span className="public-display-next-person"><strong>{room.next?.maskedPartyName || "暂无安排"}</strong><time>{room.next ? room.next.start + "–" + room.next.end : "暂无后续安排"}</time></span></p>
           </article>)}
           {!payload && state === "loading" && <div className="public-display-loading"><CircleNotch className="spin" size={30} /><span>正在读取今日安排</span></div>}
+          {payload && payload.rooms.length === 0 && <div className="public-display-empty"><DoorOpen size={44} weight="thin" /><strong>当前暂无公开引导的笔录室</strong><span>请留意现场工作人员指引</span></div>}
         </section>
       </main>
       <footer className="public-display-footer"><p><SpeakerHigh size={24} />请留意屏幕引导，按提示前往对应笔录室</p><p>最后更新&nbsp; {updated}<span aria-hidden="true">·</span>姓名已脱敏</p></footer>
@@ -1882,7 +1883,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function openRoom(room = null) {
-    setDrawer({ type: room ? "room-edit" : "room-create", room, errors: {}, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true } });
+    setDrawer({ type: room ? "room-edit" : "room-create", room, errors: {}, form: room ? { name: room.name, sortOrder: Number(room.sortOrder || 1), isActive: room.isActive !== false, showOnDisplay: room.showOnDisplay !== false } : { name: "", sortOrder: rooms.length + 1, isActive: true, showOnDisplay: true } });
   }
 
   function updateDrawerField(field, value) {

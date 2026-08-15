@@ -30,7 +30,7 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "a2258bf3013bbd3a76ae64c4c8da49a88b7a90988d93ff94fc52f47fe203ba10";
+const frozenSourceSha256 = "e6355557d345aa1bb49d32a2fc13fafee6d18cac845601d257b07868db129b50";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

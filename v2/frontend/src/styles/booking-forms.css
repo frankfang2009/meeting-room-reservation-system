@@ -442,6 +442,13 @@
   cursor: pointer;
 }
 
+.room-availability-toggle + .room-display-toggle {
+  min-height: 82px;
+  margin-top: 0;
+  padding-top: 16px;
+  border-top: 0;
+}
+
 .room-availability-toggle > span {
   min-width: 0;
   display: grid;

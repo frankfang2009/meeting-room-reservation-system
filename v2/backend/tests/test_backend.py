@@ -823,6 +823,7 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
     def test_room_and_preferences_fields_match_frontend_contract(self):
         room = self.bootstrap()["rooms"][0]
         self.assertIn("isActive", room)
+        self.assertTrue(room["showOnDisplay"])
         updated = self.write(
             "PATCH",
             f"/api/v1/rooms/{room['id']}",
@@ -845,6 +846,44 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         )
         self.assertEqual(saved.status_code, 200, saved.get_json())
         self.assertIsNone(saved.get_json()["defaultRoomId"])
+
+    def test_room_display_setting_is_admin_only_strict_and_audited(self):
+        room = self.bootstrap()["rooms"][0]
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        employee_room = self.bootstrap(employee)["rooms"][0]
+        self.assertNotIn("showOnDisplay", employee_room)
+        denied = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": False},
+            client=employee,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        invalid = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": 0},
+        )
+        self.assertEqual(invalid.status_code, 422, invalid.get_json())
+
+        updated = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{room['id']}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(updated.status_code, 200, updated.get_json())
+        self.assertFalse(updated.get_json()["showOnDisplay"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = json.loads(
+                db.execute(
+                    "SELECT details_json FROM security_audit_log "
+                    "WHERE action = 'room.updated' "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        self.assertFalse(details["showOnDisplay"])
 
     def test_default_tag_slot_validates_and_follows_global_slot_rename(self):
         for invalid in (0, 5, "1", -1, True):
@@ -1664,6 +1703,72 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
             "/api/v1/display/today", environ_base={"REMOTE_ADDR": "8.8.8.8"}
         )
         self.assertEqual(denied.status_code, 403)
+
+    def test_hidden_display_rooms_are_filtered_without_affecting_shared_or_integration_data(self):
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        hidden_booking = self.create_booking(
+            partyName="隐藏人员甲", start="09:00", duration=60
+        )
+        second_room_id = self.bootstrap()["rooms"][1]["id"]
+        visible_booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(
+                second_room_id,
+                partyName="公开人员乙",
+                caseNumber="C3-VISIBLE",
+                start="09:00",
+                duration=60,
+            ),
+        )
+        self.assertEqual(visible_booking.status_code, 201, visible_booking.get_json())
+        hidden = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{self.room_id}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(hidden.status_code, 200, hidden.get_json())
+
+        self.now = datetime(2026, 8, 10, 9, 15, tzinfo=timezone(timedelta(hours=8)))
+        display = self.client.get("/api/v1/display/today").get_json()
+        self.assertEqual([room["id"] for room in display["rooms"]], [second_room_id])
+        self.assertNotIn("隐藏人员甲", json.dumps(display, ensure_ascii=False))
+
+        token = self.write(
+            "POST",
+            "/api/v1/admin/tokens",
+            {"name": "C3 集成不变", "scopes": ["rooms:read", "availability:read"]},
+        ).get_json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        integration_rooms = self.client.get(
+            "/api/v1/integration/rooms", headers=headers
+        ).get_json()["items"]
+        self.assertIn(self.room_id, [room["id"] for room in integration_rooms])
+        availability_rooms = self.client.get(
+            "/api/v1/integration/availability?date=2026-08-10", headers=headers
+        ).get_json()["rooms"]
+        self.assertIn(self.room_id, [room["roomId"] for room in availability_rooms])
+
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        employee_rooms = self.bootstrap(employee)["rooms"]
+        self.assertIn(self.room_id, [room["id"] for room in employee_rooms])
+        self.assertTrue(all("showOnDisplay" not in room for room in employee_rooms))
+        shared = employee.get(
+            "/api/v1/reservations?dateFrom=2026-08-10&dateTo=2026-08-10"
+        ).get_json()["items"]
+        self.assertIn(hidden_booking["id"], [booking["id"] for booking in shared])
+
+        empty = self.write(
+            "PATCH",
+            f"/api/v1/rooms/{second_room_id}",
+            {"showOnDisplay": False},
+        )
+        self.assertEqual(empty.status_code, 200, empty.get_json())
+        self.assertEqual(
+            self.client.get("/api/v1/display/today").get_json()["rooms"], []
+        )
 
     def test_reminder_ack_is_revision_scoped(self):
         self.now = datetime(2026, 8, 10, 8, 40, tzinfo=timezone(timedelta(hours=8)))

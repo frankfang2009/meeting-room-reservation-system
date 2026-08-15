@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   adminApiFieldErrors,
@@ -9,6 +12,10 @@ import {
   validateUserAdminForm,
 } from "../src/features/admin/validation.js";
 import { buildTagSectionPayload } from "../src/features/tags/tag-drafts.js";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const app = fs.readFileSync(path.join(root, "src/App.jsx"), "utf8");
+const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
 
 test("administrator forms expose stable field-level validation", () => {
   assert.deepEqual(validateRoomAdminForm({ name: "", sortOrder: 0 }), {
@@ -44,4 +51,12 @@ test("unit and personal tag sections build independent payloads", () => {
     () => buildTagSectionPayload(tags, { ...drafts, "tag-3": " " }, "personal"),
     /名称不能为空/,
   );
+});
+
+test("room display visibility stays inside the administrator inspector", () => {
+  assert.match(adminForms, />在公开大屏显示</);
+  assert.match(adminForms, /onFieldChange\("showOnDisplay", event\.target\.checked\)/);
+  assert.match(app, /showOnDisplay: room\.showOnDisplay !== false/);
+  assert.match(app, /showOnDisplay: true/);
+  assert.doesNotMatch(app, /room-state[\s\S]{0,160}showOnDisplay/);
 });

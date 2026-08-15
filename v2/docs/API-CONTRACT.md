@@ -166,7 +166,9 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   按 `slotMinutes` 对齐且结束晚于开始；非法返回 `422 VALIDATION_ERROR`
   及 `fields.workStart/workEnd`。成功返回完整 `settings`，只影响后续时段生成，
   不改写已有预约的日期或时间，并记录 `settings.updated` 安全审计。
-- `GET|POST /api/v1/rooms`；`PATCH|DELETE /api/v1/rooms/{id}`。其中管理页的周期性
+- `GET|POST /api/v1/rooms`；`PATCH|DELETE /api/v1/rooms/{id}`。管理员房间响应与
+  `POST/PATCH` 支持布尔字段 `showOnDisplay`，新房间默认 `true`；该字段只用于管理，
+  不进入员工 bootstrap、公开大屏或只读集成响应。其中管理页的周期性
   `GET /api/v1/rooms` 是被动状态轮询，不刷新 30 分钟空闲会话计时。
 - `GET /api/v1/rooms/{id}/deletion-impact` 仅管理员可用，返回目标
   `room: {id,name}`、所有未结束 active 预约计数 `total`，以及按日期/开始时间排序的
@@ -250,3 +252,6 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 ```
 
 这一响应的允许键集合必须由服务端测试锁定，不能通过复用内部预约序列化器生成。
+只有 `is_active=1 AND show_on_display=1` 的笔录室及其预约能进入服务端查询和投影；
+全部隐藏时返回 `rooms: []`。`/integration/rooms` 与 `/integration/availability` 不受
+公开大屏开关影响。

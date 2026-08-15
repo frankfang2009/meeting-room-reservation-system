@@ -114,13 +114,16 @@ def _write_auth_audit(
         )
 
 
-def serialize_room(row: Any) -> dict[str, Any]:
-    return {
+def serialize_room(row: Any, *, include_display_setting: bool = False) -> dict[str, Any]:
+    result = {
         "id": row["id"],
         "name": row["name"],
         "isActive": bool(row["is_active"]),
         "sortOrder": row["sort_order"],
     }
+    if include_display_setting:
+        result["showOnDisplay"] = bool(row["show_on_display"])
+    return result
 
 
 def serialize_room_with_metrics(db, row: Any) -> dict[str, Any]:
@@ -165,7 +168,7 @@ def serialize_rooms_with_metrics(db, rows: list[Any]) -> list[dict[str, Any]]:
         next_by_room.setdefault(next_row["room_id"], next_row)
     results = []
     for row in rows:
-        result = serialize_room(row)
+        result = serialize_room(row, include_display_setting=True)
         count = counts.get(row["id"])
         next_row = next_by_room.get(row["id"])
         result["todayCount"] = int(count["today_count"] or 0) if count else 0
