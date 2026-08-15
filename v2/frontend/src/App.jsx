@@ -813,7 +813,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   return <div className="session-expired-layer"><section ref={ref} className="session-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="session-expired-heading">
     <span className="session-expired-icon" aria-hidden="true"><LockSimple size={22} /></span>
     <h2 id="session-expired-heading">登录已过期</h2>
-    <p>为保护账户安全，请重新登录。未保存内容已保留，验证成功后可继续处理。</p>
+    <p>为保护账户安全，请重新登录。本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复。</p>
     {!editing ? <button type="button" data-initial-focus onClick={() => setEditing(true)}>重新登录</button> :
       <form className="session-reauth-form" onSubmit={submit}>
         <input data-initial-focus aria-label="用户名" autoComplete="username" placeholder="用户名" value={credentials.username} onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))} />

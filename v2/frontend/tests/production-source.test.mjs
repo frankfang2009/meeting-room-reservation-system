@@ -14,6 +14,8 @@ const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
 const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
 const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
+const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.css"), "utf8");
+const designContract = fs.readFileSync(path.join(root, "DESIGN-CONTRACT.md"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
   for (const forbidden of ["demo123", "demo1234", "URLSearchParams", "loginState=", "bookingState=", "feedbackState=", "displayState=", "dataState="]) {
@@ -342,11 +344,21 @@ test("reauthentication remounts scoped state only after session and bootstrap va
 });
 
 test("expired sessions preserve and restore an account-scoped booking draft", () => {
-  assert.match(app, /未保存内容已保留/);
+  assert.match(app, /本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复/);
   assert.match(app, /writeSessionBookingDraft\(window\.sessionStorage, latest\?\.userId/);
   assert.match(app, /consumeSessionBookingDraft\([\s\S]{0,80}window\.sessionStorage/);
   assert.match(app, /setToast\("已恢复未保存的预约草稿", "info"\)/);
   assert.match(app, /clearSessionBookingDraft\(window\.sessionStorage, currentUser\?\.id\)/);
+});
+
+test("approved F19 decisions keep production UI and the frozen contract aligned", () => {
+  assert.match(app, /<p>\{dateLabel\(booking\.date\)\}<\/p>\{booking\.status && <span className=\{`drawer-status \$\{booking\.status\}`\}/);
+  assert.match(designContract, /adjacent status badge remains visible/);
+  for (const width of [960, 720, 620]) {
+    assert.match(responsiveStyles, new RegExp(`@media \\(max-width: ${width}px\\)`));
+  }
+  assert.match(designContract, /960px, 720px, and 620px rules are defensive fallbacks/);
+  assert.match(designContract, /本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复/);
 });
 
 test("editing another user's booking resolves personal tags from the owner", () => {
