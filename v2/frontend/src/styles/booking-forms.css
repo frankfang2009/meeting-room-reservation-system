@@ -764,8 +764,9 @@
 
 .booking-form .tag-choice {
   min-height: 44px;
-  gap: 7px;
-  padding-inline: 8px;
+  gap: 5px;
+  padding-inline: 5px;
+  overflow: hidden;
   white-space: nowrap;
 }
 

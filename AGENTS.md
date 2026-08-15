@@ -55,3 +55,6 @@
 - In System Status, work hours and recent backup are matching whole-row drawer entries with a
   trailing chevron. Do not place a standalone edit button inside the work-hours value cell, and
   keep the work-hours drawer action visibly separated from its final time field.
+- Booking drawers keep all four tag choices in one compact row. Custom tag names that exceed their
+  cell must stay inside the button with ellipsis while the full name remains available on hover and
+  through the button's accessible name; never let label text overlap an adjacent tag or form field.

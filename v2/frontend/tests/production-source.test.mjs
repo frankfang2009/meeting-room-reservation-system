@@ -13,6 +13,7 @@ const productionSource = fs.readdirSync(path.join(root, "src"), { recursive: tru
 const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
 const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
+const bookingFormStyles = fs.readFileSync(path.join(root, "src/styles/booking-forms.css"), "utf8");
 const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
 const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.css"), "utf8");
 const settingsStyles = fs.readFileSync(path.join(root, "src/styles/settings.css"), "utf8");
@@ -85,6 +86,12 @@ test("system work hours use a whole-row drawer entry with a separated footer", (
   assert.doesNotMatch(app, /system-edit-settings/);
   assert.match(systemStyles, /\.system-action-row:focus-visible/);
   assert.match(systemExtensionStyles, /\.system-settings-form \.drawer-fixed-footer \{[\s\S]*?margin-top: auto;[\s\S]*?padding-top: 40px;/);
+});
+
+test("booking tag choices contain long custom labels without changing the compact row", () => {
+  assert.match(app, /className=\{`tag-choice[\s\S]{0,260}title=\{tag\.label\}[\s\S]{0,160}<i \/><span>\{tag\.label\}<\/span><\/button>/);
+  assert.match(bookingFormStyles, /\.booking-form \.tag-choice-grid \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(bookingFormStyles, /\.booking-form \.tag-choice span \{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;[\s\S]*?text-overflow: ellipsis;/);
 });
 
 test("personal center exposes preferences through one tab entry", () => {
