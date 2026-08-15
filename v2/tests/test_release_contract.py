@@ -311,7 +311,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
         launcher = read("installer/安装V2.1.0.bat")
-        workflow = (V2_ROOT.parent / ".github/workflows/v2-baseline.yml").read_text(
+        workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
         gate = (V2_ROOT.parent / ".github/scripts/v2-windows-candidate-gate.ps1").read_text(
@@ -342,7 +342,10 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('"④ 停止本次后台系统.bat"', gate)
         self.assertIn("Invoke-CandidateBat $installRoot", gate)
         self.assertIn("formal candidate cleanup", gate)
-        self.assertIn("actions/download-artifact@v4", workflow)
+        self.assertIn(
+            "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
+            workflow,
+        )
         self.assertIn("v2-windows-candidate-gate.ps1", workflow)
         reproducible = (V2_ROOT.parent / ".github/scripts/v2-reproducible-build.sh").read_text(
             encoding="utf-8"

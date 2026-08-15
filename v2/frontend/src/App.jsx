@@ -320,7 +320,7 @@ function LoadingScreen({ label = "正在连接系统" }) {
         <p className="login-account-feedback"><CircleNotch className="spin" size={20} />请稍候</p>
       </section>
       <figure className="login-illustration" aria-hidden="true">
-        <img src="/assets/login/claude-doorway-time.png" alt="" />
+        <img src="/assets/login/schedule-portal.svg" alt="" />
       </figure>
     </main>
   );
@@ -339,7 +339,7 @@ function FatalScreen({ error, onRetry }) {
         <button className="login-submit" type="button" onClick={onRetry}>重新连接</button>
       </section>
       <figure className="login-illustration" aria-hidden="true">
-        <img src="/assets/login/claude-doorway-time.png" alt="" />
+        <img src="/assets/login/schedule-portal.svg" alt="" />
       </figure>
     </main>
   );
@@ -359,7 +359,7 @@ function RecoveryScreen({ error, onRetry }) {
         {(error?.recoveryCode || error?.requestId) && <dl className="recovery-reference">{error.recoveryCode && <div><dt>恢复代码</dt><dd>{error.recoveryCode}</dd></div>}{error.requestId && <div><dt>请求编号</dt><dd>{error.requestId}</dd></div>}</dl>}
         <button className="login-submit" type="button" onClick={onRetry}><ArrowClockwise size={18} />重新检查</button>
       </section>
-      <figure className="login-illustration" aria-hidden="true"><img src="/assets/login/claude-doorway-time.png" alt="" /></figure>
+      <figure className="login-illustration" aria-hidden="true"><img src="/assets/login/schedule-portal.svg" alt="" /></figure>
     </main>
   );
 }
@@ -444,7 +444,7 @@ function Login({ onAuthenticated, onRecovery }) {
         </form>
       </section>
       <figure className="login-illustration" aria-hidden="true">
-        <img src="/assets/login/claude-doorway-time.png" alt="" />
+        <img src="/assets/login/schedule-portal.svg" alt="" />
       </figure>
     </main>
   );

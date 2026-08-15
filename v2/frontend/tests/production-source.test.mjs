@@ -27,6 +27,12 @@ test("production entry contains no demo credentials or query-state router", () =
   }
 });
 
+test("login uses the project-owned neutral illustration", () => {
+  assert.match(app, /\/assets\/login\/schedule-portal\.svg/);
+  assert.equal(fs.existsSync(path.join(root, "public/assets/login/schedule-portal.svg")), true);
+  assert.doesNotMatch(app, /doorway-time\.png/);
+});
+
 test("production entry does not generate business ids in the browser", () => {
   assert.equal(app.includes("crypto.randomUUID"), false);
   assert.doesNotMatch(app, /(?:booking|reservation)Id\s*:\s*[^\n]*Date\.now\(\)/);
@@ -158,7 +164,7 @@ test("calendar loading isolates the previous date and retains its schedule frame
 
 test("calendar success notices expire and clear when their context changes", () => {
   assert.match(app, /window\.setTimeout\(\(\) => setSuccessNotice\(null\), 8000\)/);
-  assert.match(app, /setSuccessNotice\(null\);\n {2}}, \[currentDate\]\)/);
+  assert.match(app, /setSuccessNotice\(null\);\r?\n {2}}, \[currentDate\]\)/);
   assert.match(app, /if \(view !== "calendar"\) setSuccessNotice\(null\)/);
   assert.match(app, /function openCreate[\s\S]{0,180}setSuccessNotice\(null\)/);
   assert.match(app, /function openEdit[\s\S]{0,180}setSuccessNotice\(null\)/);

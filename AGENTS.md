@@ -1,6 +1,12 @@
 # Repository working rules
 
 - `v2/` is the active Meeting Room Reservation System V2.1.0 codebase.
+- The repository is prepared for public source collaboration under Apache-2.0. Never commit
+  customer databases, backups, logs, credentials, private screenshots, or real personal data.
+- Public source availability does not authorize publishing an unsigned Windows installer. Keep
+  `formal_external_release_allowed=false` until every physical Windows and signing gate passes.
+- Public-facing assets and copy must be project-owned or have documented redistribution rights;
+  do not add third-party product mimicry, trademarks, or local/private source paths.
 - V2 is a fresh installation. Never read, migrate, modify, or delete V1 data.
 - Preserve the roles `admin | employee`, the authenticated shared-calendar visibility rules,
   employee-owned history boundary, and the server-side public-display allowlist.

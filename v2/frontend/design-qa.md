@@ -4,8 +4,8 @@
 
 ## 对照来源
 
-- 冻结原型：`/Users/frank/Desktop/projects/预约系统/output/prototypes/claude-calendar`
-- 正式实现：`/private/tmp/meeting-room-v2/v2/frontend`
+- 冻结原型：开源前的私有历史设计输入（不作为当前仓库依赖）
+- 正式实现：本仓库 `v2/frontend`
 - 浏览器：Codex 应用内浏览器
 - 正式数据：隔离的临时 V2 数据目录；所有房间、用户和预约均通过真实 API 创建
 - 首次设置：使用另一隔离临时数据目录，仅推进到确认页，未提交配置
@@ -158,7 +158,7 @@ final result: passed
 
 ### 对照与归一化
 
-- 来源视觉真值：`/var/folders/7h/2l8d2s_d5_54l20rmssvyp2c0000gn/T/codex-clipboard-9c37b9bc-d0ed-4c62-8f6a-9cef895fe07e.png`（1874×522）；用户明确要求删除图中“预约活动”标题、日期范围、热力格与月份标记。
+- 来源视觉真值：开源前的私有历史截图（1874×522，不随仓库发布）；用户明确要求删除图中“预约活动”标题、日期范围、热力格与月份标记。
 - 浏览器实现截图：`qa/personal-center/implementation-personal-center-no-heatmap.png`（1080×890 CSS 像素）。
 - 同图对照：`qa/personal-center/comparison-personal-center-no-heatmap.png`（2160×890）；左侧将来源按 1080 宽等比缩放并置于同尺寸画布，右侧为未缩放实现。
 - 状态：隔离 QA 管理员登录后，从底部账户入口打开“我的活动”；未读取或修改正式数据。

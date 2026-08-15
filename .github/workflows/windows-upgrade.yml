@@ -3,11 +3,25 @@ name: Windows upgrade validation
 on:
   push:
     branches: [main]
+    paths:
+      - "01_版本归档/**"
+      - "02_开发工作区/**"
+      - ".github/scripts/windows-*.ps1"
+      - ".github/workflows/windows-upgrade.yml"
   pull_request:
+    paths:
+      - "01_版本归档/**"
+      - "02_开发工作区/**"
+      - ".github/scripts/windows-*.ps1"
+      - ".github/workflows/windows-upgrade.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: v1-windows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows-upgrade:
@@ -18,10 +32,10 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -107,7 +121,7 @@ jobs:
 
       - name: Upload generated packages and upgrade logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-upgrade-evidence
           if-no-files-found: warn

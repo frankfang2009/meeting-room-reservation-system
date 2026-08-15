@@ -4,6 +4,14 @@
 Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
 完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
 
+仓库公开仅表示 Apache-2.0 源代码可访问，不代表任何 GitHub Actions 产物或未签名
+候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件，也不得自动发布 V2 候选。
+
+公开仓库自动化分层固定如下：`.github/workflows/ci.yml` 对每个 PR 和 main 运行仓库策略、
+V2 Linux 与 V2 Windows 门禁，但不制作或上传安装包；`release-candidate.yml` 仅允许从
+main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，候选只保留 7 天且不自动创建
+GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+
 ## 当前增量修复证据（2026-08-14 至 2026-08-15）
 
 | 编号 | 命令或证据 | 实际结果 |
@@ -53,7 +61,7 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 | E5 | `v2/backend/.venv/bin/python -m ruff check --no-cache v2/backend v2/installer v2/tests`、`v2/backend/.venv/bin/python -m compileall -q v2/backend v2/installer v2/tests`、`git diff --check` | 全部通过 |
 | E6 | `.github/scripts/v2-reproducible-build.sh` 对历史提交对应源码执行两次独立 source/frontend/runtime/payload/package 构建并导出六件套 | 两个副本分别完成 `npm ci`，两次构建逐层一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`；候选 ZIP SHA-256 为 `48d4b2d52feea9e790cbb069ce3bbafe450ff09f359888b2f1e7de8bf084177b`；六件套位于 ignored `v2/out/release-20260812/six-pack-3` |
 | E7 | `cd v2/backend && .venv/bin/python -m unittest tests.test_hardening.SetupListenerProcessTests.test_real_waitress_setup_handoff_has_no_bad_file_descriptor -v` | 真实 Waitress 子进程收到 setup 201，连续两次确认 `bind_mode=lan`；无 `Bad file descriptor`/`Errno 9` |
-| E8 | `ruby -e 'require "yaml"; YAML.parse_file(".github/workflows/v2-baseline.yml")'` | workflow YAML 解析通过 |
+| E8 | 历史提交中的 `.github/workflows/v2-baseline.yml` YAML 解析 | 当时的候选 workflow YAML 解析通过；当前工作流已按上方公开仓库自动化分层替代 |
 | E9 | GitHub Actions 对提交 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 [push run 31611162491](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/31611162491) 与 [PR run 31611166614](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/31611166614) | 两条运行均通过 Linux contracts、独立双构建、六件套上传及 Windows hosted candidate gate；下载 push artifact 后与本地六件套六个文件逐字节一致，ZIP SHA-256 同为 `48d4b2d52feea9e790cbb069ce3bbafe450ff09f359888b2f1e7de8bf084177b`；仅有 Actions Node 20 弃用提示，不影响本轮结论 |
 
 此前本地候选 ZIP SHA-256
