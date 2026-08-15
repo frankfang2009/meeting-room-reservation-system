@@ -66,6 +66,21 @@ def update_preferences():
                 "SELECT 1 FROM rooms WHERE id = ? AND is_active = 1", (room_id,)
             ).fetchone():
                 raise ApiError(422, "ROOM_UNAVAILABLE", "默认笔录室当前不可用")
+        default_tag_slot = existing["default_tag_slot"]
+        if "defaultTagSlot" in payload:
+            if payload["defaultTagSlot"] is None:
+                default_tag_slot = None
+            else:
+                default_tag_slot = parse_int(
+                    payload["defaultTagSlot"], field="defaultTagSlot"
+                )
+                if default_tag_slot not in (1, 2, 3, 4):
+                    raise ApiError(
+                        422,
+                        "VALIDATION_ERROR",
+                        "请检查输入内容",
+                        fields={"defaultTagSlot": "默认标签必须是槽位 1–4 或不指定"},
+                    )
         change_notifications = (
             parse_bool(
                 payload["bookingChangeNotifications"],
@@ -106,14 +121,15 @@ def update_preferences():
         db.execute(
             """
             UPDATE user_preferences
-            SET default_duration = ?, default_room_id = ?,
+            SET default_duration = ?, default_room_id = ?, default_tag_slot = ?,
                 booking_change_notifications = ?, booking_reminder = ?,
                 personal_tag_3_label = ?, personal_tag_4_label = ?,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE user_id = ?
             """,
             (
-                duration, room_id, int(change_notifications), int(reminder),
+                duration, room_id, default_tag_slot,
+                int(change_notifications), int(reminder),
                 personal[3], personal[4], actor["id"],
             ),
         )
@@ -123,7 +139,11 @@ def update_preferences():
             action="preferences.updated",
             target_type="user",
             target_id=actor["id"],
-            details={"defaultDuration": duration, "defaultRoomId": room_id},
+            details={
+                "defaultDuration": duration,
+                "defaultRoomId": room_id,
+                "defaultTagSlot": default_tag_slot,
+            },
         )
     g_user = db.execute("SELECT * FROM users WHERE id = ?", (actor["id"],)).fetchone()
     return jsonify(

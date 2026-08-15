@@ -86,6 +86,8 @@ test("personal preferences expose real scoped defaults and server-backed persona
   assert.match(productionSource, />登录后默认打开</);
   assert.doesNotMatch(productionSource, />活动图显示范围</);
   assert.match(productionSource, />个人标签</);
+  assert.match(productionSource, />默认标签</);
+  assert.match(app, /defaultBookingTagId\(\{[\s\S]{0,180}defaultTagSlot: bootstrap\.preferences\?\.defaultTagSlot,[\s\S]{0,100}draft/);
   assert.match(productionSource, /onChange\("personalTags"/);
 });
 

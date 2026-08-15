@@ -192,6 +192,7 @@ def _serialize_preferences(db, user_id: str) -> dict[str, Any]:
     return {
         "defaultDuration": row["default_duration"],
         "defaultRoomId": row["default_room_id"],
+        "defaultTagSlot": row["default_tag_slot"],
         "bookingChangeNotifications": bool(row["booking_change_notifications"]),
         "bookingReminder": bool(row["booking_reminder"]),
         "personalTags": [

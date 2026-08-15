@@ -10,6 +10,7 @@ import {
   canViewBookingDetails,
   clampDurationToWorkday,
   dateKey,
+  defaultBookingTagId,
   findFirstAvailableStart,
   generateTimeSlots,
   hasBookingStarted,
@@ -44,6 +45,24 @@ test("generates adjacent working-hour slots", () => {
     ["08:30", "09:00"], ["09:00", "09:30"], ["09:30", "10:00"],
   ]);
   assert.throws(() => generateTimeSlots("08:30", "09:10"), /divide evenly/);
+});
+
+test("default tag applies only to a genuinely blank new booking", () => {
+  const tags = [
+    { id: "tag-1", slot: 1, label: "单位标签" },
+    { id: "tag-3", slot: 3, label: "个人标签" },
+  ];
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: null }), "");
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: 3 }), "tag-3");
+  assert.equal(defaultBookingTagId({ tags, defaultTagSlot: 1 }), "tag-1");
+  assert.equal(
+    defaultBookingTagId({ tags, defaultTagSlot: 3, draft: { tagId: "tag-1" } }),
+    "tag-1",
+  );
+  assert.equal(
+    defaultBookingTagId({ tags, defaultTagSlot: 3, draft: { tagId: "" } }),
+    "",
+  );
 });
 
 test("calendar keeps existing bookings outside updated work hours without enabling new slots", () => {

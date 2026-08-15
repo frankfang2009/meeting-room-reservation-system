@@ -195,6 +195,12 @@ export function isWithinWorkingHours(start, end, workStart, workEnd) {
   return parseTime(start) >= parseTime(workStart) && parseTime(end) <= parseTime(workEnd);
 }
 
+export function defaultBookingTagId({ tags = [], defaultTagSlot = null, draft = null } = {}) {
+  if (draft !== null) return typeof draft?.tagId === "string" ? draft.tagId : "";
+  const preferred = tags.find((tag) => Number(tag?.slot) === Number(defaultTagSlot));
+  return preferred?.id || "";
+}
+
 export function calendarFocusTarget(cells = [], current = null, key = "") {
   const normalized = cells
     .map((cell) => ({

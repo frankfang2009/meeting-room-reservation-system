@@ -846,6 +846,97 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(saved.status_code, 200, saved.get_json())
         self.assertIsNone(saved.get_json()["defaultRoomId"])
 
+    def test_default_tag_slot_validates_and_follows_global_slot_rename(self):
+        for invalid in (0, 5, "1", -1, True):
+            with self.subTest(defaultTagSlot=invalid):
+                response = self.write(
+                    "PUT",
+                    "/api/v1/preferences",
+                    {"defaultTagSlot": invalid},
+                )
+                self.assertEqual(response.status_code, 422, response.get_json())
+                self.assertIn(
+                    "defaultTagSlot", response.get_json()["error"].get("fields", {})
+                )
+
+        saved = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"defaultTagSlot": 1},
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        self.assertEqual(saved.get_json()["defaultTagSlot"], 1)
+        renamed = self.write(
+            "PUT",
+            "/api/v1/tags/global",
+            {
+                "tags": [
+                    {"slot": 1, "label": "新单位标签"},
+                    {"slot": 2, "label": "单位标签二"},
+                ]
+            },
+        )
+        self.assertEqual(renamed.status_code, 200, renamed.get_json())
+        bootstrap = self.bootstrap()
+        self.assertEqual(bootstrap["preferences"]["defaultTagSlot"], 1)
+        self.assertEqual(bootstrap["globalTags"][0]["label"], "新单位标签")
+        cleared = self.write(
+            "PUT", "/api/v1/preferences", {"defaultTagSlot": None}
+        )
+        self.assertIsNone(cleared.get_json()["defaultTagSlot"])
+        with closing(sqlite3.connect(self.database)) as db:
+            details = json.loads(
+                db.execute(
+                    "SELECT details_json FROM security_audit_log "
+                    "WHERE action = 'preferences.updated' "
+                    "ORDER BY occurred_at DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        self.assertIn("defaultTagSlot", details)
+        self.assertIsNone(details["defaultTagSlot"])
+
+    def test_personal_default_tag_slot_is_isolated_per_employee(self):
+        self.add_employee("employee-a")
+        self.add_employee("employee-b")
+        employee_a = self.app.test_client()
+        employee_b = self.app.test_client()
+        self.login("employee-a", "employee-pass-123", employee_a)
+        self.login("employee-b", "employee-pass-123", employee_b)
+
+        saved_a = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {
+                "defaultTagSlot": 3,
+                "personalTags": [
+                    {"slot": 3, "label": "A 的个人标签"},
+                    {"slot": 4, "label": "A 的备用标签"},
+                ],
+            },
+            client=employee_a,
+        )
+        self.assertEqual(saved_a.status_code, 200, saved_a.get_json())
+        bootstrap_b = self.bootstrap(employee_b)
+        self.assertIsNone(bootstrap_b["preferences"]["defaultTagSlot"])
+        self.assertEqual(bootstrap_b["personalTags"][0]["label"], "标签 3")
+
+        saved_b = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {
+                "defaultTagSlot": 3,
+                "personalTags": [
+                    {"slot": 3, "label": "B 的个人标签"},
+                    {"slot": 4, "label": "B 的备用标签"},
+                ],
+            },
+            client=employee_b,
+        )
+        self.assertEqual(saved_b.status_code, 200, saved_b.get_json())
+        bootstrap_a = self.bootstrap(employee_a)
+        self.assertEqual(bootstrap_a["preferences"]["defaultTagSlot"], 3)
+        self.assertEqual(bootstrap_a["personalTags"][0]["label"], "A 的个人标签")
+
     def test_admin_bootstrap_supplies_owner_personal_tags(self):
         employee = self.add_employee()
         selected = next(

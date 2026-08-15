@@ -176,7 +176,8 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   `error.conflicts` 与上述最多 50 条 `items` 一致；`total` 可能大于 conflicts 长度。
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
-- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、两项网页通知和个人标签 3、4。
+- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、默认标签、两项网页通知和个人标签 3、4。
+  `defaultTagSlot` 只接受 `null | 1 | 2 | 3 | 4`，表示本人标签槽位引用，不存储标签文案。
 - `GET /api/v1/activity` 返回当前登录用户的只读活动聚合。服务端按本地时间只统计
   `status=active` 且已经结束的本人预约，响应仅包含四项汇总，以及平均时长、常用
   笔录室和常用标签概览。响应不得接受或返回 `ownerId`、按日分布或预约明细。

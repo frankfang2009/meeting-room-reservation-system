@@ -74,6 +74,7 @@ import {
   canManageBooking,
   clampDurationToWorkday,
   dateKey,
+  defaultBookingTagId,
   durationFromRange,
   endFromDuration,
   findFirstAvailableStart,
@@ -1368,7 +1369,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         maxDuration: settings.maxDurationMinutes,
         slotMinutes: settings.slotMinutes,
       })),
-      tagId: draft?.tagId || tags[0]?.id || "",
+      tagId: defaultBookingTagId({
+        tags,
+        defaultTagSlot: bootstrap.preferences?.defaultTagSlot,
+        draft,
+      }),
     });
     setPreservedDraft(null);
     setDrawer({ type: "create" });
@@ -2237,7 +2242,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       if (preferencesErrors[field]) setPreferencesErrors((current) => ({ ...current, [field]: "" }));
     };
     const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} saving={preferencesSaving} tab={profileTab} uiDraft={uiPreferencesDraft} />;
+    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} saving={preferencesSaving} tab={profileTab} tags={tags} uiDraft={uiPreferencesDraft} />;
   }
 
   function renderUnauthorized() {
