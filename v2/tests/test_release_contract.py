@@ -354,6 +354,14 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("v2.installer.assemble_payload", reproducible)
         self.assertIn("v2.installer.build_package", reproducible)
         self.assertIn("v2-reproducible-build.sh", workflow)
+        self.assertIn('version=$(tr -d', reproducible)
+        self.assertIn('artifact="会议室预约系统-V${version}-安装包.zip"', reproducible)
+        self.assertIn('$version = (Get-Content -LiteralPath "v2/VERSION"', gate)
+        self.assertIn('$artifactName = "会议室预约系统-V$version-安装包.zip"', gate)
+        self.assertIn('$launcherName = "安装V$version.bat"', gate)
+        self.assertNotIn("V2.0.0-安装包.zip", workflow)
+        self.assertNotIn("V2.0.0-安装包.zip", reproducible)
+        self.assertNotIn("V2.0.0-安装包.zip", gate)
 
     def test_admin_edit_uses_owner_personal_tags_across_layers(self) -> None:
         bootstrap = read("backend/v2app/api/core.py")
