@@ -2,6 +2,8 @@
 
 [简体中文](README.md) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Apache-2.0](LICENSE)
 
+[![CI](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml) [![CodeQL](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml)
+
 A self-hosted meeting and interview room reservation system for trusted local networks. The current V2.1.0 line uses React, Flask, and SQLite and includes a shared calendar, reservation workflows, a privacy-minimized public display, administration, backup and recovery, and a Windows fresh-install pipeline.
 
 > This repository publishes source code, not a production Windows installer. V2.1.0 has not completed ordinary-user Windows 10/11 acceptance or Authenticode signing. Automated artifacts are internal candidates only and are not formal releases.

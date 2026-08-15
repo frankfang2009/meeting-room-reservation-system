@@ -2,6 +2,8 @@
 
 [English](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](.github/SECURITY.md) · [Apache-2.0](LICENSE)
 
+[![CI](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml) [![CodeQL](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml)
+
 一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.1.0 使用 React、Flask 与 SQLite，提供共享日历、预约管理、公开大屏、用户与房间管理、备份恢复和 Windows 全新安装链。
 
 > 当前公开的是源代码，不是正式 Windows 安装包。V2.1.0 尚未完成普通用户 Windows 10/11 实机验收和 Authenticode 签名，任何自动构建产物都只能作为内部候选，不能视为正式发布。
