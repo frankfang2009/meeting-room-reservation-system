@@ -14,6 +14,10 @@ from ..services.reservations import serialize_reservation
 bp = Blueprint("reminder_api", __name__, url_prefix="/api/v1/reminders")
 
 
+def _upcoming_window_end(now: datetime, preference) -> datetime:
+    return now + timedelta(minutes=int(preference["reminder_lead_minutes"]))
+
+
 def _was_acknowledged(db, row, actor_id: str, kind: str) -> bool:
     receipt = db.execute(
         """
@@ -33,7 +37,7 @@ def due_reminders():
     actor = current_user()
     preference = db.execute(
         """
-        SELECT booking_change_notifications, booking_reminder
+        SELECT booking_change_notifications, booking_reminder, reminder_lead_minutes
         FROM user_preferences WHERE user_id = ?
         """,
         (actor["id"],),
@@ -69,7 +73,7 @@ def due_reminders():
     if not preference["booking_reminder"]:
         return jsonify({"items": due})
     now = local_now().replace(tzinfo=None)
-    limit = now + timedelta(minutes=30)
+    limit = _upcoming_window_end(now, preference)
     rows = db.execute(
         """
         SELECT r.*, u.display_name AS owner_display_name
@@ -116,7 +120,7 @@ def acknowledge_reminder(reservation_id: str):
             raise ApiError(409, "REVISION_CONFLICT", "预约内容已发生变化")
         preference = db.execute(
             """
-            SELECT booking_change_notifications, booking_reminder
+            SELECT booking_change_notifications, booking_reminder, reminder_lead_minutes
             FROM user_preferences WHERE user_id = ?
             """,
             (actor["id"],),
@@ -141,7 +145,7 @@ def acknowledge_reminder(reservation_id: str):
             if (
                 not preference["booking_reminder"]
                 or row["status"] != "active"
-                or not now < starts_at <= now + timedelta(minutes=30)
+                or not now < starts_at <= _upcoming_window_end(now, preference)
             ):
                 raise ApiError(409, "REMINDER_NOT_DUE", "该临近提醒当前不可确认")
         db.execute(

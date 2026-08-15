@@ -195,6 +195,7 @@ def _serialize_preferences(db, user_id: str) -> dict[str, Any]:
         "defaultTagSlot": row["default_tag_slot"],
         "bookingChangeNotifications": bool(row["booking_change_notifications"]),
         "bookingReminder": bool(row["booking_reminder"]),
+        "reminderLeadMinutes": row["reminder_lead_minutes"],
         "personalTags": [
             {"id": "tag-3", "slot": 3, "label": row["personal_tag_3_label"]},
             {"id": "tag-4", "slot": 4, "label": row["personal_tag_4_label"]},

@@ -177,12 +177,16 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
 - `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、默认标签、两项网页通知和个人标签 3、4。
-  `defaultTagSlot` 只接受 `null | 1 | 2 | 3 | 4`，表示本人标签槽位引用，不存储标签文案。
+  `defaultTagSlot` 只接受 `null | 1 | 2 | 3 | 4`，表示本人标签槽位引用，不存储标签文案；
+  `reminderLeadMinutes` 只接受整数 `15 | 30 | 60`，新用户默认 `30`，关闭提醒不会清除该值。
 - `GET /api/v1/activity` 返回当前登录用户的只读活动聚合。服务端按本地时间只统计
   `status=active` 且已经结束的本人预约，响应仅包含四项汇总，以及平均时长、常用
   笔录室和常用标签概览。响应不得接受或返回 `ownerId`、按日分布或预约明细。
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
+  临近提醒窗口以请求时的当前 `reminderLeadMinutes` 计算，不为预约保存历史快照。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
+  临近提醒确认与查询使用同一份当前窗口；缩短提前量后已移出窗口的提醒返回
+  `409 REMINDER_NOT_DUE`。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
   `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；其 `databaseVersion`
   为当前 schema v2；`POST /api/v1/admin/backups`

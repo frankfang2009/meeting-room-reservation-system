@@ -570,7 +570,8 @@
     gap: 18px;
   }
 
-  .settings-notification-row > span {
+  .settings-notification-row > span,
+  .settings-notification-row > label {
     display: grid;
     gap: 4px;
   }

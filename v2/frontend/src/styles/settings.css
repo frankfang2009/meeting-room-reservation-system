@@ -524,9 +524,53 @@
   cursor: pointer;
 }
 
-.settings-notification-row > span {
+.settings-notification-row > span,
+.settings-notification-row > label {
   display: grid;
   gap: 4px;
+}
+
+.settings-notification-row > .settings-notification-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-reminder-lead {
+  position: relative;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.settings-reminder-lead select {
+  min-width: 116px;
+  height: 40px;
+  padding: 0 25px 0 10px;
+  color: inherit;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  appearance: none;
+  cursor: pointer;
+}
+
+.settings-reminder-lead select:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(20, 20, 19, 0.035);
+}
+
+.settings-reminder-lead select:disabled {
+  color: #aaa79f;
+  cursor: not-allowed;
+}
+
+.settings-reminder-lead svg {
+  position: absolute;
+  right: 5px;
+  pointer-events: none;
 }
 
 .settings-notification-row strong {

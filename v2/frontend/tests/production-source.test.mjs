@@ -150,6 +150,15 @@ test("change notifications start the same due-reminder poller", () => {
   assert.match(app, /bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications/);
 });
 
+test("reminder lead preference controls both visible copy and editability", () => {
+  assert.match(productionSource, /开始前 \{draft\.reminderLeadMinutes \|\| 30\} 分钟提醒我/);
+  assert.match(productionSource, /value=\{draft\.reminderLeadMinutes \|\| 30\}/);
+  assert.match(productionSource, /disabled=\{!draft\.bookingReminder\}/);
+  assert.match(productionSource, /\[15, 30, 60\]\.map/);
+  assert.match(productionSource, /onChange\("reminderLeadMinutes", Number\(event\.target\.value\)\)/);
+  assert.doesNotMatch(productionSource, /开始前30分钟提醒我/);
+});
+
 test("acknowledging a change refreshes affected views and fetches the next notice", () => {
   assert.match(app, /acknowledged\.kind === "change"/);
   assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)\]\)/);

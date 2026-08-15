@@ -94,6 +94,18 @@ def update_preferences():
             if "bookingReminder" in payload
             else bool(existing["booking_reminder"])
         )
+        reminder_lead_minutes = (
+            parse_int(payload["reminderLeadMinutes"], field="reminderLeadMinutes")
+            if "reminderLeadMinutes" in payload
+            else int(existing["reminder_lead_minutes"])
+        )
+        if reminder_lead_minutes not in (15, 30, 60):
+            raise ApiError(
+                422,
+                "VALIDATION_ERROR",
+                "请检查输入内容",
+                fields={"reminderLeadMinutes": "提醒提前量必须是 15、30 或 60 分钟"},
+            )
         personal = {3: existing["personal_tag_3_label"], 4: existing["personal_tag_4_label"]}
         if "personalTags" in payload:
             if not isinstance(payload["personalTags"], list):
@@ -123,6 +135,7 @@ def update_preferences():
             UPDATE user_preferences
             SET default_duration = ?, default_room_id = ?, default_tag_slot = ?,
                 booking_change_notifications = ?, booking_reminder = ?,
+                reminder_lead_minutes = ?,
                 personal_tag_3_label = ?, personal_tag_4_label = ?,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE user_id = ?
@@ -130,6 +143,7 @@ def update_preferences():
             (
                 duration, room_id, default_tag_slot,
                 int(change_notifications), int(reminder),
+                reminder_lead_minutes,
                 personal[3], personal[4], actor["id"],
             ),
         )
@@ -143,6 +157,7 @@ def update_preferences():
                 "defaultDuration": duration,
                 "defaultRoomId": room_id,
                 "defaultTagSlot": default_tag_slot,
+                "reminderLeadMinutes": reminder_lead_minutes,
             },
         )
     g_user = db.execute("SELECT * FROM users WHERE id = ?", (actor["id"],)).fetchone()

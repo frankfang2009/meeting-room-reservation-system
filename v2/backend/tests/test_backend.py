@@ -1620,6 +1620,75 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         self.assertEqual(ack.status_code, 200)
         self.assertEqual(self.client.get("/api/v1/reminders/due").get_json()["items"], [])
 
+    def test_reminder_lead_preference_drives_due_and_ack_from_one_current_window(self):
+        self.now = datetime(2026, 8, 10, 8, 10, tzinfo=timezone(timedelta(hours=8)))
+        booking = self.create_booking(start="09:00", duration=30)
+        self.assertEqual(self.bootstrap()["preferences"]["reminderLeadMinutes"], 30)
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+
+        for allowed in (15, 30, 60):
+            response = self.write(
+                "PUT",
+                "/api/v1/preferences",
+                {"reminderLeadMinutes": allowed},
+            )
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertEqual(response.get_json()["reminderLeadMinutes"], allowed)
+        for invalid in (0, 14, 45, 61, "30", True):
+            with self.subTest(reminderLeadMinutes=invalid):
+                response = self.write(
+                    "PUT",
+                    "/api/v1/preferences",
+                    {"reminderLeadMinutes": invalid},
+                )
+                self.assertEqual(response.status_code, 422, response.get_json())
+
+        due_with_larger_window = self.client.get(
+            "/api/v1/reminders/due"
+        ).get_json()["items"]
+        self.assertEqual([item["id"] for item in due_with_larger_window], [booking["id"]])
+        smaller = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"reminderLeadMinutes": 15},
+        )
+        self.assertEqual(smaller.status_code, 200, smaller.get_json())
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+        outside_window = self.write(
+            "POST",
+            f"/api/v1/reminders/{booking['id']}/ack",
+            {"revision": booking["revision"], "kind": "upcoming"},
+        )
+        self.assertEqual(outside_window.status_code, 409, outside_window.get_json())
+        self.assertEqual(outside_window.get_json()["error"]["code"], "REMINDER_NOT_DUE")
+
+        disabled = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"bookingReminder": False, "reminderLeadMinutes": 60},
+        )
+        self.assertFalse(disabled.get_json()["bookingReminder"])
+        self.assertEqual(disabled.get_json()["reminderLeadMinutes"], 60)
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
+        enabled = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"bookingReminder": True},
+        )
+        self.assertEqual(enabled.get_json()["reminderLeadMinutes"], 60)
+        acknowledged = self.write(
+            "POST",
+            f"/api/v1/reminders/{booking['id']}/ack",
+            {"revision": booking["revision"], "kind": "upcoming"},
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+
     def test_external_change_and_upcoming_receipts_are_independent(self):
         self.add_employee()
         employee = self.app.test_client()
