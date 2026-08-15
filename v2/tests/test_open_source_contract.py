@@ -91,6 +91,7 @@ class OpenSourceRepositoryContractTests(unittest.TestCase):
 
     def test_codeql_waits_until_repository_is_public(self) -> None:
         workflow = (WORKFLOW_ROOT / "codeql.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("if: github.event.repository.private == false", workflow)
         self.assertIn("security-events: write", workflow)
 
