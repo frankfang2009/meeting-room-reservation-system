@@ -164,7 +164,7 @@ test("calendar loading isolates the previous date and retains its schedule frame
 
 test("calendar success notices expire and clear when their context changes", () => {
   assert.match(app, /window\.setTimeout\(\(\) => setSuccessNotice\(null\), 8000\)/);
-  assert.match(app, /setSuccessNotice\(null\);\n {2}}, \[currentDate\]\)/);
+  assert.match(app, /setSuccessNotice\(null\);\r?\n {2}}, \[currentDate\]\)/);
   assert.match(app, /if \(view !== "calendar"\) setSuccessNotice\(null\)/);
   assert.match(app, /function openCreate[\s\S]{0,180}setSuccessNotice\(null\)/);
   assert.match(app, /function openEdit[\s\S]{0,180}setSuccessNotice\(null\)/);
