@@ -261,7 +261,7 @@ try {
     $updateFormal = Join-Path $WorkRoot "update"
     Expand-Archive -LiteralPath $UpdateZip -DestinationPath $updateFormal
     # 服务保持运行：更新器必须自行停服、替换、重固化 DACL、健康检查并恢复运行状态。
-    $upgrade = Invoke-CandidateBat $updateFormal "升级V$Script:TargetVersion.bat" "YES"
+    $upgrade = Invoke-CandidateBat $updateFormal "升级到V$Script:TargetVersion.bat" "YES"
     if ($upgrade.Code -ne 0 -or $upgrade.Output -notmatch [regex]::Escape("MRV2_UPDATER_RESULT=0") -or $upgrade.Output -notmatch [regex]::Escape("MRV2_UPDATE_GATE=PRODUCT_RC_0")) {
         throw "upgrade BAT failed: code=$($upgrade.Code); output tail=$($upgrade.Output.Substring([Math]::Max(0, $upgrade.Output.Length - 3000)))"
     }
