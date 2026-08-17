@@ -5,6 +5,7 @@ import errno
 import io
 import json
 import logging
+import os
 import sqlite3
 import tempfile
 import threading
@@ -1139,7 +1140,11 @@ class ServiceEntrypointTests(BackendTestCase):
         message = stderr.getvalue()
         self.assertIn("8080 端口已被其他程序占用", message)
         self.assertIn("① 启动系统", message)
-        self.assertIn("_程序文件\\logs", message)
+        # 失败提示按平台指向对应日志位置：Windows 是安装目录，macOS 是应用文件夹。
+        if os.name == "nt":
+            self.assertIn("_程序文件\\logs", message)
+        else:
+            self.assertIn("应用文件夹内的 logs", message)
         self.assertNotIn("private path", message)
 
     def test_listener_handoff_reports_actual_bind_and_closes_once(self):

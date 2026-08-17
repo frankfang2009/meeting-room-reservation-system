@@ -26,9 +26,10 @@ from .runtime.identity import (
 )
 from .runtime.install_state import load_install_json, sync_install_json
 from .security import register_security
+from .services import update_check
 
 
-PRODUCT_VERSION = "V2.2.0"
+PRODUCT_VERSION = "V2.2.1"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
@@ -145,6 +146,8 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         LAN_ADDRESS=None,
         SERVICE_PORT=8080,
         ACTIVE_BIND_MODE=None,
+        UPDATE_CHECK_ENABLED=False,
+        UPDATE_CHECK_URL=update_check.DEFAULT_MANIFEST_URL,
         SYSTEM_READY=startup.ready,
         DATABASE_SETUP_COMPLETE=startup.setup_complete,
         RECOVERY_STATE=(

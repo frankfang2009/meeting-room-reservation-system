@@ -554,3 +554,18 @@ test("system status offers a quiet administrator work-hours editor", () => {
   assert.match(app, /outside-work-slot/);
   assert.match(app, /slots: workingTimeSlots/);
 });
+
+test("macOS edition update notice stays notice-only and administrator-visible", () => {
+  assert.match(app, /checkForUpdate/);
+  assert.match(app, /api\.checkForUpdate/);
+  assert.match(app, /<strong>正在检查更新…<\/strong>/);
+  assert.match(app, /system-update-badge/);
+  assert.match(app, /有新版本 \$\{system\.updateCheck\.latestVersion\}/);
+  assert.match(app, /system\?\.updateCheck\?\.enabled &&/);
+  assert.match(app, /rel="noreferrer"/);
+  assert.match(app, /system-update-check/);
+  // 提示止步于“告知”：没有自动下载、自动安装或任何外发动作。
+  assert.doesNotMatch(app, /downloadUpdate|installUpdate|autoUpdate/);
+  assert.match(systemStyles, /\.system-update-badge/);
+  assert.match(systemStyles, /\.system-update-check/);
+});

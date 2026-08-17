@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V2.2.0 离线累计更新的零参数 Python 入口。"""
+"""V2.2.1 离线累计更新的零参数 Python 入口。"""
 
 from __future__ import annotations
 

@@ -4,9 +4,12 @@
 
 [![CI](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml) [![CodeQL](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml)
 
-一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.1.0 使用 React、Flask 与 SQLite，提供共享日历、预约管理、公开大屏、用户与房间管理、备份恢复和 Windows 全新安装链。
+一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.2.1 使用 React、Flask 与 SQLite，提供共享日历、预约管理、数据中心与办件明细 CSV、公开大屏、用户与房间管理、备份恢复、Windows 全新安装与离线累计升级链，以及可直接下载的 macOS 自托管版。
 
-> 当前公开的是源代码，不是正式 Windows 安装包。V2.1.0 尚未完成普通用户 Windows 10/11 实机验收和 Authenticode 签名，任何自动构建产物都只能作为内部候选，不能视为正式发布。
+> 当前公开的是源代码，不是正式 Windows 安装包。Windows 安装包与升级包尚未完成普通用户
+> Windows 10/11 实机验收和 Authenticode 签名，自动构建产物只能作为内部候选，不能视为
+> 正式发布。macOS 自托管版自 V2.2.1 起以 [GitHub Release](https://github.com/frankfang2009/meeting-room-reservation-system/releases)
+> 为正式分发渠道（未签名，首次运行需右键打开）。
 
 ## 主要能力
 
@@ -19,9 +22,21 @@
 
 ## 安全与部署边界
 
-V2.1.0 只面向受信任的 Windows Domain/Private 局域网，当前仍使用 HTTP。不要把服务直接暴露到互联网、访客网络或不受信任的 Wi-Fi；部署方需要自行保证终端、网络、防火墙和操作系统账户安全。生产或客户数据库、日志、备份、密钥和真实个人信息不得提交到仓库或 Issue。
+产品面向受信任的局域网，当前仍使用 HTTP（Windows 版限 Domain/Private 局域网；macOS 自托管版建议本机使用）。不要把服务直接暴露到互联网、访客网络或不受信任的 Wi-Fi；部署方需要自行保证终端、网络、防火墙和操作系统账户安全。生产或客户数据库、日志、备份、密钥和真实个人信息不得提交到仓库或 Issue。
 
 详细要求见 [安全部署说明](v2/docs/SECURITY-DEPLOYMENT.md) 与 [漏洞报告策略](.github/SECURITY.md)。
+
+## macOS 自托管版（下载即用）
+
+使用 Apple Silicon（M 系列）Mac 的用户无需安装 Python 或 Node：
+
+1. 从 [Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) 下载 `会议室预约系统-V*-macOS-arm64.dmg`，并核对发布说明中的 SHA-256。
+2. 双击挂载 DMG，把 `会议室预约系统V2-macOS` 文件夹拖到「应用程序」或任意可写位置（不要在 DMG 里直接运行），然后推出 DMG。
+3. 首次双击 `启动.command` 时 macOS 会拦截：右键 →「打开」→ 再点「打开」放行（只需一次）。
+4. 浏览器自动打开 `http://127.0.0.1:8080`，按向导创建首名管理员、笔录室和工作时间即可使用。
+5. 全部数据保存在文件夹内的 `data/`、`backups/`、`logs/`；每天 02:00 自动备份；删除文件夹即彻底卸载。有新版本时，管理员会在「系统状态」页看到提示（仅提示，不自动安装）。
+
+要求 macOS 13 及以上、arm64。详见应用文件夹内的《使用说明.txt》与 [macOS 版方案](v2/docs/V2.2.1-MACOS-SELFHOST-PLAN.md)。
 
 ## 快速开始（开发环境）
 

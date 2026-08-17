@@ -1,4 +1,4 @@
-# 会议室预约系统 V2.2.0
+# 会议室预约系统 V2.2.1
 
 V2 是一个全新安装基准，不读取或迁移 V1 数据库。它由同源部署的 React 前端、
 Flask JSON API 和 SQLite 数据库组成，面向单位 Windows 主机及局域网桌面浏览器。
@@ -31,7 +31,7 @@ Flask JSON API 和 SQLite 数据库组成，面向单位 Windows 主机及局域
 ## 发布边界
 
 自动化测试不能替代普通用户 Windows 10/11 的 UAC、DACL、SmartScreen/EDR、计划
-任务、备份恢复、V2.1.0→V2.2.0 离线升级、重启和第二台局域网电脑验收。V2.2.0 仍使用可信内网 HTTP，且
+任务、备份恢复、V2.1.0→当前版本离线升级、重启和第二台局域网电脑验收。V2 仍使用可信内网 HTTP，且
 当前没有 Authenticode 证书；完成实机与签名门禁前，任何产物都只能标记为候选版。
 
 部署前必须阅读 [`docs/SECURITY-DEPLOYMENT.md`](docs/SECURITY-DEPLOYMENT.md)。

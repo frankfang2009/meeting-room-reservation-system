@@ -34,3 +34,24 @@ Visual audit summaries may be committed, while full screenshot runs are CI/local
 
 Automated checks do not replace Windows 10/11 ordinary-user installation, UAC, DACL, scheduled
 task, firewall, reboot, backup/restore, LAN-client, signing, SmartScreen, or EDR acceptance.
+
+## macOS 便携包（自托管版）
+
+在 Apple Silicon Mac 上完成上述 bootstrap 后：
+
+```bash
+# 前端产物（如尚未构建）
+cd v2/frontend && npm run build && cd ../..
+
+# 冻结 runtime → 便携包 zip → DMG（详见 v2/installer/README.md）
+python -m v2.installer.build_runtime_macos --python-tarball … --wheelhouse … --output /tmp/mrv2/runtime
+python -m v2.installer.build_macos_package --backend-root v2/backend \
+  --frontend-dist v2/frontend/dist/client --runtime-root /tmp/mrv2/runtime --output-dir /tmp/mrv2/pkg
+python -m v2.installer.build_macos_dmg --from-zip "/tmp/mrv2/pkg/会议室预约系统-V$(cat v2/VERSION)-macOS-arm64.zip" \
+  --output "/tmp/mrv2/会议室预约系统-V$(cat v2/VERSION)-macOS-arm64.dmg"
+
+# 真实验收（DMG 挂载 → 拖出 → 启动 → 首次设置 → 备份 → 停止）
+bash .github/scripts/v2-macos-acceptance.sh \
+  "/tmp/mrv2/pkg/会议室预约系统-V$(cat v2/VERSION)-macOS-arm64.zip" \
+  "/tmp/mrv2/会议室预约系统-V$(cat v2/VERSION)-macOS-arm64.dmg" /tmp/mrv2/accept
+```

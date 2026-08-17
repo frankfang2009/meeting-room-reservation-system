@@ -901,7 +901,7 @@ class UpdateRollbackError(UpdatePolicyError):
 
 
 class V2UpdateTransaction:
-    """V2.1.0 -> V2.2.0 第一代离线累计更新事务。"""
+    """V2.1.0 起源的第一代离线累计更新事务（目标版本随发布演进）。"""
 
     def __init__(
         self,

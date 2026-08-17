@@ -1,5 +1,18 @@
 # 更新记录
 
+## V2.2.1（macOS 自托管版）
+
+- 版本定位：V2.2.0 的 macOS 平台交付，业务功能与 V2.2.0 完全一致；数据库 schema 保持 v2，不新增业务表和字段。
+- 新增 macOS arm64（Apple Silicon）自托管便携包：同一份 `v2app`/`service.py` 打包 python-build-standalone 冻结运行时（SHA-256 锁定）与哈希 wheelhouse；便携目录 `app/ + runtime/ + data|backups|logs`，删除文件夹即彻底卸载。
+- 新增 DMG 分发形态：便携包 zip 是可复现事实源（两次独立构建字节一致，进入 CI 门禁）；DMG 由校验过的 zip 内容生成并反向核对关键文件哈希，不承诺 DMG 字节级可复现。
+- 新增 `启动.command`/`停止.command`：双击启动自动开浏览器、从 DMG 挂载卷启动被明确拒绝并提示拖出；停止沿用 `--stop` 的 pid + 回环控制语义。
+- 新增仅 macOS 版启用的受控版本检查：至多每 24 小时读取一次 GitHub Release 固定清单（HTTPS、10 秒超时、64 KiB 上限、严格 schema），只在管理员系统状态页显示"有新版本"与服务端构造的发布页链接；不自动下载、不自动安装、不发送任何本机数据；Windows 版与开发态保持关闭，继续维持"在线/自动升级"排除。
+- macOS 版首次启动自动生成安装身份（`install.json`/`install_id`，`EDITION` 标记区分版本形态）；`service.py` 运行时白名单与失败提示按平台分支。
+- 新增 macOS CI 验收车道：PR/main 在真实 macOS runner 上跑全量测试；版本标签触发候选构建——双构建字节一致 → DMG 生成与内容校验 → 从 DMG 出发的 8 步真实验收（卷守卫、拖出、启动、首次设置、LAN 切换、登录、自动备份落盘、干净停止）。
+- Windows 交付链不变：新装包与 V2.1.0→当前版本累计升级包照常构建，升级验收腿的产物名改为跟随 `v2/VERSION`；来源矩阵仍仅含冻结 V2.1.0。
+- 外发规则按交付物分类：macOS 自托管版以 GitHub Release 为正式分发渠道（发布说明附 SHA-256，未签名首启需右键打开）；Windows 安装包/升级包在真实 Windows 实机验收与 Authenticode 签名完成前继续禁止正式外发。
+- 首版明确不做：launchd 开机自启、Developer ID 签名与公证、一键自动更新、x86_64/universal2、`.app` 原生壳、Windows↔macOS 数据迁移承诺。
+
 ## V2.2.0（候选版）
 
 - 新增员工与管理员共享的数据中心：员工仅能查看本人，管理员可查看全单位、本人或指定人员；权限由服务端强制执行。

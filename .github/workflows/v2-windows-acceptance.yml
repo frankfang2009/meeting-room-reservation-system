@@ -197,14 +197,16 @@ jobs:
             --frontend-dist v2/frontend/dist/client \
             --frontend-lock v2/frontend/package-lock.json \
             --output "$build/payload-current"
+          VERSION="$(tr -d '\r\n' < v2/VERSION)"
           python -m v2.installer.build_update_package \
             --payload-root "$build/payload-current" \
             --runtime-root "$build/runtime-current" \
-            --output "$build/output/会议室预约系统-V2.2.0-累计升级包.zip"
-      - name: Run real Windows V2.1.0 to V2.2.0 upgrade acceptance
+            --output "$build/output/会议室预约系统-V$VERSION-累计升级包.zip"
+      - name: Run real Windows V2.1.0 cumulative upgrade acceptance
         shell: pwsh
         run: |
+          $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
           .github/scripts/v2-windows-upgrade-acceptance.ps1 `
             -BaselineZip "$env:RUNNER_TEMP/mrv2-upgrade-build/output/会议室预约系统-V2.1.0-安装包.zip" `
-            -UpdateZip "$env:RUNNER_TEMP/mrv2-upgrade-build/output/会议室预约系统-V2.2.0-累计升级包.zip" `
+            -UpdateZip "$env:RUNNER_TEMP/mrv2-upgrade-build/output/会议室预约系统-V$version-累计升级包.zip" `
             -WorkRoot "$env:RUNNER_TEMP/mrv2-upgrade-acceptance"

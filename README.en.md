@@ -19,7 +19,7 @@ A self-hosted meeting and interview room reservation system for trusted local ne
 
 ## Security and deployment boundary
 
-V2.1.0 is intended only for trusted Windows Domain/Private LANs and currently uses HTTP. Do not expose it directly to the Internet, guest networks, or untrusted Wi-Fi. Never upload production/customer databases, logs, backups, secrets, or personal data to this repository or an issue.
+The product targets trusted LANs and currently uses HTTP (Windows edition is limited to Domain/Private LANs; the macOS self-host edition is intended for single-machine use). Do not expose it directly to the Internet, guest networks, or untrusted Wi-Fi. Never upload production/customer databases, logs, backups, secrets, or personal data to this repository or an issue.
 
 Read the [deployment security guide](v2/docs/SECURITY-DEPLOYMENT.md) and [security policy](.github/SECURITY.md) before deployment.
 

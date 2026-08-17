@@ -97,7 +97,7 @@ class OpenSourceRepositoryContractTests(unittest.TestCase):
 
     def test_normal_ci_never_builds_or_uploads_a_candidate(self) -> None:
         workflow = (WORKFLOW_ROOT / "ci.yml").read_text(encoding="utf-8")
-        for job in ("repository-policy", "v2-linux", "v2-windows"):
+        for job in ("repository-policy", "v2-linux", "v2-windows", "v2-macos"):
             self.assertIn(f"  {job}:", workflow)
         self.assertIn("fetch-depth: 0", workflow)
         self.assertIn('git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"', workflow)
