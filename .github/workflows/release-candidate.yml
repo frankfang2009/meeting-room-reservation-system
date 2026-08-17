@@ -109,3 +109,124 @@ jobs:
           $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
           .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V$version-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"
           .github/scripts/v2-windows-update-package-gate.ps1 -UpdateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V$version-累计升级包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-update-package-gate"
+
+  candidate-macos:
+    name: candidate-macos
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Accept only main or a matching V2 tag
+        shell: bash
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/v2.*) ;;
+            *) echo "release candidates may only run from main or a v2.* tag"; exit 1 ;;
+          esac
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Match a tag to v2/VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: test "$GITHUB_REF_NAME" = "v$(tr -d '\r\n' < v2/VERSION)"
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            v2/backend/requirements.txt
+            v2/backend/requirements-dev.txt
+      - name: Install Python dependencies
+        run: python -m pip install --requirement v2/backend/requirements.txt --requirement v2/backend/requirements-dev.txt
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.17.1"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Verify installer contracts before candidate build
+        run: |
+          python -m unittest discover -s v2/installer/tests -v
+          python -m unittest discover -s v2/tests -v
+      - name: Build frontend production bundle
+        working-directory: v2/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Freeze approved macOS runtime inputs
+        shell: bash
+        env:
+          INPUT_ROOT: ${{ runner.temp }}/macos-approved-inputs
+        run: |
+          set -euo pipefail
+          mkdir -p "$INPUT_ROOT/wheels"
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform macosx_11_0_arm64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$INPUT_ROOT/wheels" \
+            --requirement v2/backend/requirements-macos-arm64.lock
+          curl --fail --location --silent --show-error \
+            --output "$INPUT_ROOT/cpython-macos-arm64.tar.gz" \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.13.14+20260718-aarch64-apple-darwin-install_only.tar.gz"
+          echo "dca7c3bac21f023cf294705b27f4f3e9c70399c40790ebb81e8d0eff15b00770  $INPUT_ROOT/cpython-macos-arm64.tar.gz" | shasum -a 256 --check
+      - name: Build portable package twice and verify byte identity
+        shell: bash
+        env:
+          INPUT_ROOT: ${{ runner.temp }}/macos-approved-inputs
+          CANDIDATE_OUTPUT: ${{ runner.temp }}/meeting-room-v2-macos-candidate
+        run: |
+          set -euo pipefail
+          python -m v2.installer.build_runtime_macos \
+            --python-tarball "$INPUT_ROOT/cpython-macos-arm64.tar.gz" \
+            --wheelhouse "$INPUT_ROOT/wheels" \
+            --output "$RUNNER_TEMP/macos-runtime"
+          version=$(tr -d '\r\n' < v2/VERSION)
+          zip_name="会议室预约系统-V$version-macOS-arm64.zip"
+          for label in first second; do
+            python -m v2.installer.build_macos_package \
+              --backend-root v2/backend \
+              --frontend-dist v2/frontend/dist/client \
+              --runtime-root "$RUNNER_TEMP/macos-runtime" \
+              --output-dir "$RUNNER_TEMP/macos-package-$label"
+          done
+          cmp "$RUNNER_TEMP/macos-package-first/$zip_name" "$RUNNER_TEMP/macos-package-second/$zip_name"
+          echo "MRV2_MACOS_REPRODUCIBLE_BUILD=PASS"
+          mkdir -p "$CANDIDATE_OUTPUT"
+          cp "$RUNNER_TEMP/macos-package-first/$zip_name" "$CANDIDATE_OUTPUT/"
+          for sidecar in .sha256.txt .manifest.json .sbom.cdx.json .THIRD-PARTY-NOTICES.txt .runtime-provenance.json; do
+            cp "$RUNNER_TEMP/macos-package-first/$zip_name$sidecar" "$CANDIDATE_OUTPUT/"
+          done
+          cp "$RUNNER_TEMP/macos-package-first/latest-macos.json" "$CANDIDATE_OUTPUT/"
+      - name: Build DMG from the verified ZIP
+        shell: bash
+        env:
+          CANDIDATE_OUTPUT: ${{ runner.temp }}/meeting-room-v2-macos-candidate
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < v2/VERSION)
+          python -m v2.installer.build_macos_dmg \
+            --from-zip "$CANDIDATE_OUTPUT/会议室预约系统-V$version-macOS-arm64.zip" \
+            --output "$CANDIDATE_OUTPUT/会议室预约系统-V$version-macOS-arm64.dmg"
+      - name: Run real macOS acceptance from the DMG
+        shell: bash
+        env:
+          CANDIDATE_OUTPUT: ${{ runner.temp }}/meeting-room-v2-macos-candidate
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < v2/VERSION)
+          bash .github/scripts/v2-macos-acceptance.sh \
+            "$CANDIDATE_OUTPUT/会议室预约系统-V$version-macOS-arm64.zip" \
+            "$CANDIDATE_OUTPUT/会议室预约系统-V$version-macOS-arm64.dmg" \
+            "$RUNNER_TEMP/macos-acceptance"
+      - name: Upload macOS candidate set
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: meeting-room-v2-macos-candidate
+          path: ${{ runner.temp }}/meeting-room-v2-macos-candidate
+          if-no-files-found: error
+          retention-days: 7
