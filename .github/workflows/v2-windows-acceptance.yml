@@ -197,6 +197,7 @@ jobs:
             --frontend-dist v2/frontend/dist/client \
             --frontend-lock v2/frontend/package-lock.json \
             --output "$build/payload-current"
+          VERSION="$(tr -d '\r\n' < v2/VERSION)"
           python -m v2.installer.build_update_package \
             --payload-root "$build/payload-current" \
             --runtime-root "$build/runtime-current" \
