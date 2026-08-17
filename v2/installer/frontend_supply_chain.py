@@ -172,7 +172,7 @@ def make_artifact_sbom(
                 "component": {
                     "type": "application",
                     "name": "会议室预约系统 V2",
-                    "version": "2.1.0",
+                    "version": "2.2.0",
                 },
                 "properties": [
                     {"name": "meeting-room-v2:frontend-package-lock-sha256", "value": frontend["packageLock"]["sha256"]},

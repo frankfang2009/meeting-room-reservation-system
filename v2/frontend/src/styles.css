@@ -12,6 +12,7 @@
 @import "./styles/settings.css";
 @import "./styles/system.css";
 @import "./styles/users.css";
+@import "./styles/reports.css";
 @import "./styles/public-display.css";
 @import "./styles/runtime-states.css";
 @import "./styles/responsive.css";

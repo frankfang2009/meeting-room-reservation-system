@@ -230,6 +230,165 @@
   border: 0;
 }
 
+@media (max-width: 1280px) {
+  .report-filters {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
+  }
+
+  .report-query-field {
+    grid-column: span 2;
+  }
+
+  .data-center-header {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .report-header-controls {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1024px) {
+  .data-center-canvas {
+    padding-right: 24px;
+    padding-left: 34px;
+  }
+
+  .report-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-query-field {
+    grid-column: 1 / -1;
+  }
+
+  .report-filter-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
+  .report-header-controls {
+    width: 100%;
+  }
+
+  .report-view-control select {
+    min-width: 180px;
+  }
+
+  .report-export-panel {
+    grid-template-columns: minmax(220px, 1fr) 160px auto;
+  }
+
+  .report-tag-composition {
+    grid-template-columns: minmax(300px, 0.8fr) minmax(360px, 1.2fr);
+    gap: 42px;
+  }
+
+  .report-lollipop-row {
+    grid-template-columns: minmax(120px, 0.55fr) minmax(240px, 2fr) minmax(110px, 0.6fr);
+    gap: 18px;
+  }
+}
+
+@media (max-width: 720px) {
+  .data-center-header,
+  .report-section > header,
+  .report-focus-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .report-header-controls {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .report-view-control,
+  .report-view-control select,
+  .report-header-controls .report-range-button {
+    width: 100%;
+  }
+
+  .report-header-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .report-header-actions button {
+    flex: 1;
+  }
+
+  .report-page-nav {
+    gap: 28px;
+    overflow-x: auto;
+  }
+
+  .report-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-metric-card:nth-child(2)::after {
+    display: none;
+  }
+
+  .report-metric-card:nth-child(n + 3) {
+    border-top: 1px solid var(--hairline);
+  }
+
+  .report-chart-toolbar,
+  .report-visual-toolbar {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    gap: 10px;
+  }
+
+  .report-segmented {
+    align-self: flex-end;
+  }
+
+  .report-export-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .report-export-panel > div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .report-time-summary {
+    justify-content: flex-start;
+  }
+
+  .report-time-axis,
+  .report-time-row {
+    grid-template-columns: 56px repeat(var(--report-time-columns), minmax(44px, 1fr));
+  }
+
+  .report-time-legend {
+    justify-content: flex-start;
+  }
+
+  .report-lollipop-row {
+    grid-template-columns: minmax(105px, 0.8fr) minmax(140px, 1.2fr) 92px;
+    gap: 12px;
+  }
+
+  .report-tag-composition {
+    grid-template-columns: 1fr;
+    gap: 34px;
+  }
+
+  .report-dot-composition {
+    max-width: 420px;
+  }
+
+  .report-composition-legend button {
+    grid-template-columns: 16px minmax(120px, 1fr) 64px 60px;
+  }
+}
+
 @media (max-width: 1250px) {
   .public-display {
     --display-pad-x: 42px;
@@ -374,10 +533,6 @@
     flex-wrap: wrap;
   }
 
-  .profile-activity-data dl > div {
-    padding-inline: 20px;
-  }
-
   .next-booking,
   .bookings-empty {
     margin-top: 126px;
@@ -511,65 +666,6 @@
     width: 48px;
     height: 48px;
     font-size: 22px;
-  }
-
-  .personal-center-tab-row {
-    margin-top: 18px;
-  }
-
-  .profile-activity-lower {
-    display: block;
-  }
-
-  .profile-activity-overview {
-    padding: 26px 0;
-  }
-
-  .profile-activity-overview dl {
-    grid-template-columns: 1fr;
-  }
-
-  .profile-activity-overview dl > div,
-  .profile-activity-overview dl > div:first-child {
-    min-height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    padding: 0;
-    border-left: 0;
-    border-bottom: 1px solid var(--hairline-strong);
-  }
-
-  .profile-activity-overview dl > div:last-child {
-    border-bottom: 0;
-  }
-
-  .profile-activity-data {
-    margin-top: 0;
-    padding: 28px 0;
-    border-top: 0;
-    border-left: 0;
-  }
-
-  .profile-activity-data dl {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .profile-activity-data dl > div {
-    min-height: 82px;
-    padding: 0 0 15px;
-    border-left: 0;
-  }
-
-  .profile-activity-data dl > div:nth-child(even) {
-    padding-left: 24px;
-    border-left: 1px solid var(--hairline-strong);
-  }
-
-  .profile-activity-data dl > div:nth-child(n + 3) {
-    padding-top: 16px;
-    border-top: 1px solid var(--hairline-strong);
   }
 
   .settings-header p {

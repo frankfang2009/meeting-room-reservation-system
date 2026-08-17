@@ -1,6 +1,5 @@
 import { useRef } from "react";
 import { CaretRight, CircleNotch } from "@phosphor-icons/react";
-import { activityDuration, emptyActivity } from "./activity.js";
 import {
   DEFAULT_REMINDER_TEMPLATE,
   insertReminderVariable,
@@ -16,28 +15,6 @@ function userName(user) {
 
 function userInitial(user) {
   return Array.from(userName(user).trim())[0]?.toLocaleUpperCase() || "人";
-}
-
-function ActivityView({ activity, onReload, state }) {
-  const value = activity || emptyActivity();
-  const duration = activityDuration(value.summary.totalDurationMinutes);
-  const summaryItems = [
-    ["本月完成", value.summary.currentMonthCompleted, "场"],
-    ["累计完成", value.summary.totalCompleted, "场"],
-    ["累计时长", duration.value, duration.unit],
-    ["活跃天数", value.summary.activeDays, "天"],
-  ];
-  return <div id="personal-center-activity-panel" className="profile-activity-content" role="tabpanel" aria-labelledby="personal-center-activity-tab">
-    {state === "loading" && !activity ? <div className="profile-activity-loading" role="status"><CircleNotch className="spin" size={20} />正在读取活动概览</div> :
-      state === "failed" && !activity ? <div className="profile-activity-loading profile-activity-error" role="alert"><span>活动概览暂时无法读取</span><button type="button" onClick={onReload}>重新加载</button></div> : <div className="profile-activity-lower">
-      <section className="profile-activity-overview" aria-labelledby="profile-overview-heading"><h2 id="profile-overview-heading">活动概览</h2><dl>
-        <div><dt>平均时长</dt><dd>{value.overview.averageDurationMinutes ? `${value.overview.averageDurationMinutes}分钟` : "—"}</dd></div>
-        <div><dt>最常用笔录室</dt><dd>{value.overview.favoriteRoom || "—"}</dd></div>
-        <div><dt>常用标签</dt><dd>{value.overview.favoriteTag || "—"}</dd></div>
-      </dl></section>
-      <section className="profile-activity-data" aria-labelledby="profile-data-heading"><h2 id="profile-data-heading">活动数据</h2><dl>{summaryItems.map(([label, number, unit]) => <div key={label}><dt>{label}</dt><dd><strong>{number}</strong><span>{unit}</span></dd></div>)}</dl></section>
-    </div>}
-  </div>;
 }
 
 function PreferencesView({ activeRooms, draft, durationSteps, errors = {}, onChange, onSave, onUiChange, tags, uiDraft }) {
@@ -60,7 +37,7 @@ function PreferencesView({ activeRooms, draft, durationSteps, errors = {}, onCha
       textarea?.setSelectionRange(result.cursor, result.cursor);
     });
   };
-  return <form id="personal-settings-form" className="settings-layout" role="tabpanel" aria-labelledby="personal-center-preferences-tab" onSubmit={onSave}>
+  return <form id="personal-settings-form" className="settings-layout" aria-label="个人设置" onSubmit={onSave}>
     <section className="settings-section settings-profile-section"><h2>个人资料</h2><div className="settings-field-grid"><label className="settings-field"><span>姓名</span><input name="profile-name" value={draft.name ?? ""} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? "profile-name-error" : undefined} onChange={(event) => onChange("name", event.target.value)} />{errors.name && <small id="profile-name-error" className="settings-field-error" role="alert">{errors.name}</small>}</label><label className="settings-field"><span>所属部门</span><input value={draft.department ?? ""} onChange={(event) => onChange("department", event.target.value)} /></label></div></section>
     <section className="settings-section settings-preferences-section"><h2>预约偏好</h2><div className="settings-choice-list"><label className="settings-choice-row"><span>默认预约时长</span><span className="settings-select-wrap"><select value={draft.defaultDuration || 60} onChange={(event) => onChange("defaultDuration", Number(event.target.value))}>{durationSteps.map((option) => <option value={option} key={option}>{option}分钟</option>)}</select><CaretRight size={18} /></span></label><label className="settings-choice-row"><span>默认笔录室</span><span className="settings-select-wrap"><select value={draft.defaultRoomId || ""} onChange={(event) => onChange("defaultRoomId", event.target.value)}><option value="">不指定</option>{activeRooms.map((room) => <option value={room.id} key={room.id}>{room.name}</option>)}</select><CaretRight size={18} /></span></label><label className="settings-choice-row"><span>默认标签</span><span className="settings-select-wrap"><select value={draft.defaultTagSlot ?? ""} onChange={(event) => onChange("defaultTagSlot", event.target.value ? Number(event.target.value) : null)}><option value="">不指定</option>{tags.map((tag) => <option value={tag.slot} key={tag.id}>{tag.label}</option>)}</select><CaretRight size={18} /></span></label></div></section>
     <section className="settings-section settings-personalization-section"><div className="settings-section-copy"><h2>使用习惯</h2><p>以下选项只保存在当前浏览器，并按登录账号隔离。</p></div><div className="settings-choice-list"><label className="settings-choice-row"><span>登录后默认打开</span><span className="settings-select-wrap"><select value={uiDraft.defaultView} onChange={(event) => onUiChange("defaultView", event.target.value)}><option value="mine">我的预约</option><option value="calendar">预约日历</option></select><CaretRight size={18} /></span></label></div></section>
@@ -73,26 +50,20 @@ function PreferencesView({ activeRooms, draft, durationSteps, errors = {}, onCha
 
 export function PersonalCenter({
   activeRooms,
-  activity,
-  activityState,
   currentUser,
   draft,
   durationSteps,
   errors = {},
-  onActivityReload,
   onChange,
   onLogout,
   onSave,
-  onTabChange,
   onUiChange,
   saving = false,
-  tab,
   tags,
   uiDraft,
 }) {
   return <main className="main-canvas settings-canvas personal-center-canvas" tabIndex={0}>
-    <header className="page-header settings-header personal-center-header"><div><h1>个人中心</h1><p>查看工作概览与管理工作偏好</p></div><div className="personal-center-header-side"><section className="personal-center-identity" aria-label="当前用户"><span className="personal-center-avatar" aria-hidden="true">{userInitial(currentUser)}</span><span><strong>{userName(currentUser)}</strong><small>{currentUser?.department || "未设置部门"}</small></span></section>{tab === "preferences" && <div className="settings-header-actions"><button className="settings-logout-button" type="button" disabled={saving} onClick={onLogout}>退出登录</button><button className="settings-save-button" type="submit" form="personal-settings-form" disabled={saving}>{saving ? <><CircleNotch className="spin" size={17} />正在保存</> : "保存更改"}</button></div>}</div></header>
-    <div className="personal-center-tab-row"><div className="personal-center-tabs" role="tablist" aria-label="个人中心页面"><button id="personal-center-activity-tab" type="button" role="tab" aria-controls="personal-center-activity-panel" aria-selected={tab === "activity"} className={tab === "activity" ? "active" : ""} onClick={() => onTabChange("activity")}>我的活动</button><button id="personal-center-preferences-tab" type="button" role="tab" aria-controls="personal-settings-form" aria-selected={tab === "preferences"} className={tab === "preferences" ? "active" : ""} onClick={() => onTabChange("preferences")}>偏好设置</button></div></div>
-    {tab === "activity" ? <ActivityView activity={activity} onReload={onActivityReload} state={activityState} /> : <PreferencesView activeRooms={activeRooms} draft={draft} durationSteps={durationSteps} errors={errors} onChange={onChange} onSave={onSave} onUiChange={onUiChange} tags={tags} uiDraft={uiDraft} />}
+    <header className="page-header settings-header personal-center-header"><div><h1>个人中心</h1><p>管理个人资料与工作偏好</p></div><div className="personal-center-header-side"><section className="personal-center-identity" aria-label="当前用户"><span className="personal-center-avatar" aria-hidden="true">{userInitial(currentUser)}</span><span><strong>{userName(currentUser)}</strong><small>{currentUser?.department || "未设置部门"}</small></span></section><div className="settings-header-actions"><button className="settings-logout-button" type="button" disabled={saving} onClick={onLogout}>退出登录</button><button className="settings-save-button" type="submit" form="personal-settings-form" disabled={saving}>{saving ? <><CircleNotch className="spin" size={17} />正在保存</> : "保存更改"}</button></div></div></header>
+    <PreferencesView activeRooms={activeRooms} draft={draft} durationSteps={durationSteps} errors={errors} onChange={onChange} onSave={onSave} onUiChange={onUiChange} tags={tags} uiDraft={uiDraft} />
   </main>;
 }

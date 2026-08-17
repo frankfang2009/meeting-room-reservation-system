@@ -25,7 +25,14 @@ function clientFor(session, bootstrap, { failLogin = null } = {}) {
   };
 }
 
-const employeePermissions = { manageRooms: false, manageUsers: false, manageSystem: false };
+const employeePermissions = {
+  manageRooms: false,
+  manageUsers: false,
+  manageSystem: false,
+  viewReports: true,
+  viewOverallReports: false,
+  viewOtherUserReports: false,
+};
 const serverClock = { serverDate: "2026-08-10", serverTime: "08:00:00" };
 
 test("administrator to employee reauthentication validates bootstrap before changing remount key", async () => {

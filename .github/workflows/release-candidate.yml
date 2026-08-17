@@ -82,7 +82,7 @@ jobs:
             "$input_root/python-3.13.14-embed-amd64.zip" \
             "$input_root/wheels" \
             "$CANDIDATE_OUTPUT"
-      - name: Upload candidate six-pack for controlled validation
+      - name: Upload installation and cumulative-update candidate sets
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: meeting-room-v2-candidate
@@ -98,7 +98,7 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Download candidate six-pack
+      - name: Download installation and cumulative-update candidate sets
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: meeting-room-v2-candidate
@@ -108,3 +108,4 @@ jobs:
         run: |
           $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
           .github/scripts/v2-windows-candidate-gate.ps1 -CandidateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V$version-安装包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-windows-gate"
+          .github/scripts/v2-windows-update-package-gate.ps1 -UpdateZip "${{ runner.temp }}/meeting-room-v2-candidate/会议室预约系统-V$version-累计升级包.zip" -WorkRoot "${{ runner.temp }}/meeting-room-v2-update-package-gate"
