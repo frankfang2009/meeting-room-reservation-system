@@ -18,6 +18,14 @@ export function reportScope(role, currentUserId, view) {
   return { scope: "person", ownerId: view };
 }
 
+// 槽位到色調的顺序必须与全应用 ui/presentation.js 的 TAG_COLORS 一致：
+// 1 粘土、2 赭金、3 鼠尾草、4 石板，同一标签在任何界面颜色一致。
+export function tagTone(item, index) {
+  if (!item.tagId) return "stone";
+  const slot = Number(String(item.tagId).replace("tag-", ""));
+  return ["clay", "ochre", "sage", "slate"][(Number.isFinite(slot) ? slot - 1 : index) % 4];
+}
+
 export function formatReportDuration(minutes) {
   const value = Math.max(0, Number(minutes) || 0);
   if (value < 60) return { value, unit: "分钟" };

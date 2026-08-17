@@ -11,8 +11,17 @@ import {
   reportScope,
   reportTagOptions,
   reportTrendModel,
+  tagTone,
   weekdaySlotDistribution,
 } from "../src/features/reports/reporting.js";
+
+test("tag tones follow the app-wide slot palette order", () => {
+  assert.equal(tagTone({ tagId: "tag-1" }, 0), "clay");
+  assert.equal(tagTone({ tagId: "tag-2" }, 1), "ochre");
+  assert.equal(tagTone({ tagId: "tag-3" }, 2), "sage");
+  assert.equal(tagTone({ tagId: "tag-4" }, 3), "slate");
+  assert.equal(tagTone({ tagId: "" }, 0), "stone");
+});
 
 test("report scopes never grant employees a broader view", () => {
   assert.deepEqual(reportScope("employee", "employee-1", "overall"), { scope: "self" });

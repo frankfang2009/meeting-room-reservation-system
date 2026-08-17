@@ -163,6 +163,14 @@ def parse_report_filters(args: Mapping[str, Any], scope: ReportScope) -> ReportF
             "日期范围无效或超过 366 天",
             fields={"dateTo": "结束日期应不早于开始日期，且跨度不超过 366 天"},
         )
+    if end >= date(9999, 12, 1):
+        # 与预约历史的月份上界同一稳定线：月桶/周桶的下一界计算不得越过 date.max。
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "日期超出系统可安全查询的范围",
+            fields={"dateTo": "最大可查询日期为 9999-11-30"},
+        )
 
     room_id = str(args.get("roomId") or "").strip() or None
     room_name = None
@@ -258,8 +266,18 @@ def _duration_minutes(row: Mapping[str, Any]) -> int:
     )
 
 
-def _rows(scope: ReportScope, filters: ReportFilters, *, status: Optional[str] = None):
+def _rows(
+    scope: ReportScope,
+    filters: ReportFilters,
+    *,
+    status: Optional[str] = None,
+    limit: Optional[int] = None,
+):
     where, params = build_reservation_base_query(scope, filters, status=status)
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(limit)
     return get_db().execute(
         f"""
         SELECT r.*, u.display_name AS current_owner_name,
@@ -270,6 +288,7 @@ def _rows(scope: ReportScope, filters: ReportFilters, *, status: Optional[str] =
         WHERE {where}
         ORDER BY r.booking_date, r.start_time, r.room_name_snapshot,
                  r.created_at, r.id
+        {limit_clause}
         """,
         params,
     ).fetchall()
@@ -553,7 +572,8 @@ def csv_safe_cell(value: Any) -> Any:
 
 
 def csv_rows(scope: ReportScope, filters: ReportFilters, status: Optional[str]):
-    rows = list(_rows(scope, filters, status=status))
+    # 先以 LIMIT+1 在数据库侧封顶；超限时不会把全量行拉进内存。
+    rows = list(_rows(scope, filters, status=status, limit=CSV_EXPORT_LIMIT + 1))
     if len(rows) > CSV_EXPORT_LIMIT:
         raise ApiError(
             422,

@@ -3,9 +3,12 @@
   --report-accent-strong: #a95b45;
   --report-accent-soft: #f3e5df;
   --report-stone: #a7a098;
-  --report-sage: #8f9a91;
-  --report-ochre: #b39c72;
-  --report-slate: #8e959d;
+  /* 标签四槽位与 ui/presentation.js 的 TAG_COLORS 完全同值，
+     同一标签在数据中心与日历/列表颜色一致；accent 只作页面点缀。 */
+  --report-clay: #D97757;
+  --report-sage: #7B9275;
+  --report-ochre: #C29A4A;
+  --report-slate: #71879A;
   padding-top: 34px;
   padding-bottom: 48px;
 }
@@ -772,7 +775,7 @@
 }
 
 .tone-stone { --tag-tone: var(--report-stone); }
-.tone-clay { --tag-tone: var(--report-accent); }
+.tone-clay { --tag-tone: var(--report-clay); }
 .tone-sage { --tag-tone: var(--report-sage); }
 .tone-ochre { --tag-tone: var(--report-ochre); }
 .tone-slate { --tag-tone: var(--report-slate); }

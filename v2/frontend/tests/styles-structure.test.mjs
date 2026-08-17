@@ -31,7 +31,9 @@ const expectedFiles = [
   "system-extensions.css",
   "accessibility.css",
 ];
-const frozenSourceSha256 = "426c3e5923206170f7a7cad58aac6e8b74068772b20d9b0d206f06c43a397590";
+// V2.2.0 评审修复：数据中心标签四槽位改为与 ui/presentation.js 的 TAG_COLORS
+// 完全同值（此前槽位 2/3 颜色互换了）。
+const frozenSourceSha256 = "b0de2b68fe8d8e6d71ce13f77e09cfccb2057d90f174fde3943235458c4b4dcc";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

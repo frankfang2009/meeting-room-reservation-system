@@ -88,6 +88,28 @@ class ReportApiTests(BackendTestCase):
             f"/api/v1/reports/reservations.csv{suffix}"
         )
 
+    def test_report_routes_require_authentication(self):
+        anonymous = self.app.test_client()
+        overview = self.report("scope=self", anonymous)
+        self.assertEqual(overview.status_code, 401, overview.get_json())
+        self.assertEqual(overview.get_json()["error"]["code"], "SESSION_REQUIRED")
+        export = self.export("scope=self", anonymous)
+        self.assertEqual(export.status_code, 401, export.get_json())
+        self.assertEqual(export.get_json()["error"]["code"], "SESSION_REQUIRED")
+
+    def test_report_dates_reject_9999_december_with_422_not_500(self):
+        # 月桶/周桶的下一界计算不得越过 date.max；与预约历史的 9999-11 上界同线。
+        for date_to in ("9999-12-01", "9999-12-31"):
+            with self.subTest(dateTo=date_to):
+                for responder in (self.report, self.export):
+                    response = responder(
+                        f"scope=self&dateFrom=9999-12-01&dateTo={date_to}"
+                    )
+                    self.assertEqual(response.status_code, 422, response.get_json())
+                    self.assertEqual(
+                        response.get_json()["error"]["code"], "VALIDATION_ERROR"
+                    )
+
     def test_employee_self_scope_has_only_personal_metrics(self):
         response = self.report("scope=self&dateFrom=2026-08-10&dateTo=2026-08-10", self.employee_client)
         payload = response.get_json()

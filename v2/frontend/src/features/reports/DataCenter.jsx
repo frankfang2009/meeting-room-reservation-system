@@ -19,6 +19,7 @@ import {
   reportScope,
   reportTagOptions,
   reportTrendModel,
+  tagTone,
   weekdaySlotDistribution,
 } from "./reporting.js";
 
@@ -250,12 +251,6 @@ function RoomDistribution({ items = [] }) {
     </div>
     <p className="report-interaction-hint">悬停查看详情 · 点击固定查看 · Esc 清除</p>
   </figure>;
-}
-
-function tagTone(item, index) {
-  if (!item.tagId) return "stone";
-  const slot = Number(String(item.tagId).replace("tag-", ""));
-  return ["clay", "sage", "ochre", "slate"][(Number.isFinite(slot) ? slot - 1 : index) % 4];
 }
 
 function TagComposition({ items = [] }) {
