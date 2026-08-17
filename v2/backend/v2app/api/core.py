@@ -575,6 +575,9 @@ def bootstrap():
                 "manageRooms": user["role"] == "admin",
                 "manageUsers": user["role"] == "admin",
                 "manageSystem": user["role"] == "admin",
+                "viewReports": True,
+                "viewOverallReports": user["role"] == "admin",
+                "viewOtherUserReports": user["role"] == "admin",
             },
         }
     )

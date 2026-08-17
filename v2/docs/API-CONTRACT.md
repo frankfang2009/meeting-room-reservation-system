@@ -1,6 +1,6 @@
 # V2 API v1 契约
 
-产品版本是 V2.1.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
+产品版本是 V2.2.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
 camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后缀以及创建、修改、
 事件和审计时间使用 UTC RFC3339。
 
@@ -37,7 +37,7 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 
 ```json
 {
-  "productVersion": "V2.1.0",
+  "productVersion": "V2.2.0",
   "setupComplete": true,
   "authenticated": true,
   "csrfToken": "...",
@@ -68,7 +68,7 @@ DNS rebinding 夺取首次管理员：
 
 ```json
 {
-  "productVersion": "V2.1.0",
+  "productVersion": "V2.2.0",
   "serverDate": "2026-08-10",
   "serverTime": "14:32:05",
   "currentUser": {},
@@ -82,7 +82,9 @@ DNS rebinding 夺取首次管理员：
     "slotMinutes": 30, "maxDurationMinutes": 180
   },
   "permissions": {
-    "manageRooms": false, "manageUsers": false, "manageSystem": false
+    "manageRooms": false, "manageUsers": false, "manageSystem": false,
+    "viewReports": true, "viewOverallReports": false,
+    "viewOtherUserReports": false
   }
 }
 ```
@@ -184,9 +186,38 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   `reminderTemplate` 是清理首尾空白后不超过 200 字的本人纯文本模板，空字符串回退系统
   默认模板。服务端只存储和返回模板，不拼装成品文案；前端变量白名单仅为
   `{当事人姓名} {日期} {开始时间} {结束时间} {笔录室}`，不含案号、用途或备注。
-- `GET /api/v1/activity` 返回当前登录用户的只读活动聚合。服务端按本地时间只统计
-  `status=active` 且已经结束的本人预约，响应仅包含四项汇总，以及平均时长、常用
-  笔录室和常用标签概览。响应不得接受或返回 `ownerId`、按日分布或预约明细。
+- `GET /api/v1/activity` 保留为兼容接口；新前端不再调用，个人中心与数据中心统一
+  使用下方 reports 口径。
+
+## 数据中心与 CSV
+
+`GET /api/v1/reports/overview` 接受：
+
+- `scope=self|overall|person`；`person` 必须同时提供 `ownerId`；
+- `dateFrom/dateTo`，默认服务端当前自然月，含首尾日期且最长 366 天；
+- 可选 `roomId/tagId/query`，关键词最长 120 字并按字面量匹配当事人、案号、事项和备注。
+
+员工只允许 `scope=self` 且不得传 `ownerId`；管理员可使用全部三种视角。服务端先解析
+角色与范围再构造查询，员工请求全单位、指定人员或伪造 owner 均返回 `403 FORBIDDEN`。
+管理员全单位视角使用个人标签 3/4 时返回 `422 PERSONAL_TAG_OWNER_REQUIRED`。
+
+响应固定包含 `resolvedScope`、`filters`、`metricVersion`、`generatedAtUtc`、`summary`、
+`weeklyTrend`、`monthlyTrend`、`weekdayTimeDistribution` 和 `exportRowCount`。
+`weeklyTrend` 按周一开始的自然周汇总，`monthlyTrend` 按自然月汇总，两者均补齐
+查询范围内的零值周期。`summary` 包含
+`activeCount`、`endedCount`、`activeDurationMinutes`、`cancelledCount` 和
+`cancellationRate`；个人视角增加 `tagDistribution`，
+全单位视角增加 `personWorkload/roomWorkload/globalTagDistribution`。`endedCount` 是有效
+预约中结束时间已到的数量，不表示办件完成；`activeDurationMinutes` 是所有有效预约的
+起止时长之和。
+
+`GET /api/v1/reports/reservations.csv` 复用相同范围与筛选，另接受可选
+`status=active|cancelled`。响应为带 UTF-8 BOM、CRLF 的 CSV，字段顺序固定为：预约日期、
+开始时间、结束时间、预约时长（分钟）、笔录室、预约人、当事人、案号、事项、标签、
+备注、状态、创建时间、最后修改时间、取消时间。文本若以可执行公式字符开头则加单引号；
+超过 20,000 行返回 `422 EXPORT_TOO_LARGE`。响应头提供 `X-Report-Field-Version`、
+`X-Report-Row-Count` 与安全文件名；成功和超限失败都写入不含业务内容的
+`report.csv_exported` 审计。
 - `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
   临近提醒窗口以请求时的当前 `reminderLeadMinutes` 计算，不为预约保存历史快照。
 - `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
@@ -226,7 +257,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
   日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
 - `GET /api/v1/integration/health` 需要 `health:read`，只返回
-  `{ "ok": true, "productVersion": "V2.1.0" }`。
+  `{ "ok": true, "productVersion": "V2.2.0" }`。
 
 令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
 时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少
