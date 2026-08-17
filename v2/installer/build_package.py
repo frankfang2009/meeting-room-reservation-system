@@ -113,7 +113,7 @@ GUIDE_SOURCE = TOOL_DIR / "安装说明.txt"
 ENTRY_SOURCE = TOOL_DIR / "install.py"
 CORE_SOURCE = TOOL_DIR / "installer_core.py"
 
-ARTIFACT_NAME = "会议室预约系统-V2.2.0-安装包.zip"
+ARTIFACT_NAME = "会议室预约系统-V2.2.1-安装包.zip"
 DELIVERED_LAUNCHER = "安装V2.2.1.bat"
 DELIVERED_GUIDE = "安装说明.txt"
 DELIVERED_TOOL = "_V2安装工具"
