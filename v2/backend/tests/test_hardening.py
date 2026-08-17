@@ -227,6 +227,35 @@ class ApplicationInvariantHardeningTests(BackendTestCase):
                 sequence=1,
             )
 
+    @unittest.skipUnless(os.name == "posix", "fcntl 仅在 POSIX 上可检查句柄访问模式")
+    def test_backup_fsyncs_only_writable_handles(self):
+        # 真实 Windows 服务中备份以 Errno 9 失败：os.fsync 在 Windows 上要求
+        # 句柄可写，而 POSIX 允许只读 fsync。用 fcntl 记录每次 fsync 的访问
+        # 模式，锁定备份管道不会回退到只读句柄。
+        import fcntl
+
+        self.setup_system()
+        access_modes = []
+        original_fsync = os.fsync
+
+        def spy(descriptor):
+            access_modes.append(fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE)
+            return original_fsync(descriptor)
+
+        with mock.patch("os.fsync", side_effect=spy):
+            created_path, _metadata = create_backup(
+                self.database,
+                self.root / "backups",
+                install_id=INSTALL_ID,
+                sequence=1,
+            )
+        self.assertTrue(created_path.is_file())
+        self.assertTrue(access_modes)
+        self.assertTrue(
+            all(mode in (os.O_WRONLY, os.O_RDWR) for mode in access_modes),
+            f"backup pipeline fsynced read-only handle(s): {access_modes}",
+        )
+
     def test_login_account_limit_applies_across_rotating_ip_addresses(self):
         self.setup_system()
         self.app.config["LOGIN_RATE_MAX_ATTEMPTS"] = 2
