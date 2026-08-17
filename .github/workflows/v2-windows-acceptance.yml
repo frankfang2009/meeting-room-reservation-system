@@ -4,6 +4,8 @@ name: V2 Windows acceptance
 # 在 windows-latest 上用一次性测试候选执行真实安装与运行验收。
 # 本工作流只在 runner 内部构建测试候选（规范命名，与正式候选同名同源），
 # 不上传、不保留任何安装包制品；正式候选构建仍由 release-candidate.yml 独占。
+# upgrade-acceptance 作业先安装冻结 V2.1.0 基线，再用当前累计升级包执行
+# 真实 V2.1.0 → V2.2.0 升级，覆盖替换后 DACL 重固化、数据保留与升级收尾。
 on:
   pull_request:
   push:
@@ -92,3 +94,117 @@ jobs:
           .github/scripts/v2-windows-acceptance.ps1 `
             -CandidateZip "$env:RUNNER_TEMP/mrv2-t1-build/output/会议室预约系统-V$version-安装包.zip" `
             -WorkRoot "$env:RUNNER_TEMP/mrv2-t1-acceptance"
+
+  v2-windows-upgrade-acceptance:
+    name: v2-windows-upgrade-acceptance
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Check out frozen V2.1.0 baseline
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: v2.1.0
+          path: baseline-v210
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.17.1"
+          cache: npm
+          cache-dependency-path: |
+            v2/frontend/package-lock.json
+            baseline-v210/v2/frontend/package-lock.json
+      - name: Build V2.1.0 baseline frontend
+        working-directory: baseline-v210/v2/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build current frontend production bundle
+        working-directory: v2/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Prepare offline runtime materials
+        shell: bash
+        run: |
+          set -euo pipefail
+          materials="$RUNNER_TEMP/mrv2-upgrade-materials"
+          mkdir -p "$materials/wheels-v210" "$materials/wheels-current"
+          curl --fail --location --silent --show-error \
+            --output "$materials/python-3.13.14-embed-amd64.zip" \
+            https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform win_amd64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$materials/wheels-v210" \
+            --requirement baseline-v210/v2/backend/requirements-win-amd64.lock
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform win_amd64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$materials/wheels-current" \
+            --requirement v2/backend/requirements-win-amd64.lock
+      - name: Build baseline install and current update candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          materials="$RUNNER_TEMP/mrv2-upgrade-materials"
+          build="$RUNNER_TEMP/mrv2-upgrade-build"
+          mkdir -p "$build/output"
+          # 两棵树的 lock 都按仓库提交的 LF 字节构建（Windows runner 默认 CRLF 检出）。
+          sed -i 's/\r$//' v2/backend/requirements-win-amd64.lock v2/frontend/package-lock.json
+          sed -i 's/\r$//' baseline-v210/v2/backend/requirements-win-amd64.lock baseline-v210/v2/frontend/package-lock.json
+          (
+            cd baseline-v210
+            python -m v2.installer.build_runtime \
+              --python-embed-zip "$materials/python-3.13.14-embed-amd64.zip" \
+              --wheelhouse "$materials/wheels-v210" \
+              --lock-file v2/backend/requirements-win-amd64.lock \
+              --output "$build/runtime-v210"
+            python -m v2.installer.assemble_payload \
+              --backend-root v2/backend \
+              --frontend-dist v2/frontend/dist/client \
+              --frontend-lock v2/frontend/package-lock.json \
+              --output "$build/payload-v210"
+            python -m v2.installer.build_package \
+              --payload-root "$build/payload-v210" \
+              --runtime-root "$build/runtime-v210" \
+              --output "$build/output/会议室预约系统-V2.1.0-安装包.zip"
+          )
+          python -m v2.installer.build_runtime \
+            --python-embed-zip "$materials/python-3.13.14-embed-amd64.zip" \
+            --wheelhouse "$materials/wheels-current" \
+            --lock-file v2/backend/requirements-win-amd64.lock \
+            --output "$build/runtime-current"
+          python -m v2.installer.assemble_payload \
+            --backend-root v2/backend \
+            --frontend-dist v2/frontend/dist/client \
+            --frontend-lock v2/frontend/package-lock.json \
+            --output "$build/payload-current"
+          python -m v2.installer.build_update_package \
+            --payload-root "$build/payload-current" \
+            --runtime-root "$build/runtime-current" \
+            --output "$build/output/会议室预约系统-V2.2.0-累计升级包.zip"
+      - name: Run real Windows V2.1.0 to V2.2.0 upgrade acceptance
+        shell: pwsh
+        run: |
+          .github/scripts/v2-windows-upgrade-acceptance.ps1 `
+            -BaselineZip "$env:RUNNER_TEMP/mrv2-upgrade-build/output/会议室预约系统-V2.1.0-安装包.zip" `
+            -UpdateZip "$env:RUNNER_TEMP/mrv2-upgrade-build/output/会议室预约系统-V2.2.0-累计升级包.zip" `
+            -WorkRoot "$env:RUNNER_TEMP/mrv2-upgrade-acceptance"

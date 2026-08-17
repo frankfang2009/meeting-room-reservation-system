@@ -358,6 +358,15 @@ def load_v2_identity(root: Path) -> V2InstallIdentity:
     )
 
 
+def read_installed_version(root: Path) -> str:
+    """提权确认只读取对普通用户开放的版本文件；data/ 内身份仅管理员可读。"""
+
+    version = _read_text(Path(root) / VERSION_FILE, "V2 版本文件")
+    if version_tuple(version) < version_tuple(MIN_UPDATABLE_VERSION):
+        raise UpdatePolicyError("安装版本早于 V2.0.0，不属于可更新 V2 基线")
+    return version
+
+
 def assert_update_payload_safe(records: Sequence[Mapping[str, Any]]) -> None:
     """未来更新负载不得携带或覆盖任何现场可变数据。"""
 
@@ -670,6 +679,9 @@ class UpdateSystemController:
     def restore(self, identity: V2InstallIdentity, state: Mapping[str, Any]) -> None:
         raise NotImplementedError
 
+    def apply_security(self, identity: V2InstallIdentity) -> None:
+        raise NotImplementedError
+
     def verify(self, identity: V2InstallIdentity) -> None:
         raise NotImplementedError
 
@@ -683,6 +695,7 @@ class PassiveUpdateSystemController(UpdateSystemController):
         self.manual_firewall_enabled = running
         self.background_firewall_enabled = running
         self.verifications = 0
+        self.security_applications = 0
 
     def capture_and_stop(self, identity: V2InstallIdentity) -> Mapping[str, Any]:
         del identity
@@ -710,6 +723,10 @@ class PassiveUpdateSystemController(UpdateSystemController):
         self.backup_running = bool(state["backup_task_running"])
         self.manual_firewall_enabled = bool(state["manual_firewall_enabled"])
         self.background_firewall_enabled = bool(state["background_firewall_enabled"])
+
+    def apply_security(self, identity: V2InstallIdentity) -> None:
+        del identity
+        self.security_applications += 1
 
     def verify(self, identity: V2InstallIdentity) -> None:
         del identity
@@ -785,6 +802,39 @@ if ($env:MRV2_STATE_MANUAL_FIREWALL_ENABLED -ne '1') { Disable-NetFirewallRule -
 if ($env:MRV2_STATE_BACKGROUND_FIREWALL_ENABLED -ne '1') { Disable-NetFirewallRule -DisplayName $env:MRV2_FW_BACKGROUND }
 """
         self.base._run_powershell(script, environment)
+
+    def apply_security(self, identity: V2InstallIdentity) -> None:
+        # os.replace 换入的 app/runtime 只带 _程序文件 的继承 ACL；两个策略根
+        # 必须像全新安装的 configure_disabled 一样重新固化为受保护 DACL，
+        # verify_security 才会通过。回滚恢复出的旧树同样需要本步骤。
+        script = r"""
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$program = Join-Path ([IO.Path]::GetFullPath($env:MRV2_ROOT).TrimEnd('\')) '_程序文件'
+$adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+function Set-ProgramAcl([string]$path) {
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($adminSid)
+    $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $propagation = [System.Security.AccessControl.PropagationFlags]::None
+    $allow = [System.Security.AccessControl.AccessControlType]::Allow
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($systemSid, 'FullControl', $inheritance, $propagation, $allow)))
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($adminSid, 'FullControl', $inheritance, $propagation, $allow)))
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, 'ReadAndExecute', $inheritance, $propagation, $allow)))
+    Set-Acl -LiteralPath $path -AclObject $acl
+}
+foreach ($name in @('app', 'runtime')) {
+    $dir = Join-Path $program $name
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw "V2 更新后的 $name 目录缺失：$dir" }
+    Set-ProgramAcl $dir
+}
+"""
+        self.base._run_powershell(
+            script, self.base._environment(identity.root, identity.install_id)
+        )
 
     def verify(self, identity: V2InstallIdentity) -> None:
         self.base.verify_security(identity.root, identity.install_id)
@@ -930,6 +980,26 @@ class V2UpdateTransaction:
         atomic_write(program_snapshot / "manifest.json", json_bytes(value))
         return value
 
+    @staticmethod
+    def _cleanup_displaced_dirs(root: Path) -> None:
+        """清除断电中断遗留的旧程序临时目录。
+
+        调用点必须已经证明现行 app/runtime 完整（快照哈希或提交点身份），
+        此时 displaced 只能是替换窗口中断的残渣；现行目录缺失时把旧目录
+        放回原位是唯一保守选择。
+        """
+
+        program = root / "_程序文件"
+        for name in ("app", "runtime"):
+            displaced = program / f".update-displaced-{name}"
+            if not displaced.exists():
+                continue
+            current = program / name
+            if current.exists():
+                shutil.rmtree(displaced)
+            else:
+                os.replace(displaced, current)
+
     def _restore(
         self,
         identity: V2InstallIdentity,
@@ -947,6 +1017,10 @@ class V2UpdateTransaction:
             shutil.copytree(program_snapshot / name, current)
             if tree_digest(records_for_tree(current)) != manifest[f"{name}_tree_sha256"]:
                 raise UpdateRollbackError(f"V2 旧 {name} 恢复后哈希不一致")
+        # copytree 重建的树同样只带继承 ACL；清残渣后立即恢复受保护 DACL，
+        # 回滚后的安装必须继续满足 verify_security 的同一份契约。
+        self._cleanup_displaced_dirs(identity.root)
+        self.controller.apply_security(identity)
         for record in manifest["root_files"]:
             relative = str(record["path"])
             destination = identity.root.joinpath(*relative.split("/"))
@@ -1232,6 +1306,7 @@ class V2UpdateTransaction:
         if identity.version == VERSION:
             self.controller.capture_and_stop(identity)
             self.controller.restore(identity, run_state)
+            self._cleanup_displaced_dirs(identity.root)
             self._finalize_receipt(identity, dict(state), state_path)
             shutil.rmtree(staging, ignore_errors=True)
             shutil.rmtree(rollback, ignore_errors=True)
@@ -1347,6 +1422,7 @@ class V2UpdateTransaction:
                 self._extract_staging(staging)
                 self._stage(state, "staging_verified", state_path)
                 self._replace_program(identity, staging)
+                self.controller.apply_security(identity)
                 self._verify_installed_payload(identity)
                 self._stage(state, "program_replaced", state_path)
                 self.controller.verify(identity)

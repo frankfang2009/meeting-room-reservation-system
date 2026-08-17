@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$CandidateZip,
+    [string]$UpdateZip,
     [Parameter(Mandatory = $true)]
     [string]$WorkRoot
 )
@@ -16,16 +16,16 @@ function Assert-True([bool]$Condition, [string]$Message) {
 
 $version = (Get-Content -LiteralPath 'v2/VERSION' -Raw -Encoding UTF8).Trim()
 $expectedName = "会议室预约系统-V$version-累计升级包.zip"
-Assert-True ((Split-Path -Leaf $CandidateZip) -ceq $expectedName) "累计升级包名称不一致：$CandidateZip"
-Assert-True (Test-Path -LiteralPath $CandidateZip -PathType Leaf) "累计升级包不存在：$CandidateZip"
+Assert-True ((Split-Path -Leaf $UpdateZip) -ceq $expectedName) "累计升级包名称不一致：$UpdateZip"
+Assert-True (Test-Path -LiteralPath $UpdateZip -PathType Leaf) "累计升级包不存在：$UpdateZip"
 
-$shaPath = "$CandidateZip.sha256"
-$manifestPath = "$CandidateZip.manifest.json"
+$shaPath = "$UpdateZip.sha256"
+$manifestPath = "$UpdateZip.manifest.json"
 Assert-True (Test-Path -LiteralPath $shaPath -PathType Leaf) '累计升级包缺少 SHA-256 侧车'
 Assert-True (Test-Path -LiteralPath $manifestPath -PathType Leaf) '累计升级包缺少 manifest 侧车'
 
 $expectedSha = ((Get-Content -LiteralPath $shaPath -Raw -Encoding UTF8).Trim() -split '\s+')[0].ToLowerInvariant()
-$actualSha = (Get-FileHash -LiteralPath $CandidateZip -Algorithm SHA256).Hash.ToLowerInvariant()
+$actualSha = (Get-FileHash -LiteralPath $UpdateZip -Algorithm SHA256).Hash.ToLowerInvariant()
 Assert-True ($actualSha -ceq $expectedSha) '累计升级包 SHA-256 与侧车不一致'
 
 $external = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -40,7 +40,7 @@ if (Test-Path -LiteralPath $WorkRoot) {
 }
 New-Item -ItemType Directory -Path $WorkRoot | Out-Null
 try {
-    Expand-Archive -LiteralPath $CandidateZip -DestinationPath $WorkRoot -Force
+    Expand-Archive -LiteralPath $UpdateZip -DestinationPath $WorkRoot -Force
     $launcher = Join-Path $WorkRoot "升级到V$version.bat"
     $toolRoot = Join-Path $WorkRoot '_V2更新工具'
     $runtimePython = Join-Path $toolRoot 'runtime\python.exe'
