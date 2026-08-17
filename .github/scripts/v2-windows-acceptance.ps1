@@ -445,12 +445,16 @@ try {
     }
 
     Write-Step "dacl-boundaries"
+    # icacls 对可解析的 BUILTIN 组显示为“BUILTIN\Users”而非原始 SID，两种形式都接受。
+    function Test-AclHasUsersAce([string]$AclText) {
+        return ($AclText -match 'S-1-5-32-545') -or ($AclText -match 'BUILTIN\\Users:') -or ($AclText -match '(^|[\r\n])Users:')
+    }
     $appAcl = (& icacls.exe "$Script:ProgramDir\app") -join "`n"
-    Assert-True ($appAcl -match 'S-1-5-32-545') "app tree does not carry a Users (S-1-5-32-545) ACE"
-    Assert-True ($appAcl -match '\(RX\)') "app tree Users ACE does not look read-and-execute"
+    Assert-True (Test-AclHasUsersAce $appAcl) "app tree does not carry a Users (S-1-5-32-545) ACE: $appAcl"
+    Assert-True ($appAcl -match '\(RX\)') "app tree Users ACE does not look read-and-execute: $appAcl"
     foreach ($private in @("data", "backups", "logs")) {
         $privateAcl = (& icacls.exe (Join-Path $Script:ProgramDir $private)) -join "`n"
-        Assert-True ($privateAcl -notmatch 'S-1-5-32-545') "$private must not carry a Users (S-1-5-32-545) ACE"
+        Assert-True (-not (Test-AclHasUsersAce $privateAcl)) "$private must not carry a Users (S-1-5-32-545) ACE: $privateAcl"
     }
     Write-Host "DACL boundaries verified: app readable by Users, private dirs admin/SYSTEM only"
 
