@@ -668,7 +668,9 @@ def create_backup(
             source_data_sequence = metadata["sourceDataSequence"]
         elif metadata["sourceDataSequence"] != source_data_sequence:
             raise RuntimeError("备份数据序列与请求不一致")
-        with temporary.open("rb") as handle:
+        # Windows 的 os.fsync 要求句柄可写，只读句柄会以 EBADF 失败；
+        # POSIX 允许只读 fsync，因此这里必须以读写模式打开后再落盘。
+        with temporary.open("rb+") as handle:
             os.fsync(handle.fileno())
         os.replace(temporary, target)
         created_at = _utc_now(now)

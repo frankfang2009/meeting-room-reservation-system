@@ -1,0 +1,94 @@
+name: V2 Windows acceptance
+
+# T1 自动化验收层：与 ci.yml 相同的触发面（每个 PR 与 main），
+# 在 windows-latest 上用一次性测试候选执行真实安装与运行验收。
+# 本工作流只在 runner 内部构建测试候选（规范命名，与正式候选同名同源），
+# 不上传、不保留任何安装包制品；正式候选构建仍由 release-candidate.yml 独占。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-windows-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  v2-windows-acceptance:
+    name: v2-windows-acceptance
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.17.1"
+          cache: npm
+          cache-dependency-path: v2/frontend/package-lock.json
+      - name: Build frontend production bundle
+        working-directory: v2/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Prepare offline runtime materials
+        shell: bash
+        run: |
+          set -euo pipefail
+          materials="$RUNNER_TEMP/mrv2-t1-materials"
+          mkdir -p "$materials/wheels"
+          python -m pip download \
+            --require-hashes \
+            --only-binary=:all: \
+            --no-deps \
+            --platform win_amd64 \
+            --python-version 313 \
+            --implementation cp \
+            --abi cp313 \
+            --dest "$materials/wheels" \
+            --requirement v2/backend/requirements-win-amd64.lock
+          curl --fail --location --silent --show-error \
+            --output "$materials/python-3.13.14-embed-amd64.zip" \
+            https://www.python.org/ftp/python/3.13.14/python-3.13.14-embed-amd64.zip
+      - name: Build test-only candidate (never uploaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          materials="$RUNNER_TEMP/mrv2-t1-materials"
+          build="$RUNNER_TEMP/mrv2-t1-build"
+          mkdir -p "$build/output"
+          # runtime requirements lock 通过字节级 SHA-256 批准校验；Windows runner
+          # 默认 autocrlf 检出为 CRLF，先恢复仓库提交的 LF 字节再构建。
+          sed -i 's/\r$//' v2/backend/requirements-win-amd64.lock v2/frontend/package-lock.json
+          python -m v2.installer.build_runtime \
+            --python-embed-zip "$materials/python-3.13.14-embed-amd64.zip" \
+            --wheelhouse "$materials/wheels" \
+            --lock-file v2/backend/requirements-win-amd64.lock \
+            --output "$build/runtime"
+          python -m v2.installer.assemble_payload \
+            --backend-root v2/backend \
+            --frontend-dist v2/frontend/dist/client \
+            --frontend-lock v2/frontend/package-lock.json \
+            --output "$build/payload"
+          version=$(tr -d '\r\n' < v2/VERSION)
+          python -m v2.installer.build_package \
+            --payload-root "$build/payload" \
+            --runtime-root "$build/runtime" \
+            --output "$build/output/会议室预约系统-V$version-安装包.zip"
+      - name: Run real Windows install acceptance
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
+          .github/scripts/v2-windows-acceptance.ps1 `
+            -CandidateZip "$env:RUNNER_TEMP/mrv2-t1-build/output/会议室预约系统-V$version-安装包.zip" `
+            -WorkRoot "$env:RUNNER_TEMP/mrv2-t1-acceptance"

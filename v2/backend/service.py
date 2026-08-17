@@ -506,6 +506,9 @@ def _launch_backup_catch_up(identity: dict[str, Any]) -> None:
     ]
     options: dict[str, Any] = {
         "cwd": str(APP_DIR),
+        # 补跑 worker 无控制台，真实 Windows 默认本地代码页会让中文报告
+        # 在成功路径上失败；强制 UTF-8 与备份入口的流重配置互为兜底。
+        "env": {**os.environ, "PYTHONUTF8": "1"},
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,

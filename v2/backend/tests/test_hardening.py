@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import socket
@@ -226,6 +227,35 @@ class ApplicationInvariantHardeningTests(BackendTestCase):
                 install_id=INSTALL_ID,
                 sequence=1,
             )
+
+    @unittest.skipUnless(os.name == "posix", "fcntl 仅在 POSIX 上可检查句柄访问模式")
+    def test_backup_fsyncs_only_writable_handles(self):
+        # 真实 Windows 服务中备份以 Errno 9 失败：os.fsync 在 Windows 上要求
+        # 句柄可写，而 POSIX 允许只读 fsync。用 fcntl 记录每次 fsync 的访问
+        # 模式，锁定备份管道不会回退到只读句柄。
+        import fcntl
+
+        self.setup_system()
+        access_modes = []
+        original_fsync = os.fsync
+
+        def spy(descriptor):
+            access_modes.append(fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE)
+            return original_fsync(descriptor)
+
+        with mock.patch("os.fsync", side_effect=spy):
+            created_path, _metadata = create_backup(
+                self.database,
+                self.root / "backups",
+                install_id=INSTALL_ID,
+                sequence=1,
+            )
+        self.assertTrue(created_path.is_file())
+        self.assertTrue(access_modes)
+        self.assertTrue(
+            all(mode in (os.O_WRONLY, os.O_RDWR) for mode in access_modes),
+            f"backup pipeline fsynced read-only handle(s): {access_modes}",
+        )
 
     def test_login_account_limit_applies_across_rotating_ip_addresses(self):
         self.setup_system()
@@ -893,6 +923,48 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
             command[2:],
             ["--catch-up", "--expected-install-id", INSTALL_ID],
         )
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONUTF8"], "1")
+
+    def test_backup_cli_reporting_survives_pythonw_and_narrow_codepages(self):
+        # 真实 Windows：补跑 worker 在 cp1252 重定向句柄上打印中文会以
+        # UnicodeEncodeError 失败；pythonw 计划任务下 stdout/stderr 为 None。
+        # 备份结果必须只由状态文件与审计决定，控制台报告不能破坏成功路径。
+        self.write_install_json(self.data_dir, setup_complete=True)
+        (self.data_dir / "install_id").write_text(INSTALL_ID + "\n", encoding="utf-8")
+        paths = backup_entrypoint._CliPaths(
+            program_dir=self.root,
+            data_dir=self.data_dir,
+            backup_dir=self.root / "backups",
+        )
+        with mock.patch.object(backup_entrypoint, "_logger", return_value=mock.Mock()):
+            with mock.patch.object(backup_entrypoint.sys, "stdout", None), mock.patch.object(
+                backup_entrypoint.sys, "stderr", None
+            ):
+                pythonw_args = backup_entrypoint.argparse.Namespace(
+                    scheduled=False,
+                    catch_up=False,
+                    expected_install_id=None,
+                )
+                self.assertEqual(backup_entrypoint._run_backup(pythonw_args, paths), 0)
+            status = json.loads(
+                (self.data_dir / "backup-status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["status"], "succeeded")
+
+            narrow_console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with mock.patch.object(
+                backup_entrypoint.sys, "stdout", narrow_console
+            ), mock.patch.object(backup_entrypoint.sys, "stderr", narrow_console):
+                manual_args = backup_entrypoint.argparse.Namespace(
+                    scheduled=False,
+                    catch_up=False,
+                    expected_install_id=None,
+                )
+                self.assertEqual(backup_entrypoint._run_backup(manual_args, paths), 0)
+            second_status = json.loads(
+                (self.data_dir / "backup-status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(second_status["status"], "succeeded")
         test_paths = backup_entrypoint._CliPaths(
             program_dir=self.root,
             data_dir=self.data_dir,
