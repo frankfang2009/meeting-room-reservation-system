@@ -16,6 +16,18 @@ export function dateLabel(value) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 · ${weekdays[date.getDay()]}`;
 }
 
+// 相对日期措辞以服务器业务日为基准，客户端时钟不参与判断。
+export function relativeDayLabel(value, businessDateValue) {
+  if (!value || !businessDateValue) return "";
+  const date = value instanceof Date ? value : parseDate(value);
+  const base = businessDateValue instanceof Date ? businessDateValue : parseDate(businessDateValue);
+  const difference = Math.round(
+    (Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+      - Date.UTC(base.getFullYear(), base.getMonth(), base.getDate())) / 86400000,
+  );
+  return { 0: "今天", 1: "明天", 2: "后天" }[difference] || "";
+}
+
 export function monthKey(value) {
   const date = value instanceof Date ? value : new Date(value);
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;

@@ -608,3 +608,15 @@
 .toast button:hover {
   background: rgba(255, 255, 255, 0.08);
 }
+
+/* 预约成功确认条自顶部轻落入场；reduced-motion 全局降级为瞬时显示。 */
+@keyframes notice-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
+}
+
+.calendar-success-notice {
+  animation: notice-drop 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}

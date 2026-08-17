@@ -282,3 +282,65 @@
     transform: translateY(0);
   }
 }
+
+/* “我的预约”读取骨架：与英雄区和“之后”行同构的安静灰条，无 shimmer。 */
+.bookings-skeleton {
+  width: min(880px, 100%);
+  margin: 0 auto;
+}
+
+.bookings-skeleton-hero {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  margin-top: 167px;
+  padding: 24px 82px;
+}
+
+.bookings-skeleton-hero .time {
+  width: 216px;
+  height: 54px;
+  border-radius: 999px;
+  background: #c8c4ba;
+}
+
+.bookings-skeleton-hero .room {
+  width: 138px;
+  height: 14px;
+  border-radius: 999px;
+  background: #d5d1c7;
+}
+
+.bookings-skeleton-rows {
+  display: grid;
+  gap: 6px;
+  margin-top: 72px;
+}
+
+.bookings-skeleton-row {
+  min-height: 110px;
+  display: grid;
+  grid-template-columns: 1.2fr 1.35fr 1fr;
+  align-items: center;
+  gap: 18px;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.bookings-skeleton-row .date {
+  width: 108px;
+  height: 22px;
+  border-radius: 999px;
+  background: #c8c4ba;
+}
+
+.bookings-skeleton-row .meta {
+  width: 72%;
+  height: 16px;
+  border-radius: 999px;
+  background: #d5d1c7;
+}
+
+.bookings-skeleton-row + .bookings-skeleton-row .meta {
+  width: 54%;
+}

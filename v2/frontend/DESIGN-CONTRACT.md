@@ -140,3 +140,39 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - The frozen desktop support set is 1024×720, 1280×720, 1440×900, and 1920×1080. The existing 960px, 720px, and 620px rules are defensive fallbacks that prevent severe clipping when a desktop window is narrowed; they are not acceptance targets and do not establish mobile or tablet support. Mobile product redesign remains outside this contract.
 - `npm run test:prototype` is the front-end contract suite for time-slot generation, public-display masking/projection, authenticated unit-wide detail visibility, role/ownership-based management, and stable identity. `npm run build` and `npm run test:sites` remain required packaging checks.
 - All content and state remain synthetic React memory. This snapshot authorizes no deployment and no connection to Flask, API, SQLite, production/customer data, secrets, backup services, notification services, or an AI experiment area. Final audit evidence and verification details are recorded in `design-qa.md`; do not claim backend, authentication, authorization, real concurrency, real networking, TV hardware, or customer-data acceptance from this prototype.
+
+## UX refinement addendum — 2026-08-17 (no new features)
+
+This addendum records the first quiet-polish batch. It changes no business capability,
+permission, data boundary, or API contract; the frozen layout, hierarchy, and palette
+are preserved.
+
+- The calendar today view quietly scrolls the server-time line to roughly the upper
+  third of the viewport once per arrival — when the calendar view is entered or the
+  date is switched to 今天. Later 30-second clock ticks and user scrolling never
+  reposition the view, and no scroll happens outside configured working hours because
+  the time line itself is absent.
+- While a booking drawer is open (create, edit, slot-conflict, draft-relocation,
+  details, cancel), the calendar time slot it refers to keeps a quiet graphite inset
+  ring (`.slot-origin`). The marker exists only for the currently displayed date and
+  clears when the drawer closes; it follows the live form values for create/edit so it
+  always marks the slot the drawer would occupy.
+- Loading states for 我的预约, 预约记录, and the Data Center chart areas use the same
+  quiet warm-gray skeleton language as the calendar: bars shaped like the real
+  content, no shimmer, gradient, or spinner, with page shells and controls retained
+  and a `role="status"` plus aria-label announcement. The calendar skeleton is
+  unchanged.
+- Switching calendar dates plays one 190ms directional slide (content enters from the
+  right when moving forward, from the left when moving backward); the first load plays
+  nothing. The booking success bar drops in over 200ms. All of this stays under the
+  global `prefers-reduced-motion` clamp, and the toast keeps its existing slide.
+- Date copy uses relative wording anchored to the server business date, never the
+  client clock: the calendar header subtitle and booking-detail/cancel subtitles gain a
+  今天/明天/后天 prefix before the full date, and the mine “之后” plus history rows
+  replace their weekday anchor with the relative word when applicable. The 我的预约
+  hero remains time-only.
+- System Status copy stays plain-language: 绑定模式→服务范围, 数据序列→数据序号,
+  备份序列→备份序号, 集成令牌→接口令牌, and the audit caption now says times are
+  converted to the local timezone instead of naming UTC. Room naming was audited:
+  笔录室 is used consistently and 会议室 appears only inside the fixed product brand
+  name, which stays unchanged.

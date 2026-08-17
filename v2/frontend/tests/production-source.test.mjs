@@ -426,7 +426,9 @@ test("expired sessions preserve and restore an account-scoped booking draft", ()
 });
 
 test("approved F19 decisions keep production UI and the frozen contract aligned", () => {
-  assert.match(app, /<p>\{dateLabel\(booking\.date\)\}<\/p>\{booking\.status && <span className=\{`drawer-status \$\{booking\.status\}`\}/);
+  assert.match(app, /<p>\{dateSubtitle \|\| dateLabel\(booking\.date\)\}<\/p>\{booking\.status && <span className=\{`drawer-status \$\{booking\.status\}`\}/);
+  assert.match(app, /const withRelativeDay = \(dateText\) =>/);
+  assert.match(app, /relativeDayLabel\(dateText, businessClock\.date\)/);
   assert.match(designContract, /adjacent status badge remains visible/);
   for (const width of [960, 720, 620]) {
     assert.match(responsiveStyles, new RegExp(`@media \\(max-width: ${width}px\\)`));

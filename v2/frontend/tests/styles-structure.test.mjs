@@ -34,7 +34,10 @@ const expectedFiles = [
 // V2.2.0 评审修复：数据中心标签四槽位改为与 ui/presentation.js 的 TAG_COLORS
 // 完全同值（此前槽位 2/3 颜色互换了）。
 // V2.2.1：系统状态页新增 macOS 版“软件更新”徽标与检查按钮样式。
-const frozenSourceSha256 = "653a748333ddb99018e583112bdd6180d2c3f02a132b18aee952ea775f5ba4f8";
+// V2.2.x UX 打磨：日历来源时段描边与日期切换入场动画（calendar.css）、
+// 我的预约/预约记录/数据中心读取骨架（dashboard/history/reports.css）、
+// 成功确认条轻落入场（runtime-states.css）。
+const frozenSourceSha256 = "6d7afc5ed6b77ffd7c1a8307eda9949cba829fc9a9fafe72113a987d6a58d7a8";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
