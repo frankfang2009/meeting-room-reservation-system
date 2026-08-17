@@ -8,9 +8,11 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件，也不得自动发布 V2 候选。
 
 公开仓库自动化分层固定如下：`.github/workflows/ci.yml` 对每个 PR 和 main 运行仓库策略、
-V2 Linux 与 V2 Windows 门禁，但不制作或上传安装包；`release-candidate.yml` 仅允许从
-main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，候选只保留 7 天且不自动创建
-GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+V2 Linux 与 V2 Windows 门禁，但不制作或上传安装包；`v2-windows-acceptance.yml` 以相同
+触发面运行 T1 Windows 真实安装验收，只在 runner 内部构建一次性测试候选
+（`candidate-test-only.zip`），不上传、不保留任何可分发制品；`release-candidate.yml`
+仅允许从 main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，候选只保留 7 天且
+不自动创建 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
 ## 当前增量修复证据（2026-08-14 至 2026-08-15）
 
