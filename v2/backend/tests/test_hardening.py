@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import socket
@@ -922,6 +923,48 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
             command[2:],
             ["--catch-up", "--expected-install-id", INSTALL_ID],
         )
+        self.assertEqual(popen.call_args.kwargs["env"]["PYTHONUTF8"], "1")
+
+    def test_backup_cli_reporting_survives_pythonw_and_narrow_codepages(self):
+        # 真实 Windows：补跑 worker 在 cp1252 重定向句柄上打印中文会以
+        # UnicodeEncodeError 失败；pythonw 计划任务下 stdout/stderr 为 None。
+        # 备份结果必须只由状态文件与审计决定，控制台报告不能破坏成功路径。
+        self.write_install_json(self.data_dir, setup_complete=True)
+        (self.data_dir / "install_id").write_text(INSTALL_ID + "\n", encoding="utf-8")
+        paths = backup_entrypoint._CliPaths(
+            program_dir=self.root,
+            data_dir=self.data_dir,
+            backup_dir=self.root / "backups",
+        )
+        with mock.patch.object(backup_entrypoint, "_logger", return_value=mock.Mock()):
+            with mock.patch.object(backup_entrypoint.sys, "stdout", None), mock.patch.object(
+                backup_entrypoint.sys, "stderr", None
+            ):
+                pythonw_args = backup_entrypoint.argparse.Namespace(
+                    scheduled=False,
+                    catch_up=False,
+                    expected_install_id=None,
+                )
+                self.assertEqual(backup_entrypoint._run_backup(pythonw_args, paths), 0)
+            status = json.loads(
+                (self.data_dir / "backup-status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["status"], "succeeded")
+
+            narrow_console = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with mock.patch.object(
+                backup_entrypoint.sys, "stdout", narrow_console
+            ), mock.patch.object(backup_entrypoint.sys, "stderr", narrow_console):
+                manual_args = backup_entrypoint.argparse.Namespace(
+                    scheduled=False,
+                    catch_up=False,
+                    expected_install_id=None,
+                )
+                self.assertEqual(backup_entrypoint._run_backup(manual_args, paths), 0)
+            second_status = json.loads(
+                (self.data_dir / "backup-status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(second_status["status"], "succeeded")
         test_paths = backup_entrypoint._CliPaths(
             program_dir=self.root,
             data_dir=self.data_dir,

@@ -47,6 +47,7 @@ V2 Linux 与 V2 Windows 门禁，但不制作或上传安装包；`v2-windows-ac
 | E36 | 本轮界面跟进的源码/样式回归与 1440×900、1024×720 真实 Chromium 验收 | 工作时间与最近备份均暴露为整行可点击按钮并保留焦点返回；抽屉末个输入与满宽保存操作无重叠；个人中心页头、3 项概览和 4 项数据的布局边界无交叉，两个尺寸下 `scrollWidth = clientWidth`；干净会话控制台 0 错误/0 警告 |
 | E37 | 长个人标签预约表单回归、真实 Chromium 边界测量与 `v2/scripts/check.sh` | “本人复核 01”“本人加急 01”等长名称保留完整按钮无障碍名称和悬停文案，视觉文字在各自按钮内省略；四个标签仍保持单行，标签按钮与相邻按钮、备注区域无交叉；全量门禁通过 |
 | E43 | T1 Windows 真实安装验收发现备份管道 fsync 只读句柄缺陷；源码修复 + POSIX fcntl 回归测试 + `v2/scripts/check.sh` | 真实 Windows 服务的备份补跑与人工备份此前必然以 `OSError [Errno 9]` 失败（POSIX 单测允许只读 fsync 故未暴露）；`create_backup` 改为读写句柄落盘，新增回归测试锁定备份管道所有 fsync 均为可写句柄；Windows CI 验收见 `v2-windows-acceptance.yml` |
+| E44 | T1 Windows 真实安装验收发现备份控制台报告破坏成功路径；源码修复 + pythonw/cp1252 仿真回归测试 + `v2/scripts/check.sh` | fsync 修复后备份文件已成功落盘，但补跑 worker 在 cp1252 重定向句柄上打印中文 `备份完成` 以 `UnicodeEncodeError` 失败并把状态写成 failed；pythonw 计划任务下 stdout 为 None 时 print 同样会失败。备份入口改为重配置 UTF-8 流与 None 安全报告，服务启动补跑子进程注入 `PYTHONUTF8=1`，回归测试仿真两种真实 Windows 上下文 |
 
 本轮修复已改变生产源码，因此下方提交
 `e953eff59541f2760e7525b73a2ae2ca54197003` 的 CI 与候选 SHA 只作历史证据；

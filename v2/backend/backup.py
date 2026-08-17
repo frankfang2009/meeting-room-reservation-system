@@ -147,11 +147,36 @@ def _record_result(
         raise
 
 
+def _configure_streams() -> None:
+    # 控制台报告不得决定备份结果：pythonw 下 stdout/stderr 可能是 None，
+    # 而真实 Windows 的重定向句柄默认使用本地代码页（如 cp1252），中文
+    # 输出会把已经成功的备份错误地标记为失败。
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
+def _report(message: str) -> None:
+    if sys.stdout is not None:
+        print(message)
+
+
+def _report_error(message: str) -> None:
+    if sys.stderr is not None:
+        print(message, file=sys.stderr)
+
+
 def _run_backup(args: argparse.Namespace, paths: _CliPaths) -> int:
     program_dir = paths.program_dir
     data_dir = paths.data_dir
     backup_dir = paths.backup_dir
     logger = _logger(program_dir)
+    _configure_streams()
     operation = "catch-up" if args.catch_up else "scheduled" if args.scheduled else "manual"
     db = None
     sequence = None
@@ -223,7 +248,7 @@ def _run_backup(args: argparse.Namespace, paths: _CliPaths) -> int:
             detail=sidecar["createdAtUtc"],
             sequence=sequence,
         )
-        print(f"备份完成：{target}")
+        _report(f"备份完成：{target}")
         return 0
     except Exception as error:
         logger.exception("backup failed mode=%s sequence=%s", operation, sequence)
@@ -242,10 +267,9 @@ def _run_backup(args: argparse.Namespace, paths: _CliPaths) -> int:
             _write_status(data_dir, status="failed", detail=type(error).__name__, sequence=sequence)
         except Exception:
             logger.exception("failed to write backup status")
-        print(
+        _report_error(
             "备份失败：没有生成可用备份。请在系统状态中重试；"
-            "仍失败请提交 _程序文件\\logs\\backup.log。",
-            file=sys.stderr,
+            "仍失败请提交 _程序文件\\logs\\backup.log。"
         )
         return 1
     finally:
