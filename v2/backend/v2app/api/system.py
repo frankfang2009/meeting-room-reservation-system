@@ -35,6 +35,7 @@ from ..db import (
 )
 from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor
+from ..services import update_check
 from ..services.audit import write_security_audit
 
 
@@ -127,6 +128,11 @@ def system_status():
             "dataSequence": data_sequence,
             "servicePort": current_app.config["SERVICE_PORT"],
             "bindMode": "lan" if is_setup_complete(db) else "loopback",
+            "updateCheck": update_check.view(
+                enabled=bool(current_app.config.get("UPDATE_CHECK_ENABLED")),
+                data_dir=Path(current_app.config["DATA_DIR"]),
+                current_version=str(current_app.config["PRODUCT_VERSION"]),
+            ),
             "apiStatus": "online",
             "displayStatus": "online",
             "health": (
@@ -154,6 +160,21 @@ def system_status():
             ],
         }
     )
+
+
+@bp.post("/admin/system/update-check")
+@admin_required
+def run_update_check():
+    if not current_app.config.get("UPDATE_CHECK_ENABLED"):
+        raise ApiError(403, "UPDATE_CHECK_DISABLED", "当前部署未启用版本检查")
+    performed, summary = update_check.perform_check(
+        data_dir=Path(current_app.config["DATA_DIR"]),
+        current_version=str(current_app.config["PRODUCT_VERSION"]),
+        url=str(current_app.config.get("UPDATE_CHECK_URL")),
+    )
+    if not performed:
+        raise ApiError(429, "UPDATE_CHECK_THROTTLED", "刚刚已检查过，请稍后再试")
+    return jsonify(summary)
 
 
 @bp.post("/admin/backups")

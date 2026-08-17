@@ -65,6 +65,11 @@ class ServiceAlreadyRunning(RuntimeError):
 
 
 def service_failure_message(error: BaseException) -> str:
+    logs_hint = (
+        "_程序文件\\logs"
+        if os.name == "nt"
+        else "应用文件夹内的 logs（logs 目录）"
+    )
     if isinstance(error, OSError) and (
         error.errno == errno.EADDRINUSE
         or getattr(error, "winerror", None) == 10048
@@ -72,11 +77,12 @@ def service_failure_message(error: BaseException) -> str:
     ):
         return (
             "V2 服务无法启动：8080 端口已被其他程序占用。"
-            "请关闭占用程序后重新运行“① 启动系统”；仍失败请提交 _程序文件\\logs。"
+            "请关闭占用程序后重新运行“① 启动系统”；"
+            f"仍失败请提交 {logs_hint}。"
         )
     return (
         "V2 服务启动或操作未完成。请重新运行“① 启动系统”；"
-        "仍失败请提交 _程序文件\\logs，日志中已记录详细原因。"
+        f"仍失败请提交 {logs_hint}，日志中已记录详细原因。"
     )
 
 
@@ -165,6 +171,74 @@ def load_install_identity() -> dict[str, Any]:
     return value
 
 
+EDITION_MARKER_PATH = APP_DIR / "EDITION"
+MACOS_EDITION_VALUE = "macos-selfhost"
+
+
+def _edition_is_macos() -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        return (
+            EDITION_MARKER_PATH.read_text(encoding="utf-8").strip()
+            == MACOS_EDITION_VALUE
+        )
+    except OSError:
+        return False
+
+
+def ensure_macos_install_identity() -> None:
+    """macOS 自托管版首次启动生成安装身份；其余环境不做任何事。
+
+    写入顺序是 install_id 文件在前、install.json 在后，保证并发的应用
+    启动要么看到完整身份，要么像开发态一样看不到 install.json。
+    """
+
+    if not _edition_is_macos():
+        return
+    if INSTALL_INFO_PATH.exists() and INSTALL_ID_PATH.exists():
+        return
+    if INSTALL_INFO_PATH.exists() or INSTALL_ID_PATH.exists():
+        raise RuntimeError("macOS 安装身份文件不完整，请恢复完整应用文件夹后重试")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    install_id = str(uuid.uuid4())
+    now_utc = (
+        dt.datetime.now(dt.timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+    descriptor = os.open(
+        INSTALL_ID_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write((install_id + "\n").encode("ascii"))
+        handle.flush()
+        os.fsync(handle.fileno())
+    from v2app import PRODUCT_VERSION
+
+    record = {
+        "schema": 1,
+        "product_generation": PRODUCT_GENERATION,
+        "install_id": install_id,
+        "installed_version": PRODUCT_VERSION.removeprefix("V"),
+        "installed_at_utc": now_utc,
+        "port": SERVICE_PORT,
+        "setup_bind": "127.0.0.1",
+        "lan_bind": "0.0.0.0",
+        "setup_complete": False,
+    }
+    encoded = (
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    descriptor = os.open(
+        INSTALL_INFO_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def _normalized_path(value: Union[str, Path]) -> str:
     return os.path.normcase(os.path.abspath(os.fspath(value)))
 
@@ -172,9 +246,19 @@ def _normalized_path(value: Union[str, Path]) -> str:
 def _allowed_service_executables() -> set[str]:
     runtime = PROGRAM_DIR / "runtime"
     if runtime.is_dir():
+        if os.name == "nt":
+            return {
+                _normalized_path(runtime / "python.exe"),
+                _normalized_path(runtime / "pythonw.exe"),
+            }
+        # macOS 自托管便携包：runtime/bin 下的解释器（物化副本，无符号链接）。
         return {
-            _normalized_path(runtime / "python.exe"),
-            _normalized_path(runtime / "pythonw.exe"),
+            _normalized_path(candidate)
+            for candidate in (
+                runtime / "bin" / "python3.13",
+                runtime / "bin" / "python3",
+                runtime / "bin" / "python",
+            )
         }
     # Development-only fallback. Production packages always contain runtime.
     return {_normalized_path(Path(sys.executable).resolve())}
@@ -525,6 +609,22 @@ def _launch_backup_catch_up(identity: dict[str, Any]) -> None:
         logger.exception("failed to launch backup catch-up worker")
 
 
+def _launch_update_check_worker() -> None:
+    """macOS 版的受控版本检查：单次、限频、失败只记日志。"""
+
+    logger = logging.getLogger("meeting_room_v2.service")
+    try:
+        from v2app import PRODUCT_VERSION
+        from v2app.services import update_check
+
+        update_check.maybe_periodic_check(
+            data_dir=DATA_DIR,
+            current_version=PRODUCT_VERSION,
+        )
+    except Exception:
+        logger.exception("update check worker failed")
+
+
 def run_service(identity: dict[str, Any]) -> None:
     logger = logging.getLogger("meeting_room_v2.service")
     record = _claim_pid(identity)
@@ -533,6 +633,8 @@ def run_service(identity: dict[str, Any]) -> None:
     if os.environ.get("MEETING_ROOM_OPEN_BROWSER") == "1":
         threading.Thread(target=_open_browser_once, daemon=True).start()
     _launch_backup_catch_up(identity)
+    if _edition_is_macos():
+        threading.Thread(target=_launch_update_check_worker, daemon=True).start()
     config = {
         "DATA_DIR": str(DATA_DIR),
         "SERVICE_PORT": SERVICE_PORT,
@@ -540,6 +642,7 @@ def run_service(identity: dict[str, Any]) -> None:
         "LAN_ADDRESS": discover_lan_address(SERVICE_PORT),
         "SERVICE_CONTROL": record,
         "SERVICE_STOP_EVENT": stop_event,
+        "UPDATE_CHECK_ENABLED": _edition_is_macos(),
     }
     try:
         while run_server_once(
@@ -569,6 +672,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     action = "start" if not arguments else arguments[0].lstrip("-")
     logger.info("service command requested action=%s", action)
     try:
+        if os.name != "nt":
+            ensure_macos_install_identity()
         identity = load_install_identity()
         if arguments == ["--check"]:
             check_service(identity)
