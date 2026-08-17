@@ -27,7 +27,8 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | E48 | 本机两次独立 `build_macos_package` + `cmp` | 便携包 zip 两次构建逐字节一致（1138 个条目）；zip 反向验证条目、权限（.command 与 runtime/bin 0755）与内容全对齐；`latest-macos.json`、`.sha256.txt`、manifest、SBOM、第三方声明、runtime provenance 侧车齐全；包内无 data/backups/logs、无 `node_modules`、无合成标记 |
 | E49 | 本机 `build_runtime_macos` + 冻结解释器冒烟 | python-build-standalone `cpython-3.13.14+20260718` tarball SHA-256 `dca7c3ba…770` 锁定校验通过；裁剪 pip/pydoc/idle/pkgconfig/share/include 后 runtime 94 MB，bin 仅剩 python/python3/python3.13（物化副本、无符号链接）；冻结解释器 `import flask(3.1.3), waitress(3.0.2)` 成功 |
 | E50 | 版本检查契约测试（backend `tests.test_update_check`） | 17 项通过：严格 schema、版本比较、24 小时限频、60 秒手动限频、畸形 JSON/超体积/超时/离线安静降级、员工与未登录 403、禁用部署 403、sidecar 损坏自愈、macOS 身份引导幂等与半状态拒绝 |
-| E51 | CI `candidate-macos`（待打 `v2.2.1` 标签后以标签 run 为准补记） | macos runner 上双构建字节一致 → DMG 生成与内容反向校验 → 与 E47 同一脚本的 8 步真实验收 → 候选 artifact 上传（7 天保留） |
+| E51 | `v2.2.1` 标签 run 32039449562（2026-08-17，合并提交 e6b4839d，三车道全绿） | candidate-linux：Windows 双交付物两次独立构建字节一致；candidate-windows：双零参数门禁 PASS；candidate-macos：便携包双构建字节一致（`MRV2_MACOS_REPRODUCIBLE_BUILD=PASS`，zip SHA-256 `f21b2b0b…2cb77`，与开发机本地构建交叉一致）→ DMG `ee1adcf…413e` 生成与内容校验 → 9 步真实验收 PASS → 候选 artifact 上传。Windows 候选：安装包 `d95508fb…58b1b`、累计升级包 `6e406aed…ab05` |
+| E52 | GitHub Release v2.2.1 发布与重定向验证（2026-08-17） | 正式发布（非草稿/非预发）：DMG/zip/sha256 侧车与 `latest-macos.json` 附带；`releases/latest/download/latest-macos.json` 与 DMG 重定向均验证可达。注：GitHub 资产名剥离中文字符，规范中文名写入发布说明，压缩包内顶层文件夹保留中文 |
 
 macOS 自托管版"稳定"门禁 = E47–E51 全绿 + 团队 Apple Silicon 真机抽验 +
 GitHub Release 发布说明附全部 SHA-256。本机证据（E47–E50）已于 2026-08-17
