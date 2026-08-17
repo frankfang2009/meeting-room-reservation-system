@@ -172,6 +172,7 @@ export const api = {
   }),
 
   getSystem: () => request("/admin/system"),
+  checkForUpdate: () => request("/admin/system/update-check", { method: "POST" }),
   updateSystemSettings: (input) => request("/admin/settings", { method: "PUT", body: input }),
   createBackup: () => request("/admin/backups", { method: "POST" }),
   getDiagnostics: () => request("/admin/diagnostics"),
