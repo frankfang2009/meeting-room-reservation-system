@@ -233,6 +233,11 @@ try {
     Write-Step "login-bootstrap"
     $login = Invoke-Api -Method POST -Path "/api/v1/session" -Body @{ username = "admin"; password = "admin-pass-123" } -Session $session -CsrfToken $csrf
     Assert-True ($login.Status -eq 200) "login failed: $($login.Status) $($login.Json | ConvertTo-Json -Compress)"
+    # 登录会轮换会话；与后端测试辅助一致，登录后重新获取 CSRF token。
+    $sessionState = Invoke-Api -Method GET -Path "/api/v1/session" -Session $session
+    Assert-True ($sessionState.Status -eq 200) "GET /api/v1/session after login failed: $($sessionState.Status)"
+    $csrf = [string]$sessionState.Json.csrfToken
+    Assert-True (-not [string]::IsNullOrEmpty($csrf)) "csrfToken missing after login"
     $bootstrap = Invoke-Api -Method GET -Path "/api/v1/bootstrap" -Session $session
     Assert-True ($bootstrap.Status -eq 200) "bootstrap failed: $($bootstrap.Status)"
     $rooms = @($bootstrap.Json.rooms)
