@@ -168,6 +168,16 @@ function Dump-Diagnostics {
         Write-Host "--- data dir ---"
         Get-ChildItem -LiteralPath $Script:DataDir -Force | ForEach-Object { Write-Host ("{0} {1}" -f $_.Length, $_.Name) }
     }
+    $backupStatus = Join-Path $Script:DataDir "backup-status.json"
+    if (Test-Path -LiteralPath $backupStatus -PathType Leaf) {
+        Write-Host "--- backup-status.json ---"
+        Get-Content -LiteralPath $backupStatus -Raw -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+    }
+    $backupLog = Join-Path $Script:ProgramDir "logs\backup.log"
+    if (Test-Path -LiteralPath $backupLog -PathType Leaf) {
+        Write-Host "--- backup.log (tail 40) ---"
+        Get-Content -LiteralPath $backupLog -Tail 40 -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+    }
     Write-Host "MRV2_T1=DIAGNOSTICS_END"
 }
 
@@ -283,6 +293,24 @@ try {
     Write-Host "public display allowlist projection passed"
 
     Write-Step "manual-backup"
+    # 服务在启动与 LAN 重启时会补跑备份 worker 并持有 maintenance.lock；
+    # 先等补跑落定（状态 succeeded 且锁释放），避免人工备份与补跑竞争维护锁。
+    $statusPath = Join-Path $Script:DataDir "backup-status.json"
+    $lockPath = Join-Path $Script:DataDir "maintenance.lock"
+    Wait-Until {
+        if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+            return $false
+        }
+        try {
+            $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+        catch {
+            return $false
+        }
+        return ([string]$status.status -eq "succeeded")
+    } 180 "service backup catch-up did not reach succeeded"
+    Wait-Until { -not (Test-Path -LiteralPath $lockPath -PathType Leaf) } 60 "maintenance lock still held before manual backup"
+    Start-Sleep -Seconds 3
     $before = @(Get-ChildItem -LiteralPath $Script:BackupDir -Filter "*.db" -File -ErrorAction SilentlyContinue).Count
     $backup = Invoke-CandidateBat $Script:InstallRoot " " $Script:BackupBat
     Assert-True ($backup.Code -eq 0) "manual backup BAT failed: code=$($backup.Code); output tail=$($backup.Output.Substring([Math]::Max(0, $backup.Output.Length - 2000)))"
