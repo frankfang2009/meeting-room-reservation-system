@@ -18,15 +18,15 @@ def read(relative: str) -> str:
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.1.0")
+        self.assertEqual(read("VERSION").strip(), "2.2.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.1.0")
+        self.assertEqual(package["version"], "2.2.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(package["scripts"]["build"], "vite build")
-        self.assertIn('PRODUCT_VERSION = "V2.1.0"', read("backend/v2app/__init__.py"))
+        self.assertIn('PRODUCT_VERSION = "V2.2.0"', read("backend/v2app/__init__.py"))
         installer = read("installer/installer_core.py")
-        self.assertIn('VERSION = "2.1.0"', installer)
-        self.assertIn('RELEASE = "V2.1.0"', installer)
+        self.assertIn('VERSION = "2.2.0"', installer)
+        self.assertIn('RELEASE = "V2.2.0"', installer)
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -47,6 +47,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('getActivity: () => request("/activity")', frontend)
         self.assertNotIn("getActivityDay", frontend)
         self.assertIn('url_prefix="/api/v1/activity"', backend)
+        self.assertIn('url_prefix="/api/v1/reports"', backend)
 
     def test_api_contract_covers_upcoming_room_impact_and_read_only_integrations(self) -> None:
         contract = read("docs/API-CONTRACT.md")
@@ -79,19 +80,18 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('"slots": slots', system)
         self.assertIn('"productVersion": current_app.config["PRODUCT_VERSION"]', system)
 
-    def test_personal_activity_is_server_aggregated_and_current_user_scoped(self) -> None:
-        activity = read("backend/v2app/api/activity.py")
+    def test_personal_center_delegates_activity_to_the_data_center(self) -> None:
+        reports = read("backend/v2app/services/reporting.py")
+        app = read("frontend/src/App.jsx")
         frontend = read("frontend/src/features/profile/PersonalCenter.jsx")
-        self.assertIn('actor = current_user()', activity)
-        self.assertIn("owner_user_id = ? AND status = 'active'", activity)
-        self.assertIn("end_time <= ?", activity)
-        self.assertIn("currentMonthCompleted", activity)
-        self.assertNotIn('/days/', activity)
-        self.assertNotIn('daily_rows', activity)
-        self.assertNotIn("ownerId", activity)
-        self.assertIn("活动数据", frontend)
-        self.assertNotIn("最近完成", frontend)
-        self.assertNotIn("profile-heatmap", frontend)
+        self.assertIn('return _user_scope(actor, "self")', reports)
+        self.assertIn("r.owner_user_id = ?", reports)
+        self.assertNotIn("api.getReportOverview", app)
+        self.assertNotIn("profileTab", app)
+        self.assertIn("管理个人资料与工作偏好", frontend)
+        self.assertIn('aria-label="个人设置"', frontend)
+        for obsolete in ("我的活动", "本月服务概览", "查看数据中心", "活动数据", "profile-heatmap"):
+            self.assertNotIn(obsolete, frontend)
 
     def test_external_reminder_template_default_and_privacy_match_across_layers(self) -> None:
         default_template = (
@@ -310,7 +310,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.1.0.bat")
+        launcher = read("installer/安装V2.2.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
@@ -356,15 +356,18 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("v2.installer.build_runtime", reproducible)
         self.assertIn("v2.installer.assemble_payload", reproducible)
         self.assertIn("v2.installer.build_package", reproducible)
+        self.assertIn("v2.installer.build_update_package", reproducible)
         self.assertIn("v2-reproducible-build.sh", workflow)
         self.assertIn('version=$(tr -d', reproducible)
         self.assertIn('artifact="会议室预约系统-V${version}-安装包.zip"', reproducible)
+        self.assertIn('update_artifact="会议室预约系统-V${version}-累计升级包.zip"', reproducible)
         self.assertIn('$version = (Get-Content -LiteralPath "v2/VERSION"', gate)
         self.assertIn('$artifactName = "会议室预约系统-V$version-安装包.zip"', gate)
         self.assertIn('$launcherName = "安装V$version.bat"', gate)
         self.assertNotIn("V2.0.0-安装包.zip", workflow)
         self.assertNotIn("V2.0.0-安装包.zip", reproducible)
         self.assertNotIn("V2.0.0-安装包.zip", gate)
+        self.assertIn("v2-windows-update-package-gate.ps1", workflow)
 
     def test_admin_edit_uses_owner_personal_tags_across_layers(self) -> None:
         bootstrap = read("backend/v2app/api/core.py")
@@ -375,12 +378,35 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('reason: "OWNER_TAGS_MISSING"', domain)
         self.assertIn("ownerTags.ownerTagsAvailable", app)
 
-    def test_v210_update_core_is_explicitly_non_production(self) -> None:
+    def test_v220_cumulative_updater_is_production_code_but_release_gated(self) -> None:
         updater = read("installer/update_core.py")
+        builder = read("installer/build_update_package.py")
+        entry = read("installer/update.py")
+        launcher = read("installer/升级到V2.2.0.bat")
         installer_readme = read("installer/README.md")
-        self.assertIn("PRODUCTION_UPDATE_SUPPORTED = False", updater)
-        self.assertIn("V2.1.0 非生产能力", installer_readme)
-        self.assertIn("不代表 V2.1.0 支持在线升级", installer_readme)
+        self.assertIn("PRODUCTION_UPDATE_SUPPORTED = True", updater)
+        self.assertIn('SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})', updater)
+        self.assertIn('"kind": "v2-cumulative-update"', builder)
+        self.assertIn('"formal_external_release_allowed": False', builder)
+        self.assertIn("V2UpdateTransaction", entry)
+        self.assertIn("MRV2_UPDATER_RESULT=%UPDATE_RC%", launcher)
+        self.assertIn("累计升级", installer_readme)
+
+    def test_data_center_permissions_and_csv_are_server_enforced(self) -> None:
+        bootstrap = read("backend/v2app/api/core.py")
+        reporting = read("backend/v2app/services/reporting.py")
+        reports = read("backend/v2app/api/reports.py")
+        frontend = read("frontend/src/features/reports/DataCenter.jsx")
+        for permission in ("viewReports", "viewOverallReports", "viewOtherUserReports"):
+            self.assertIn(f'"{permission}"', bootstrap)
+        self.assertIn('if role == "employee"', reporting)
+        self.assertIn('ApiError(403, "FORBIDDEN"', reporting)
+        self.assertIn('@bp.get("/overview")', reports)
+        self.assertIn('@bp.get("/reservations.csv")', reports)
+        self.assertIn('write_security_audit(', reports)
+        self.assertIn('action="report.csv_exported"', reports)
+        self.assertIn("数据中心", frontend)
+        self.assertIn('>导出{isOverall ? "全单位" : scopeLabel}的服务记录', frontend)
 
     def test_operator_failure_messages_are_actionable_and_do_not_echo_exceptions(self) -> None:
         service = read("backend/service.py")
