@@ -1,19 +1,37 @@
-# V2.2.0 发布门禁
+# V2.2.1 发布门禁
 
 状态说明：`[x]` 只表示下方“本轮可复跑证据”已经通过；`[ ]` 表示仍需 CI、
 Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
 完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
+自 V2.2.1 起 `formal_external_release_allowed` 按交付物分类适用：Windows 安装包与
+累计升级包继续适用上述全部门禁；macOS 自托管版适用本文件新增的 macOS 门禁
+（见"V2.2.1 macOS 自托管版证据"一节），其正式分发渠道是 GitHub Release。
 
 仓库公开仅表示 Apache-2.0 源代码可访问，不代表任何 GitHub Actions 产物或未签名
-候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件，也不得自动发布 V2 候选。
+候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件；Windows 候选不得自动
+发布，macOS 自托管版只能以带 SHA-256 发布说明的 GitHub Release 形式发布。
 
 公开仓库自动化分层固定如下：`.github/workflows/ci.yml` 对每个 PR 和 main 运行仓库策略、
-V2 Linux 与 V2 Windows 门禁，但不制作或上传安装包；`v2-windows-acceptance.yml` 以相同
+V2 Linux、V2 Windows 与 V2 macOS 门禁，但不制作或上传安装包；`v2-windows-acceptance.yml` 以相同
 触发面运行 T1 Windows 真实安装验收，只在 runner 内部构建一次性测试候选（与正式候选
 同名同源、规范命名），不上传、不保留任何可分发制品；`release-candidate.yml` 仅允许从
 main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一提交构建全新安装与
-累计升级两套候选及侧车，只保留 7 天且不自动创建 GitHub Release；V1
-`windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
+GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+
+## V2.2.1 macOS 自托管版证据（2026-08-17）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E47 | 本机（Apple Silicon，macOS）`v2-macos-acceptance.sh` 从候选 DMG 出发的 8 步真实验收 | 挂载 DMG → 从 `/Volumes` 直接启动被拒绝并提示拖出 → 拖出复制 → 启动 → `/healthz` 首启仅回环且未设置 → 首次设置事务 201 → LAN 监听切换且回环可见 install_id → 管理员登录与 bootstrap 版本读取 → 180 秒内首份 catch-up 备份落盘且无 WAL/SHM/journal 伴随 → `停止.command` 干净退出且 service.pid 清理、端口关闭；`data/install.json` 与 `install_id` 自动生成且 `setup_complete` 与数据库一致 |
+| E48 | 本机两次独立 `build_macos_package` + `cmp` | 便携包 zip 两次构建逐字节一致（1138 个条目）；zip 反向验证条目、权限（.command 与 runtime/bin 0755）与内容全对齐；`latest-macos.json`、`.sha256.txt`、manifest、SBOM、第三方声明、runtime provenance 侧车齐全；包内无 data/backups/logs、无 `node_modules`、无合成标记 |
+| E49 | 本机 `build_runtime_macos` + 冻结解释器冒烟 | python-build-standalone `cpython-3.13.14+20260718` tarball SHA-256 `dca7c3ba…770` 锁定校验通过；裁剪 pip/pydoc/idle/pkgconfig/share/include 后 runtime 94 MB，bin 仅剩 python/python3/python3.13（物化副本、无符号链接）；冻结解释器 `import flask(3.1.3), waitress(3.0.2)` 成功 |
+| E50 | 版本检查契约测试（backend `tests.test_update_check`） | 17 项通过：严格 schema、版本比较、24 小时限频、60 秒手动限频、畸形 JSON/超体积/超时/离线安静降级、员工与未登录 403、禁用部署 403、sidecar 损坏自愈、macOS 身份引导幂等与半状态拒绝 |
+| E51 | CI `candidate-macos`（待打 `v2.2.1` 标签后以标签 run 为准补记） | macos runner 上双构建字节一致 → DMG 生成与内容反向校验 → 与 E47 同一脚本的 8 步真实验收 → 候选 artifact 上传（7 天保留） |
+
+macOS 自托管版"稳定"门禁 = E47–E51 全绿 + 团队 Apple Silicon 真机抽验 +
+GitHub Release 发布说明附全部 SHA-256。本机证据（E47–E50）已于 2026-08-17
+在 Apple Silicon Mac 上复跑通过。
 
 ## V2.2.0 当前本地证据（2026-08-17）
 
@@ -151,6 +169,7 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [ ] 对当前增量源码的新候选重新确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 两套候选及侧车移入受控发布归档。
+- [ ] macOS：以 `v2.2.1` 标签 run 的候选 zip/DMG/清单/侧车为正式发布物，GitHub Release 发布说明附 SHA-256 与未签名首启说明，发布后验证 `releases/latest/download/latest-macos.json` 重定向。
 - [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
 ## 已撤销候选

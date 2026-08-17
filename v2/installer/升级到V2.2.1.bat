@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-title 会议室预约系统 V2.2.0 离线累计升级
+title 会议室预约系统 V2.2.1 离线累计升级
 cd /d "%~dp0"
 
 set "UPDATE_TOOL=%~dp0_V2更新工具"
@@ -27,7 +27,7 @@ del /q "%UPDATE_OUTPUT%" >nul 2>&1
 echo.
 if "%UPDATE_RC%"=="0" (
     echo MRV2_UPDATE_GATE=PRODUCT_RC_0
-    echo V2.2.0 升级已完成。
+    echo V2.2.1 升级已完成。
 ) else if "%UPDATE_RC%"=="1" (
     echo MRV2_UPDATE_GATE=PRODUCT_RC_1
     echo 升级包或现场未通过产品安全校验；未提交前更新器已回滚，不会留下半更新状态。
