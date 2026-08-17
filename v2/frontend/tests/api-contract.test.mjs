@@ -83,6 +83,51 @@ test("personal activity uses the current-user aggregate endpoint", async () => {
   }
 });
 
+test("data center overview preserves explicit scope and filters", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response(JSON.stringify({ summary: {}, filters: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    await api.getReportOverview({ scope: "person", ownerId: "employee/1", dateFrom: "2026-08-01", query: "A B" });
+    assert.equal(captured, "/api/v1/reports/overview?scope=person&ownerId=employee%2F1&dateFrom=2026-08-01&query=A+B");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("CSV download returns report metadata with the blob", async () => {
+  const previousFetch = globalThis.fetch;
+  let captured = "";
+  globalThis.fetch = async (url) => {
+    captured = url;
+    return new Response("\ufeff办件编号\r\n", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": "attachment; filename*=UTF-8''report.csv",
+        "X-Report-Field-Version": "v1",
+        "X-Report-Row-Count": "12",
+      },
+    });
+  };
+  try {
+    const result = await api.downloadReportCsv({ scope: "self", status: "active" });
+    assert.equal(captured, "/api/v1/reports/reservations.csv?scope=self&status=active");
+    assert.deepEqual([...new Uint8Array(await result.blob.arrayBuffer()).slice(0, 3)], [0xef, 0xbb, 0xbf]);
+    assert.equal(result.contentDisposition, "attachment; filename*=UTF-8''report.csv");
+    assert.equal(result.fieldVersion, "v1");
+    assert.equal(result.rowCount, 12);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("room deletion preflight uses a read-only impact endpoint", async () => {
   const previousFetch = globalThis.fetch;
   let captured = "";

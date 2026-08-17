@@ -32,6 +32,13 @@ export function validateAuthenticatedContext(session, bootstrap) {
   if (["manageRooms", "manageUsers", "manageSystem"].some((key) => Boolean(permissions[key]) !== expectedAdmin)) {
     throw new TypeError("登录角色与工作台权限不一致");
   }
+  if (
+    permissions.viewReports !== true
+    || Boolean(permissions.viewOverallReports) !== expectedAdmin
+    || Boolean(permissions.viewOtherUserReports) !== expectedAdmin
+  ) {
+    throw new TypeError("登录角色与数据中心权限不一致");
+  }
   try {
     projectServerClock({
       serverDate: bootstrap.serverDate,

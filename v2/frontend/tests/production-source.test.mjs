@@ -13,6 +13,7 @@ const productionSource = fs.readdirSync(path.join(root, "src"), { recursive: tru
 const authFlow = fs.readFileSync(path.join(root, "src/auth-flow.js"), "utf8");
 const setupRestart = fs.readFileSync(path.join(root, "src/setup-restart.js"), "utf8");
 const adminForms = fs.readFileSync(path.join(root, "src/features/admin/AdminForms.jsx"), "utf8");
+const dataCenter = fs.readFileSync(path.join(root, "src/features/reports/DataCenter.jsx"), "utf8");
 const bookingFormStyles = fs.readFileSync(path.join(root, "src/styles/booking-forms.css"), "utf8");
 const historyStyles = fs.readFileSync(path.join(root, "src/styles/history.css"), "utf8");
 const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.css"), "utf8");
@@ -67,23 +68,38 @@ test("login validation returns keyboard focus to the first correctable field", (
   assert.match(app, /id="login-password-error"[^>]*role="alert"/);
 });
 
-test("personal center keeps a concise real summary without heatmap clutter", () => {
-  assert.match(app, /api\.getActivity\(\)/);
-  assert.match(app, /activeView === "settings" && profileTab === "activity"/);
+test("personal center delegates all activity analysis to the data center", () => {
   assert.match(productionSource, /<h1>个人中心<\/h1>/);
-  assert.match(productionSource, />我的活动<\/button>/);
-  assert.match(productionSource, />偏好设置<\/button>/);
-  assert.match(productionSource, /<h2 id="profile-overview-heading">活动概览<\/h2>/);
-  assert.match(productionSource, /<h2 id="profile-data-heading">活动数据<\/h2>/);
-  assert.doesNotMatch(productionSource, /预约活动|profile-heatmap|activityMonths|getActivityDay|本人当天已完成的预约/);
+  assert.match(productionSource, /<p>管理个人资料与工作偏好<\/p>/);
+  assert.match(productionSource, /<form id="personal-settings-form" className="settings-layout" aria-label="个人设置"/);
+  assert.doesNotMatch(app, /api\.getReportOverview|profileTab|loadActivity/);
+  assert.doesNotMatch(productionSource, /我的活动|本月服务概览|活动数据|查看数据中心|profile-activity|profile-heatmap|activityMonths|getActivityDay/);
 });
 
-test("personal center uses a compact identity header and full-width activity bands", () => {
+test("data center separates each analysis task into a focused page and removes the personnel list", () => {
+  assert.match(dataCenter, /\{ id: "overview", label: "概览" \}, \{ id: "time", label: "时段分布" \}, \{ id: "rooms", label: "笔录室" \}, \{ id: "tags", label: "标签" \}/);
+  assert.match(dataCenter, /role="tablist" aria-label="数据中心页面"/);
+  assert.match(dataCenter, /<TimeDistribution items=\{report\?\.weekdayTimeDistribution\}/);
+  assert.match(dataCenter, /<RoomDistribution items=\{report\?\.roomWorkload\}/);
+  assert.match(dataCenter, /<TagComposition items=\{isOverall \? report\?\.globalTagDistribution : report\?\.tagDistribution\}/);
+  assert.match(dataCenter, /report-time-cell/);
+  assert.match(dataCenter, /cell\.count >= 2 \? cell\.count/);
+  assert.match(dataCenter, /最高峰/);
+  assert.match(dataCenter, /reportTrendModel\(report \|\| \{\}, report\?\.filters \|\| applied\)/);
+  assert.match(dataCenter, /预约\{trend\.granularity === "month" \? "月" : "周"\}趋势/);
+  assert.match(dataCenter, /const valueLabel = metric === "duration" \? duration\.value : item\.activeCount/);
+  assert.match(dataCenter, /\{activeItem\.activeCount\}场 · \{activeDuration\.value\}\{activeDuration\.unit\}/);
+  assert.doesNotMatch(dataCenter, /report-analysis-section|report-analysis-tabs/);
+  assert.doesNotMatch(dataCenter, /personWorkload|工作负荷分布|report-person-workload/);
+  assert.match(productionSource, /role !== "admin"\) return \{ scope: "self" \}/);
+});
+
+test("personal center uses a compact identity header above one settings surface", () => {
   assert.match(productionSource, /className="personal-center-header-side"/);
   assert.match(productionSource, /personal-center-header-side"><section className="personal-center-identity"/);
-  assert.match(settingsStyles, /\.profile-activity-overview dl \{[\s\S]*?grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/);
-  assert.match(settingsStyles, /\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
-  assert.match(responsiveStyles, /@media \(max-width: 620px\)[\s\S]*?\.profile-activity-data dl \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(settingsStyles, /\.personal-center-canvas \.settings-layout \{[\s\S]*?margin-top: 32px;[\s\S]*?border-top: 1px solid var\(--hairline-strong\);/);
+  assert.doesNotMatch(settingsStyles, /personal-center-tabs|profile-activity/);
+  assert.doesNotMatch(responsiveStyles, /personal-center-tab-row|profile-activity/);
 });
 
 test("system work hours use a whole-row drawer entry with a separated footer", () => {
@@ -100,9 +116,9 @@ test("booking tag choices contain long custom labels without changing the compac
   assert.match(bookingFormStyles, /\.booking-form \.tag-choice span \{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;[\s\S]*?text-overflow: ellipsis;/);
 });
 
-test("personal center exposes preferences through one tab entry", () => {
-  assert.equal(productionSource.match(/>偏好设置<\/button>/g)?.length, 1);
-  assert.doesNotMatch(productionSource, /personal-center-preference-link/);
+test("personal center opens settings directly without internal navigation", () => {
+  assert.doesNotMatch(productionSource, /aria-label="个人中心页面"|personal-center-tab-row|personal-center-preference-link/);
+  assert.match(productionSource, /form="personal-settings-form"/);
 });
 
 test("drawers isolate the background and focus their first visible field", () => {

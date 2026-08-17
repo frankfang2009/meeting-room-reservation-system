@@ -285,3 +285,140 @@
 - [x] Browser interaction, automated tests, and production build passed.
 
 final result: passed
+
+## 2026-08-17 adaptive trend granularity and duration labels
+
+### Evidence
+
+- Browser capture: `data-center-week-duration-numeric.png` at the local 1280×864 review viewport (local QA artifact, not committed).
+- Authenticated administrator overall scope with the rich synthetic August database.
+- Automated coverage includes clipped partial weeks, the `> 90` day monthly switch, clipped final months, and zero-filled calendar-month API buckets.
+
+### Interaction and presentation verification
+
+- Short date ranges render `预约周趋势`; long date ranges render `预约月趋势` with calendar-month labels.
+- Hover, keyboard focus, and click-to-pin expose the exact selected interval plus both effective booking count and total duration.
+- Duration mode keeps bar-top labels numeric-only (`9.5 / 29.5 / 23 / 4` in the exercised view); the selected summary retains the meaningful unit (`4场 · 4小时`).
+- Screen-reader tables retain unambiguous ISO start/end dates and duration minutes for both grains.
+
+### Verification
+
+- Frontend tests: 152 passed.
+- Backend report tests: 11 passed.
+- Cross-layer release contract tests: 21 passed.
+- ESLint, Ruff, production build, and full `v2/scripts/check.sh`: passed.
+
+final result: passed
+
+## 2026-08-17 personal-center settings-only consolidation
+
+### Evidence and result
+
+- Browser capture: `personal-center-settings-only.png` (local QA artifact).
+- Authenticated administrator opened Personal Center from the bottom account action.
+- The page opens directly to `个人资料`, `预约偏好`, `使用习惯`, `个人标签`, `通知`, and `对外提醒模板`.
+- `我的活动`, internal tabs, activity summaries, and the duplicate Data Center link are absent.
+- Identity, `退出登录`, and `保存更改` remain visible in the compact header; no browser console error was observed.
+- The production entry no longer issues a report request when Personal Center opens. Data analysis remains in the role-scoped Data Center.
+
+final result: passed
+
+## 2026-08-17 data-center focused-page redesign
+
+### Evidence
+
+- Approved overview source: `exec-b2aa2746-cf6b-49ea-bd33-cbd7d8fee9b9.png` (local review artifact, not committed).
+- Approved time source: `exec-d1f29ffc-0d69-4286-87de-24d8f0c4708d.png` (local review artifact, not committed).
+- Approved room source: `exec-fdce97b4-7f20-4cb6-b9e7-948ce487d6fa.png` (local review artifact, not committed).
+- Approved tag source: `exec-a651b0e5-a9fb-43cd-83b0-ef152190d7b2.png` (local review artifact, not committed).
+- Implementation captures: `data-center-overview-implementation.png`, `data-center-time-rest-implementation.png`, `data-center-time-hover-implementation.png`, `data-center-room-implementation.png`, and `data-center-tags-implementation.png` (local QA artifacts).
+- Combined comparison boards: `data-center-overview-comparison.png`, `data-center-time-comparison.png`, `data-center-room-comparison.png`, and `data-center-tags-comparison.png` (local QA artifacts).
+- Responsive capture: `data-center-employee-1024.png` at a 1024×720 CSS viewport (local QA artifact).
+
+### Visual and interaction verification
+
+- The overview uses one compact metric strip and one trend chart; the former stacked icon/card hierarchy is absent.
+- The time page has no crosshair or guide lines. Counts remain hidden at rest and appear in white inside the active dot only for values of two or more; the peak summary updates on hover.
+- Room and tag analysis each have their own page. Room rows use a restrained lollipop comparison and the tag page uses a 100-dot composition rather than placing all charts on one canvas.
+- The unassigned tag category is stone gray, while the two used categories are muted clay and sage. No warning-red treatment remains.
+- Trend bars, time dots, room rows, and tag categories expose hover/focus and click-to-pin states. Screen-reader tables preserve the exact values.
+
+### Scope and responsive verification
+
+- Administrator overall scope exposes `概览 / 时段分布 / 笔录室 / 标签` and the user selector.
+- Administrator person scope exposes only `概览 / 时段分布 / 标签` for the selected employee.
+- Employee scope exposes `我的数据` without a user selector and only `概览 / 时段分布 / 标签`; the CSV action remains scoped by the server.
+- Personal scope keeps the cancellation count but omits the redundant explanatory note beneath it.
+- The 1440×1024 reference viewport and 1024×720 workspace both preserve readable hierarchy without page-level horizontal overflow.
+- Browser console logs were empty during the exercised flows.
+
+### Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- P3: production typography and spacing are slightly denser than the exploratory mockups so the pages remain consistent with the existing 1240px application canvas.
+
+### Automated verification
+
+- Frontend tests: 152 passed.
+- ESLint: passed.
+- Production build: passed.
+
+final result: passed
+
+## 2026-08-17 data-center half-hour dot distribution
+
+### Evidence
+
+- Approved visual source: `exec-368c2045-63ab-440b-861b-60ca89700ba3.png`, 1703×923 px (local review artifact, not committed).
+- Final full-page browser capture: `data-center-dot-matrix-final-1440.png`, 1440×900 px at a 1440×900 CSS viewport and device scale 1 (local QA artifact).
+- Focused implementation crop: `data-center-dot-matrix-implementation-crop.png`, 1240×475 px (local QA artifact).
+- Combined source/implementation board: `data-center-dot-matrix-comparison.png`, 1200×1126 px (local QA artifact).
+- Responsive evidence: authenticated administrator, overall scope, rich synthetic August data at 1024×720 and 1440×900.
+
+### Full-view and focused comparison
+
+- The approved dot-matrix direction is preserved: weekday rows, continuous time columns, terracotta circles, restrained peak ring, compact peak summary, and a three-step density legend.
+- The user-approved product correction removes the mockup's invented `午休` break. The final axis follows the configured continuous 08:30–17:30 work window and includes the final 17:00 half-hour slot.
+- The production version uses the existing 1240px content canvas and a tighter vertical rhythm than the exploratory mockup. This keeps the data center consistent with its surrounding metrics and trend panel without weakening the chart hierarchy.
+
+### Required fidelity surfaces
+
+- Fonts and typography: existing PingFang/system stack retained; axis labels, weekday labels, summary, and legend use the established report hierarchy.
+- Spacing and layout rhythm: seven rows remain immediately comparable; hourly labels reduce axis noise; the peak summary occupies the existing top-right chart space.
+- Colors and tokens: existing warm-paper and terracotta report tokens are reused. Density is encoded through size and opacity rather than a rainbow heatmap.
+- Image and asset quality: no decorative assets or handcrafted icons were introduced; the circles are native quantitative marks.
+- Copy and content: `最高峰 / 当前时段`, weekday, exact half-hour range, count, and `少 / 中 / 多` are concise and data-backed.
+
+### Interaction and accessibility verification
+
+- Hovering or focusing a nonzero circle updates the chart summary to that weekday, time range, and count; leaving the circle restores the peak summary.
+- Nonzero circles expose Chinese accessible names and keyboard focus. Empty cells stay out of the tab order, and the complete nonzero matrix is available in a screen-reader-only table.
+- The 1440px viewport has no page or chart overflow. At 1024px, the page remains stable and the chart alone uses a small, deliberate horizontal scroll to protect legibility.
+- `时段分布 / 笔录室 / 标签` tabs remained functional, and the browser console reported no warnings or errors.
+
+### Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- P3: exact counts are intentionally interaction-led so the default view stays quiet; the peak value remains visible without interaction.
+
+### Comparison history
+
+1. The first implementation used a floating pseudo-tooltip; it widened the chart and produced desktop horizontal overflow.
+2. The tooltip was replaced with the stable top-right `当前时段` summary. Post-fix desktop chart metrics were 1240px client width and 1240px scroll width.
+3. After user review, the mockup's lunch marker was removed and the configured workday became one continuous half-hour scale.
+4. The final combined comparison and browser passes show no actionable P0/P1/P2 mismatch.
+
+### Implementation checklist
+
+- [x] Continuous half-hour weekday dot matrix.
+- [x] Peak ring and concise peak summary.
+- [x] Hover, keyboard focus, and accessible data table.
+- [x] No invented lunch break or utilization percentage.
+- [x] Responsive containment at 1440×900 and 1024×720.
+- [x] Browser interaction, console, automated tests, and production build passed.
+
+final result: passed

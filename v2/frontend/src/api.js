@@ -87,7 +87,12 @@ export async function request(path, { method = "GET", body, signal, headers = {}
       try { payload = await response.json(); } catch { /* non-JSON error */ }
       throw errorFromResponse(response.status, payload, response.headers.get("X-Request-Id"));
     }
-    return response.blob();
+    return {
+      blob: await response.blob(),
+      contentDisposition: response.headers.get("Content-Disposition") || "",
+      fieldVersion: response.headers.get("X-Report-Field-Version") || "",
+      rowCount: Number(response.headers.get("X-Report-Row-Count") || 0),
+    };
   }
 
   let payload = null;
@@ -141,6 +146,8 @@ export const api = {
   getReservationEvents: (id) => request(`/reservations/${encodeURIComponent(id)}/events`),
   getHistory: (filters) => request(query("/reservations/history", filters)),
   getActivity: () => request("/activity"),
+  getReportOverview: (filters) => request(query("/reports/overview", filters)),
+  downloadReportCsv: (filters) => request(query("/reports/reservations.csv", filters), { responseType: "blob" }),
 
   getRooms: () => request("/rooms"),
   createRoom: (input) => request("/rooms", { method: "POST", body: input }),

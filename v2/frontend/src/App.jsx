@@ -3,6 +3,7 @@ import {
   ArrowClockwise,
   Asterisk,
   CalendarBlank,
+  ChartBar,
   CaretDown,
   CaretLeft,
   CaretRight,
@@ -52,6 +53,7 @@ import {
 } from "./features/admin/validation.js";
 import { RoomAdminForm, RoomDeleteBlocked, RoomDeleteConfirmation, UserAdminForm } from "./features/admin/AdminForms.jsx";
 import { PersonalCenter } from "./features/profile/PersonalCenter.jsx";
+import { DataCenter } from "./features/reports/DataCenter.jsx";
 import { readUiPreferences, writeUiPreferences } from "./features/profile/ui-preferences.js";
 import { renderReminderTemplate } from "./features/reminders/reminder-template.js";
 import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
@@ -105,6 +107,7 @@ const NAV_ITEMS = [
   { id: "calendar", label: "预约日历", Icon: CalendarBlank },
   { id: "mine", label: "我的预约", Icon: User },
   { id: "history", label: "预约记录", Icon: ClockCounterClockwise },
+  { id: "data-center", label: "数据中心", Icon: ChartBar, permission: "viewReports" },
   { id: "rooms", label: "笔录室", Icon: DoorOpen, permission: "manageRooms" },
   { id: "users", label: "用户管理", Icon: UsersThree, permission: "manageUsers" },
   { id: "system", label: "系统状态", Icon: Pulse, permission: "manageSystem" },
@@ -134,6 +137,7 @@ function auditActionLabel(action) {
     "preferences.updated": "修改个人设置", "tags.global_updated": "修改单位标签",
     "backup.requested": "请求备份", "backup.succeeded": "备份完成", "backup.failed": "备份失败",
     "token.created": "创建集成令牌", "token.revoked": "撤销集成令牌",
+    "report.csv_exported": "导出办件明细",
   };
   return labels[action] || "其他安全操作";
 }
@@ -146,6 +150,7 @@ function auditTargetTypeLabel(targetType) {
     system: "系统",
     tag: "单位标签",
     api_token: "集成令牌",
+    report: "数据报表",
   }[targetType] || "系统对象";
 }
 
@@ -170,13 +175,14 @@ const AUDIT_ACTION_OPTIONS = [
   ["user.created", "创建用户"], ["user.updated", "修改用户"], ["user.password_reset", "重置用户密码"], ["preferences.updated", "修改个人设置"],
   ["tags.global_updated", "修改单位标签"], ["backup.requested", "请求备份"], ["backup.succeeded", "备份完成"], ["backup.failed", "备份失败"],
   ["token.created", "创建集成令牌"], ["token.revoked", "撤销集成令牌"],
+  ["report.csv_exported", "导出办件明细"],
 ];
 const AUDIT_OUTCOME_OPTIONS = [
   ["succeeded", "成功"], ["failed", "失败"], ["requested", "已请求"], ["authenticated", "身份已验证"],
   ["user_requested", "用户主动操作"], ["invalid_credentials", "账号或密码错误"], ["account_disabled", "账户已停用"],
   ["rate_limited", "尝试过于频繁"], ["idle_timeout", "空闲超时"], ["absolute_timeout", "登录时限已到"],
 ];
-const AUDIT_TARGET_OPTIONS = [["room", "笔录室"], ["user", "用户"], ["session", "登录会话"], ["system", "系统"], ["tag", "单位标签"], ["api_token", "集成令牌"]];
+const AUDIT_TARGET_OPTIONS = [["room", "笔录室"], ["user", "用户"], ["session", "登录会话"], ["system", "系统"], ["tag", "单位标签"], ["api_token", "集成令牌"], ["report", "数据报表"]];
 
 async function copyText(value) {
   if (!value) throw new Error("没有可复制的内容");
@@ -978,9 +984,6 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesErrors, setPreferencesErrors] = useState({});
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
-  const [profileTab, setProfileTab] = useState("activity");
-  const [activity, setActivity] = useState(null);
-  const [activityState, setActivityState] = useState("idle");
   const [dueReminder, setDueReminder] = useState(null);
   const [preservedDraft, setPreservedDraft] = useState(null);
   const mainRef = useRef(null);
@@ -1035,7 +1038,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try { return generateTimeSlots(settings.workStart, settings.workEnd, settings.slotMinutes || 30); }
     catch { return generateTimeSlots("08:30", "17:30", 30); }
   }, [settings.workEnd, settings.workStart, settings.slotMinutes]);
-  useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
+  useDocumentTitle({ mine: "我的预约", calendar: "预约日历", history: "预约记录", "data-center": "数据中心", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
 
   const expireSession = useCallback(() => {
     const latest = sessionDraftRef.current;
@@ -1232,25 +1235,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     loadHistory({ append: true, month: monthKey(new Date(year, month - 2, 1)) });
   }, [historyLoadingMore, historyMonth, historySections, loadHistory]);
 
-  const loadActivity = useCallback(async () => {
-    setActivityState("loading");
-    try {
-      const result = await api.getActivity();
-      setActivity(result);
-      setActivityState("ready");
-    } catch (error) {
-      setActivityState("failed");
-      handleError(error, "无法读取活动概览");
-    }
-  }, [handleError]);
-
   useEffect(() => { if (!initialBootstrap) loadBootstrap(); }, [initialBootstrap, loadBootstrap]);
   useEffect(() => { if (bootstrap) loadCalendar(); }, [bootstrap, loadCalendar]);
   useEffect(() => { if (bootstrap) loadUpcoming(); }, [bootstrap, loadUpcoming]);
   useEffect(() => { if (bootstrap) loadHistory(); }, [bootstrap, loadHistory]);
-  useEffect(() => {
-    if (activeView === "settings" && profileTab === "activity") loadActivity();
-  }, [activeView, loadActivity, profileTab]);
   useEffect(() => {
     if (activeView !== "rooms" || !permissions.manageRooms) return undefined;
     loadRooms();
@@ -1346,7 +1334,6 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     setPreferencesDraft(bootstrap?.preferences || {});
     setPreferencesErrors({});
     setUiPreferencesDraft(readUiPreferences(currentUser.id));
-    setProfileTab("activity");
     navigate("settings");
   }
 
@@ -2247,7 +2234,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       if (preferencesErrors[field]) setPreferencesErrors((current) => ({ ...current, [field]: "" }));
     };
     const updateUi = (field, value) => setUiPreferencesDraft((current) => ({ ...current, [field]: value }));
-    return <PersonalCenter activeRooms={activeRooms} activity={activity} activityState={activityState} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onActivityReload={loadActivity} onChange={update} onLogout={logout} onSave={savePreferences} onTabChange={setProfileTab} onUiChange={updateUi} saving={preferencesSaving} tab={profileTab} tags={tags} uiDraft={uiPreferencesDraft} />;
+    return <PersonalCenter activeRooms={activeRooms} currentUser={currentUser} draft={{ name: currentUser.name, department: currentUser.department, ...draft }} durationSteps={DURATION_STEPS} errors={preferencesErrors} onChange={update} onLogout={logout} onSave={savePreferences} onUiChange={updateUi} saving={preferencesSaving} tags={tags} uiDraft={uiPreferencesDraft} />;
+  }
+
+  function renderDataCenter() {
+    return <DataCenter businessDate={businessClock.date} currentUser={currentUser} globalTags={bootstrap?.globalTags || []} onError={handleError} personalTags={bootstrap?.personalTags || []} permissions={permissions} role={role} rooms={rooms} settings={settings} users={users} />;
   }
 
   function renderUnauthorized() {
@@ -2326,7 +2317,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         })}</nav>
         <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人中心"} aria-label={itemName(currentUser) + "，个人中心"} onClick={openPersonalCenter}><UserCircle size={42} weight="thin" /></button>
       </aside>
-      {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
+      {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "data-center" && permissions.viewReports && renderDataCenter()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
       {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
       {dueReminder?.kind === "change" && <div className="toast visible reminder-toast" role="status"><ClockCounterClockwise size={20} /><span>{reminderDisplayMessage(dueReminder)}</span><button onClick={acknowledgeReminder}>知道了</button></div>}
     </div>

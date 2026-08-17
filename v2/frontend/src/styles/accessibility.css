@@ -10,6 +10,11 @@
   outline-offset: 2px;
 }
 
+/* The chart dot itself carries the high-contrast focus ring. */
+:root .report-time-cell[tabindex]:focus-visible {
+  outline: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

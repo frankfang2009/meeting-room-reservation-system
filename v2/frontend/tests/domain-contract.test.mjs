@@ -208,7 +208,7 @@ test("reauthentication validates the complete user scope before remounting", () 
   const adminSession = { authenticated: true, currentUser: { id: "admin-1", role: "admin" } };
   const adminBootstrap = {
     currentUser: { id: "admin-1", role: "admin" },
-    permissions: { manageRooms: true, manageUsers: true, manageSystem: true },
+    permissions: { manageRooms: true, manageUsers: true, manageSystem: true, viewReports: true, viewOverallReports: true, viewOtherUserReports: true },
     serverDate: "2026-08-10",
     serverTime: "08:00:00",
   };
@@ -216,7 +216,7 @@ test("reauthentication validates the complete user scope before remounting", () 
   const employeeSession = { authenticated: true, currentUser: { id: "employee-1", role: "employee" } };
   const employeeBootstrap = {
     currentUser: { id: "employee-1", role: "employee" },
-    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false, viewReports: true, viewOverallReports: false, viewOtherUserReports: false },
     serverDate: "2026-08-10",
     serverTime: "08:00:00",
   };
@@ -224,7 +224,7 @@ test("reauthentication validates the complete user scope before remounting", () 
   const downgradedSession = { authenticated: true, currentUser: { id: "admin-1", role: "employee" } };
   const downgradedBootstrap = {
     currentUser: { id: "admin-1", role: "employee" },
-    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false, viewReports: true, viewOverallReports: false, viewOtherUserReports: false },
     serverDate: "2026-08-10",
     serverTime: "08:00:00",
   };
@@ -232,13 +232,13 @@ test("reauthentication validates the complete user scope before remounting", () 
   assert.notEqual("admin-1:admin", validateAuthenticatedContext(downgradedSession, downgradedBootstrap).scopeKey);
   assert.throws(() => validateAuthenticatedContext(adminSession, {
     currentUser: { id: "employee-1", role: "employee" },
-    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false, viewReports: true, viewOverallReports: false, viewOtherUserReports: false },
     serverDate: "2026-08-10",
     serverTime: "08:00:00",
   }), /身份/);
   assert.throws(() => validateAuthenticatedContext(adminSession, {
     currentUser: { id: "admin-1", role: "employee" },
-    permissions: { manageRooms: false, manageUsers: false, manageSystem: false },
+    permissions: { manageRooms: false, manageUsers: false, manageSystem: false, viewReports: true, viewOverallReports: false, viewOtherUserReports: false },
     serverDate: "2026-08-10",
     serverTime: "08:00:00",
   }), /身份/);
