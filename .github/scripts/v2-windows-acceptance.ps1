@@ -273,7 +273,7 @@ try {
 
     Write-Step "public-display"
     $publicSession = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
-    $display = Invoke-Api -Method GET -Path "/api/v1/display" -Session $publicSession
+    $display = Invoke-Api -Method GET -Path "/api/v1/display/today" -Session $publicSession
     Assert-True ($display.Status -eq 200) "public display failed: $($display.Status)"
     Assert-True ($display.Json.PSObject.Properties.Name -contains "rooms") "public display response has no rooms"
     $displayRaw = [string]($display.Json | ConvertTo-Json -Depth 10 -Compress)
