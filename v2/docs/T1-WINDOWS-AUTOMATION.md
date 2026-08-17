@@ -9,6 +9,8 @@
 - **T1 自动化层**（每次 PR 与 main，`v2-windows-acceptance.yml`）：在
   `windows-latest` runner 上用真实安装包执行完整安装与运行验收。runner 是
   管理员会话的一次性 Windows Server 虚拟机；仓库公开后标准 runner 免费。
+  测试候选使用与正式候选一致的规范命名（`会议室预约系统-V<版本>-安装包.zip`），
+  由 build_package 的产品契约保证，但只在 runner 内存活、绝不上传。
 - **T2 单机人工层**（每次候选，一台真实 Windows 10/11 桌面约半天）：UAC 提权
   同意框、SmartScreen、真实重启、真实局域网第二设备、四档视觉复核、长时间运行。
 - **T3 正式外发层**（一次性）：Authenticode 证书、签名验签、目标单位 EDR/
@@ -42,7 +44,7 @@
 - 无法真实重启操作系统验证开机任务与补跑（服务级停止/启动已覆盖）；
 - runner 网络不是客户局域网，“第二台设备”与 LocalSubnet 的真实效果需 T2；
 - 长时间运行（电视大屏数小时刷新）与单位 EDR/AppLocker/组策略不在 T1 范围；
-- 测试候选 `candidate-test-only.zip` 只在 runner 内存活，不构成任何发布物；
+- 测试候选与正式候选同名同源，但只在 runner 内存活，不构成任何发布物；
   正式候选仍只能由 `release-candidate.yml` 构建并保留 7 天。
 
 ## V2.1.0 基线固化流程

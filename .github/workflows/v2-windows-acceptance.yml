@@ -2,8 +2,8 @@ name: V2 Windows acceptance
 
 # T1 自动化验收层：与 ci.yml 相同的触发面（每个 PR 与 main），
 # 在 windows-latest 上用一次性测试候选执行真实安装与运行验收。
-# 本工作流只构建 runner 内部使用的测试候选（candidate-test-only.zip），
-# 不上传、不保留任何安装包制品；候选构建仍由 release-candidate.yml 独占。
+# 本工作流只在 runner 内部构建测试候选（规范命名，与正式候选同名同源），
+# 不上传、不保留任何安装包制品；正式候选构建仍由 release-candidate.yml 独占。
 on:
   pull_request:
   push:
@@ -80,13 +80,15 @@ jobs:
             --frontend-dist v2/frontend/dist/client \
             --frontend-lock v2/frontend/package-lock.json \
             --output "$build/payload"
+          version=$(tr -d '\r\n' < v2/VERSION)
           python -m v2.installer.build_package \
             --payload-root "$build/payload" \
             --runtime-root "$build/runtime" \
-            --output "$build/output/candidate-test-only.zip"
+            --output "$build/output/会议室预约系统-V$version-安装包.zip"
       - name: Run real Windows install acceptance
         shell: pwsh
         run: |
+          $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
           .github/scripts/v2-windows-acceptance.ps1 `
-            -CandidateZip "$env:RUNNER_TEMP/mrv2-t1-build/output/candidate-test-only.zip" `
+            -CandidateZip "$env:RUNNER_TEMP/mrv2-t1-build/output/会议室预约系统-V$version-安装包.zip" `
             -WorkRoot "$env:RUNNER_TEMP/mrv2-t1-acceptance"
