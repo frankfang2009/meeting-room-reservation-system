@@ -67,6 +67,9 @@ jobs:
           materials="$RUNNER_TEMP/mrv2-t1-materials"
           build="$RUNNER_TEMP/mrv2-t1-build"
           mkdir -p "$build/output"
+          # runtime requirements lock 通过字节级 SHA-256 批准校验；Windows runner
+          # 默认 autocrlf 检出为 CRLF，先恢复仓库提交的 LF 字节再构建。
+          sed -i 's/\r$//' v2/backend/requirements-win-amd64.lock v2/frontend/package-lock.json
           python -m v2.installer.build_runtime \
             --python-embed-zip "$materials/python-3.13.14-embed-amd64.zip" \
             --wheelhouse "$materials/wheels" \
