@@ -24,11 +24,14 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 | E40 | 真实 Chromium 下载两种范围 CSV，并以解析器反读 | 管理员选择李静与员工本人两次下载均为 3 条、15 列，仅含 `QA-EMP-001/002/CANCEL`；UTF-8 BOM、中文表头、文件名和下载完成提示正确；日常正向流程控制台 0 error/0 warning，权限负向测试仅产生两条预期 403 资源错误 |
 | E41 | 1440×900 与 1024×720 真实 Chromium 尺寸测量及截图复核 | 两档均为 `document/body/main scrollWidth = clientWidth`；筛选区、三项主指标、取消护栏、趋势、分布、热力图与导出区无文档级横向溢出；1024 档按既定桌面规则有序换行 |
 | E42 | 累计升级事务故障注入与包构建测试 | 支持矩阵仅为 V2.1.0；在线备份后先记录并停服再快照完整 data；程序替换失败回滚；身份三文件部分提交可由同包恢复；目标版本提交后的新数据不回滚；确定性更新包、反向加载、篡改拒绝、零参数 BAT 和无 mutable data 均通过 |
+| E45 | T1 层 Windows 真实升级验收（PR CI run 32022081677，2026-08-17） | windows-latest 上用冻结 V2.1.0 基线真实 BAT 安装 → V2.2.0 累计升级包真实 BAT 升级一次通过（7m04s）：版本三处一致、install_id 不变、预约/登录会话/房间全部保留、update-receipt complete、无 `.update-*` 残留目录；升级后 app/runtime 树 Users 只读执行、data/backups/logs 无 Users ACE（替换后受保护 DACL 已重固化） |
+| E46 | `release-candidate.yml` workflow_dispatch 自 main（run 32022795403，2026-08-17，合并提交 f4104fb8） | 双交付物两次独立构建逐字节一致（`MRV2_REPRODUCIBLE_BUILD=PASS`）：安装包候选 SHA-256 `4fb41974a7c76ac483e68ce69e30356fbb9b401ac20411e621276ce70452f389`，累计升级包候选 SHA-256 `d28873fa4b1e1b6ab3d79d7401e4098cdef831fabad6919660fe2b5f024b055c`；Windows 零参数安装门禁与累计升级包门禁均 PASS |
 
 E43/E44（T1 Windows 真实验收发现的两个备份缺陷修复）已随 v2.1.0 标签基线合入，
-记录于下方历史 V2.1.0 证据表。本增量仍在 PR 审阅中；E38–E42 为本地证据，合并后由
-CI（含 T1 Windows 真实安装验收与新增的 V2.1.0→V2.2.0 真实升级验收）自动复核，
-正式双构建候选 SHA 与 Windows 实机证据待合并后补记。
+记录于下方历史 V2.1.0 证据表。PR #21 已合并（f4104fb8），E38–E42 本地证据已由
+合并前 CI 复核；E45/E46 为合并后 main 上的 CI 证据。若后续打 `v2.2.0` 标签，
+同源可复现构建应得到与 E46 相同的字节与 SHA（以标签触发的正式 run 为准再行核对）。
+T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备/签名）仍待补，
 `formal_external_release_allowed` 继续为 `false`。
 
 ## 历史 V2.1.0 增量证据（2026-08-14 至 2026-08-15）
