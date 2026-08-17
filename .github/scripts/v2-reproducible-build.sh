@@ -14,6 +14,7 @@ export_root=$5
 python_bin=${PYTHON_BIN:-python}
 version=$(tr -d '\r\n' < "$source_root/v2/VERSION")
 artifact="会议室预约系统-V${version}-安装包.zip"
+update_artifact="会议室预约系统-V${version}-累计升级包.zip"
 
 git -C "$source_root" rev-parse --is-inside-work-tree >/dev/null
 test -f "$python_embed_zip"
@@ -24,7 +25,12 @@ mkdir -p "$work_root" "$export_root"
 
 source_list="$work_root/source-files.txt"
 git -c core.quotePath=false -C "$source_root" \
-  ls-files --cached --others --exclude-standard -- v2 .github > "$source_list"
+  ls-files --cached --others --exclude-standard -- v2 .github | \
+  while IFS= read -r relative; do
+    if [ -e "$source_root/$relative" ]; then
+      printf '%s\n' "$relative"
+    fi
+  done > "$source_list"
 
 for label in first second; do
   replica="$work_root/$label/source"
@@ -69,7 +75,23 @@ for label in first second; do
       --payload-root "$payload" \
       --runtime-root "$runtime" \
       --output "$output/$artifact"
+    "$python_bin" -m v2.installer.build_update_package \
+      --payload-root "$payload" \
+      --runtime-root "$runtime" \
+      --output "$output/$update_artifact"
   )
+done
+
+for suffix in \
+  "" \
+  ".sha256" \
+  ".manifest.json" \
+  ".sbom.cdx.json" \
+  ".THIRD-PARTY-NOTICES.txt" \
+  ".runtime-provenance.json"; do
+  cmp "$work_root/first/output/$update_artifact$suffix" \
+    "$work_root/second/output/$update_artifact$suffix"
+  cp "$work_root/first/output/$update_artifact$suffix" "$export_root/"
 done
 
 diff -qr "$work_root/first/source/v2/frontend/dist/client" \
@@ -101,3 +123,4 @@ fi
 
 echo "MRV2_REPRODUCIBLE_BUILD=PASS"
 shasum -a 256 "$export_root/$artifact"
+shasum -a 256 "$export_root/$update_artifact"

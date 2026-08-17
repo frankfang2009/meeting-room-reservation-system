@@ -6,11 +6,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from v2.installer.installer_core import INSTALL_INFO, InstallTransaction, PassiveSystemController
+from v2.installer.installer_core import (
+    INSTALLED_MANIFEST,
+    INSTALL_INFO,
+    VERSION_FILE,
+    InstallTransaction,
+    PassiveSystemController,
+    records_for_tree,
+    sha256_bytes,
+    tree_digest,
+)
 from v2.installer.tests.helpers import load_fixture_bundle
 from v2.installer.update_core import (
     EXPECTED_V2_TABLES,
+    PassiveUpdateSystemController,
+    UpdateBundle,
+    UpdatePayload,
     UpdatePolicyError,
+    UpdateRollbackError,
+    V2UpdateTransaction,
     V2UpdatePreflight,
     assert_update_payload_safe,
     build_update_state,
@@ -32,9 +46,66 @@ class UpdateCoreTests(unittest.TestCase):
             PassiveSystemController(),
             health_probe=None,
         ).run()
+        self._downgrade_to_v210()
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def _downgrade_to_v210(self) -> None:
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["installed_version"] = "2.1.0"
+        info_path.write_text(
+            json.dumps(info, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        manifest_path = self.install_root / INSTALLED_MANIFEST
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["version"] = "2.1.0"
+        manifest["release"] = "V2.1.0"
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (self.install_root / VERSION_FILE).write_text("2.1.0\n", encoding="ascii")
+
+    def _update_bundle(self) -> UpdateBundle:
+        files = {}
+        for name in ("app", "runtime"):
+            root = self.install_root / "_程序文件" / name
+            for record in records_for_tree(root):
+                relative = f"_程序文件/{name}/{record['path']}"
+                files[relative] = root.joinpath(*str(record["path"]).split("/")).read_bytes()
+        files["_程序文件/app/service.py"] = b"# V2.2.0 updated service\n"
+        records = tuple(
+            {
+                "path": relative,
+                "size": len(content),
+                "sha256": sha256_bytes(content),
+            }
+            for relative, content in sorted(files.items())
+        )
+        payload = UpdatePayload(
+            zip_path=self.root / "synthetic-update.zip",
+            zip_sha256="b" * 64,
+            tree_sha256=tree_digest(records),
+            records=records,
+            files=files,
+        )
+        manifest = {
+            "schema": 1,
+            "kind": "v2-cumulative-update",
+            "product_generation": 2,
+            "version": "2.2.0",
+            "release": "V2.2.0",
+        }
+        return UpdateBundle(
+            tool_root=self.root,
+            manifest=manifest,
+            manifest_sha256="c" * 64,
+            payload=payload,
+            supported_source_versions=frozenset({"2.1.0"}),
+        )
 
     def _create_v2_database(self, *, setup_complete: bool, schema_version: int = 2) -> Path:
         database = self.install_root / "_程序文件" / "data" / "reservation.db"
@@ -179,6 +250,215 @@ class UpdateCoreTests(unittest.TestCase):
             with self.assertRaises(UpdatePolicyError):
                 resolve_install_root()
         self.assertEqual(sentinel.read_bytes(), b"v1")
+
+    def test_cumulative_update_preserves_unknown_data_and_original_run_state(self) -> None:
+        unknown = self.install_root / "_程序文件" / "data" / "现场附件.bin"
+        unknown.write_bytes(b"customer-data")
+        controller = PassiveUpdateSystemController(running=False)
+        result = V2UpdateTransaction(
+            self._update_bundle(),
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+        ).run()
+        self.assertEqual(result.source_version, "2.1.0")
+        self.assertEqual(result.target_version, "2.2.0")
+        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.2.0")
+        self.assertEqual(unknown.read_bytes(), b"customer-data")
+        self.assertEqual(
+            (self.install_root / "_程序文件" / "app" / "service.py").read_bytes(),
+            b"# V2.2.0 updated service\n",
+        )
+        self.assertFalse(controller.running)
+        self.assertTrue(result.receipt_path.is_file())
+
+    def test_precommit_failure_restores_program_data_version_and_running_state(self) -> None:
+        service = self.install_root / "_程序文件" / "app" / "service.py"
+        original_service = service.read_bytes()
+        unknown = self.install_root / "_程序文件" / "data" / "unknown.bin"
+        unknown.write_bytes(b"before")
+        controller = PassiveUpdateSystemController(running=True)
+
+        def fail(stage: str) -> None:
+            if stage == "program_replaced":
+                unknown.write_bytes(b"during-update")
+                raise RuntimeError("injected failure")
+
+        with self.assertRaisesRegex(RuntimeError, "injected failure"):
+            V2UpdateTransaction(
+                self._update_bundle(),
+                self.install_root,
+                controller,
+                online_backup=None,
+                health_probe=None,
+                fault_hook=fail,
+            ).run()
+        self.assertEqual(service.read_bytes(), original_service)
+        self.assertEqual(unknown.read_bytes(), b"before")
+        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.1.0")
+        self.assertTrue(controller.running)
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.1.0")
+
+    def test_same_package_rerun_recovers_an_interrupted_precommit_transaction(self) -> None:
+        bundle = self._update_bundle()
+        controller = PassiveUpdateSystemController(running=True)
+
+        def fail(stage: str) -> None:
+            if stage == "program_replaced":
+                raise RuntimeError("power loss")
+
+        interrupted = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+            fault_hook=fail,
+        )
+
+        def failed_rollback(*args, **kwargs):
+            del args, kwargs
+            raise OSError("rollback interrupted")
+
+        interrupted._restore = failed_rollback
+        with self.assertRaises(UpdateRollbackError):
+            interrupted.run()
+        result = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+        ).run()
+        self.assertEqual(result.target_version, "2.2.0")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.0")
+        self.assertTrue(controller.running)
+
+    def test_interrupted_transaction_rejects_tampered_snapshot_binding(self) -> None:
+        bundle = self._update_bundle()
+        controller = PassiveUpdateSystemController(running=True)
+
+        def fail(stage: str) -> None:
+            if stage == "program_replaced":
+                raise RuntimeError("power loss")
+
+        interrupted = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+            fault_hook=fail,
+        )
+
+        def failed_rollback(*args, **kwargs):
+            del args, kwargs
+            raise OSError("rollback interrupted")
+
+        interrupted._restore = failed_rollback
+        with self.assertRaises(UpdateRollbackError):
+            interrupted.run()
+
+        state_path = (
+            self.install_root / "_程序文件" / "update-transaction.json"
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["data_snapshot_sha256"] = "d" * 64
+        state_path.write_text(
+            json.dumps(state, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(UpdatePolicyError, "数据快照摘要不一致"):
+            V2UpdateTransaction(
+                bundle,
+                self.install_root,
+                controller,
+                online_backup=None,
+                health_probe=None,
+            ).run()
+
+    def test_same_package_recovers_a_partially_committed_identity(self) -> None:
+        bundle = self._update_bundle()
+        controller = PassiveUpdateSystemController(running=True)
+
+        def fail(stage: str) -> None:
+            if stage == "commit_install_info_written":
+                raise RuntimeError("power loss during identity commit")
+
+        interrupted = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+            fault_hook=fail,
+        )
+
+        def failed_rollback(*args, **kwargs):
+            del args, kwargs
+            raise OSError("machine lost power before rollback")
+
+        interrupted._restore = failed_rollback
+        with self.assertRaises(UpdateRollbackError):
+            interrupted.run()
+        self.assertEqual(
+            json.loads((self.install_root / INSTALL_INFO).read_text(encoding="utf-8"))[
+                "installed_version"
+            ],
+            "2.2.0",
+        )
+        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.1.0")
+
+        result = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+        ).run()
+        self.assertEqual(result.target_version, "2.2.0")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.0")
+        self.assertTrue(controller.running)
+
+    def test_committed_rerun_never_rolls_back_new_data_and_restores_run_state(self) -> None:
+        bundle = self._update_bundle()
+        controller = PassiveUpdateSystemController(running=True)
+        new_data = self.install_root / "_程序文件" / "data" / "after-commit.bin"
+
+        def fail(stage: str) -> None:
+            if stage == "commit_version_written":
+                new_data.write_bytes(b"created-after-commit")
+                raise RuntimeError("power loss after commit point")
+
+        interrupted = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+            fault_hook=fail,
+        )
+
+        def failed_rollback(*args, **kwargs):
+            del args, kwargs
+            raise OSError("machine lost power")
+
+        interrupted._restore = failed_rollback
+        with self.assertRaises(UpdateRollbackError):
+            interrupted.run()
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.0")
+
+        result = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=None,
+        ).run()
+        self.assertEqual(result.source_version, "2.2.0")
+        self.assertEqual(new_data.read_bytes(), b"created-after-commit")
+        self.assertTrue(controller.running)
 
 
 if __name__ == "__main__":

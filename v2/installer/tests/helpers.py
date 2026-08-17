@@ -61,7 +61,7 @@ def create_inputs(root: Path) -> Tuple[Path, Path]:
         json.dumps(
             {
                 "schema": 1,
-                "application": {"name": "meeting-room-v2-frontend", "version": "2.1.0"},
+                "application": {"name": "meeting-room-v2-frontend", "version": "2.2.0"},
                 "packageLock": {"file": "package-lock.json", "sha256": "3" * 64},
                 "components": [
                     {

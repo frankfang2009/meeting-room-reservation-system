@@ -1,0 +1,8 @@
+会议室预约系统 V2.2.0 离线累计升级说明
+
+1. 本候选升级包只支持已登记且通过最终冻结的 V2.1.0 基线。
+2. 请先完整解压 ZIP，再双击“升级到V2.2.0.bat”；不要在 ZIP 预览里运行，不要单独复制 BAT。
+3. 更新器只从 HKLM 固定登记或测试显式输入解析 V2 安装根，不扫描磁盘，不读取、迁移或删除 V1。
+4. 它会先创建一次可验证的业务备份，再快照 data 全树和旧程序，停止已验证属于当前 install_id 的服务后替换程序和冻结 runtime。
+5. data、backups、logs、secret、install_id 不在更新负载中。在版本提交前失败时，更新器会恢复旧程序、data 全树和原运行状态。
+6. 正式对外发布仍需 Windows 10/11 普通用户 + UAC、回滚、局域网第二设备和 Authenticode 签名门禁。未完成前 manifest 保持 formal_external_release_allowed=false。

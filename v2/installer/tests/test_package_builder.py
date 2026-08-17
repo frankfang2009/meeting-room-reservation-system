@@ -99,7 +99,7 @@ class PackageBuilderTests(unittest.TestCase):
         result = self._build("candidate")
         with zipfile.ZipFile(result.artifact_path, "r") as archive:
             names = set(archive.namelist())
-            launcher = archive.read("安装V2.1.0.bat").decode("utf-8")
+            launcher = archive.read("安装V2.2.0.bat").decode("utf-8")
             manifest = json.loads(
                 archive.read("_V2安装工具/manifest.json").decode("utf-8")
             )
@@ -294,7 +294,7 @@ class PackageBuilderTests(unittest.TestCase):
     def test_tampered_payload_is_rejected_by_bundle_loader(self) -> None:
         result = self._build("tamper")
         tool = extract_tool(result, self.root / "tamper-extracted")
-        payload = tool / "payload-v2.1.0.zip"
+        payload = tool / "payload-v2.2.0.zip"
         payload.write_bytes(payload.read_bytes() + b"tamper")
         with self.assertRaises(InstallerError):
             Bundle.load(tool, _test_fixture=True)

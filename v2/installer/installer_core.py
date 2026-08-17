@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V2.1.0 全新安装事务核心。
+"""V2.2.0 全新安装事务核心。
 
 本模块只依赖 Python 标准库，既供 Windows 交付包执行，也供 macOS/Linux
 运行单元测试。它只接受调用方明确给出的目标目录；没有任何 V1 搜索、读取、
@@ -36,8 +36,8 @@ from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 
 PRODUCT_GENERATION = 2
-VERSION = "2.1.0"
-RELEASE = "V2.1.0"
+VERSION = "2.2.0"
+RELEASE = "V2.2.0"
 MANIFEST_SCHEMA = 1
 SERVICE_PORT = 8080
 SETUP_BIND = "127.0.0.1"
@@ -701,7 +701,7 @@ class Bundle:
             or manifest["release"] != RELEASE
             or manifest["version"] != VERSION
         ):
-            raise InstallerError("安装包不是受支持的 V2.1.0 全新安装包")
+            raise InstallerError("安装包不是受支持的 V2.2.0 全新安装包")
         version_tuple(str(manifest["version"]))
         cls._validate_service(manifest["service"])
         cls._validate_acceptance(manifest["acceptance"])
@@ -742,7 +742,7 @@ class Bundle:
             "install_directory": f"%ProgramFiles%\\{PRODUCT_DIRECTORY_NAME}",
         }
         if not isinstance(value, dict) or value != expected:
-            raise InstallerError("安装包服务管理契约不符合 V2.1.0 固定约定")
+            raise InstallerError("安装包服务管理契约不符合 V2.2.0 固定约定")
 
     @staticmethod
     def _validate_acceptance(value: Any) -> None:
@@ -1902,7 +1902,7 @@ class InstallTransaction:
                 with contextlib.suppress(OSError):
                     if empty_backup.exists():
                         empty_backup.rmdir()
-                self.log.write("V2.1.0 全新安装完成；首次设置前服务保持回环访问")
+                self.log.write("V2.2.0 全新安装完成；首次设置前服务保持回环访问")
                 return InstallResult(
                     install_root=self.target,
                     install_id=install_id,
@@ -1910,7 +1910,7 @@ class InstallTransaction:
                     receipt_path=self.target / RECEIPT_FILE,
                 )
             except BaseException as error:
-                self.log.write(f"V2.1.0 安装失败：{error}", "ERROR")
+                self.log.write(f"V2.2.0 安装失败：{error}", "ERROR")
                 if version_committed:
                     try:
                         self.controller.contain_committed(self.target, install_id)
@@ -2014,7 +2014,12 @@ def decode_elevation_context(value: str, expected_manifest_sha256: str) -> Path:
     return target
 
 
-def run_elevated(tool_root: Path, context_value: str) -> int:
+def run_elevated(
+    tool_root: Path,
+    context_value: str,
+    *,
+    entrypoint: str = "install.py",
+) -> int:
     if os.name != "nt":
         raise InstallerError("管理员提权入口只能在 Windows 上使用")
     from ctypes import wintypes
@@ -2039,7 +2044,10 @@ def run_elevated(tool_root: Path, context_value: str) -> int:
         ]
 
     python = tool_root / "runtime" / "python.exe"
-    script = tool_root / "app" / "install.py"
+    if entrypoint not in {"install.py", "update.py"}:
+        raise InstallerError("管理员提权入口不在允许列表")
+    script = tool_root / "app" / entrypoint
+    assert_plain_file(script, "V2 管理员提权入口")
     parameters = subprocess.list2cmdline([str(script), "--elevated-context", context_value])
     info = ShellExecuteInfo()
     info.cbSize = ctypes.sizeof(info)
