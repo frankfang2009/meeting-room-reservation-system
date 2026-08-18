@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V2.2.3 全新安装的零参数 Python 入口。"""
+"""V2.3.0 全新安装的零参数 Python 入口。"""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ except ImportError:  # 交付包中 install.py 与 installer_core.py 位于同�
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="会议室预约系统 V2.2.3 全新安装")
+    parser = argparse.ArgumentParser(description="会议室预约系统 V2.3.0 全新安装")
     parser.add_argument("--elevated-context", help=argparse.SUPPRESS)
     return parser
 

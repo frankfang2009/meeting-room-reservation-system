@@ -43,9 +43,17 @@
   dedicated admin rooms endpoint after booking changes and while the room page remains open.
 - Security-audit UI copy is Chinese. Collapsing the audit list never stops polling or changes server
   records; newly received rows accumulate a user-facing unread badge until the list is shown again.
-- Upcoming-booking reminders use a small clock badge on the My Reservations rail action instead of
-  a persistent bottom toast; opening My Reservations acknowledges that reminder. Change notices
-  remain distinct and must not be mislabeled as an upcoming-booking clock.
+- Upcoming-booking reminders are drawn into the calendar, never a banner or a persistent toast:
+  the current user's in-window booking blocks carry a countdown chip (urgent style ≤2 minutes),
+  the rail badge shows the in-window count, arrival is announced once via a short toast plus the
+  synthesized chime (Personal Center switch, default on), and browsing another date shows a dot on
+  the 今天 button. Upcoming reminders are state, not to-dos — they carry no acknowledgement
+  action; change notices must never be mislabeled as upcoming-reminder countdowns.
+- Change notices use a centered modal that requires explicit confirmation (Esc acknowledges all),
+  aggregate every unacknowledged foreign change event, and show actor plus field-level
+  before→after diffs from the event snapshots. They defer while any drawer is open (quiet dashed
+  chip meanwhile) and are acknowledged per event id; notices survive the owner's own later edits,
+  expire after 45 days unconfirmed, and receipts are pruned after 90 days.
 - Copying external reminder text is a manual clipboard-only action and must never connect to an
   outbound channel, open WeChat, or claim/record a sent state. Its variable set is fixed to party
   name, date, start, end, and room; case number, purpose, and notes must never enter the template.

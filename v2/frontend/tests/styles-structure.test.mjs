@@ -37,7 +37,9 @@ const expectedFiles = [
 // V2.2.x UX 打磨：日历来源时段描边与日期切换入场动画（calendar.css）、
 // 我的预约/预约记录/数据中心读取骨架（dashboard/history/reports.css）、
 // 成功确认条轻落入场（runtime-states.css）。
-const frozenSourceSha256 = "6d7afc5ed6b77ffd7c1a8307eda9949cba829fc9a9fafe72113a987d6a58d7a8";
+// V2.3.0 提醒重做：日历倒计时角标与「今天」圆点（calendar.css）、
+// 变更通知居中弹窗与排队提示条（production-flows.css）。
+const frozenSourceSha256 = "3277c0fea2ae80585652cd079a0ddb9e99e83b4a77d5019dc94a7a1e96573b9c";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

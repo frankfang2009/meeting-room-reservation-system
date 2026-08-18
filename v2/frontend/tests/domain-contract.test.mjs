@@ -21,7 +21,9 @@ import {
   projectServerClock,
   rebaseBookingEdit,
   reservationConflictDifferences,
-  reminderDisplayMessage,
+  arrivalReminderText,
+  bookingCountdownMinutes,
+  noticeDiffRows,
   reservationEventLabel,
   mapSetupFieldErrors,
   setupStepForField,
@@ -376,12 +378,42 @@ test("uses the preferred room's first available slot for a generic create flow",
   assert.equal(start, "10:00");
 });
 
-test("formats change and upcoming reminder summaries without hiding server copy", () => {
-  assert.equal(reminderDisplayMessage({ message: "服务端明确文案", kind: "change" }), "服务端明确文案");
-  assert.equal(reminderDisplayMessage({
-    kind: "change", changeType: "cancelled", date: "2026-08-10", start: "09:00", roomName: "笔录室 1",
-  }), "2026-08-10 · 09:00 · 笔录室 1：预约已取消");
-  assert.equal(reminderDisplayMessage({ kind: "upcoming", roomName: "笔录室 2" }), "笔录室 2：预约即将开始");
+test("computes upcoming countdown minutes against the projected server clock", () => {
+  assert.equal(bookingCountdownMinutes({
+    date: "2026-08-10", start: "09:30", serverDate: "2026-08-10", serverTime: "09:00:00",
+  }), 30);
+  assert.equal(bookingCountdownMinutes({
+    date: "2026-08-10", start: "09:00", serverDate: "2026-08-10", serverTime: "09:00:30",
+  }), -0.5);
+  assert.equal(bookingCountdownMinutes({
+    date: "2026-08-11", start: "00:15", serverDate: "2026-08-10", serverTime: "23:45",
+  }), 30);
+  assert.throws(() => bookingCountdownMinutes({ date: "2026-08-10", start: "09:00", serverDate: "bad", serverTime: "09:00" }), TypeError);
+});
+
+test("projects change-notice diffs onto user-facing fields only", () => {
+  const rows = noticeDiffRows([
+    { field: "start", from: "09:00", to: "10:00" },
+    { field: "roomId", from: "room-1", to: "room-2" },
+    { field: "revision", from: 1, to: 2 },
+    { field: "roomName", from: "笔录室 1", to: "笔录室 2" },
+  ]);
+  assert.deepEqual(rows, [
+    { key: "start", label: "开始时间", from: "09:00", to: "10:00" },
+    { key: "roomName", label: "笔录室", from: "笔录室 1", to: "笔录室 2" },
+  ]);
+  assert.deepEqual(noticeDiffRows(undefined), []);
+});
+
+test("arrival reminder text names the party and room without case data", () => {
+  assert.equal(
+    arrivalReminderText({ partyName: "王芳", roomName: "第一笔录室", start: "14:00" }),
+    "您的预约「王芳 · 第一笔录室」 14:00 开始，倒计时已标在日历上",
+  );
+  assert.equal(
+    arrivalReminderText({ start: "09:00" }),
+    "您的预约 09:00 开始，倒计时已标在日历上",
+  );
 });
 
 test("projects the server wall clock without applying the browser timezone", () => {

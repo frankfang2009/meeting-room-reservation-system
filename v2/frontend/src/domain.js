@@ -531,16 +531,60 @@ export function rebaseBookingEdit(draft, current) {
   };
 }
 
-export function reminderDisplayMessage(reminder) {
-  if (typeof reminder?.message === "string" && reminder.message.trim()) {
-    return reminder.message.trim();
-  }
-  const summary = [reminder?.date, reminder?.start, reminder?.roomName].filter(Boolean).join(" · ");
-  const prefix = summary ? summary + "：" : "";
-  if (reminder?.kind === "change") {
-    return prefix + (reminder.changeType === "cancelled" ? "预约已取消" : "预约内容已更新");
-  }
-  return prefix + "预约即将开始";
+/**
+ * 临近提醒倒计时：按服务器投影时钟计算距离预约开始还有多少分钟（浮点，
+ * 已开始为负）。与 hasBookingStarted 一样使用 UTC 日期算术，避免浏览器
+ * 时区干扰。
+ */
+export function bookingCountdownMinutes({ date, start, serverDate, serverTime } = {}) {
+  const parseDay = (value) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+    if (!match) throw new TypeError("A valid booking date is required");
+    const parsed = new Date(0);
+    parsed.setUTCFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    parsed.setUTCHours(0, 0, 0, 0);
+    return parsed.getTime();
+  };
+  const timeParts = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(String(serverTime || ""));
+  if (!timeParts) throw new TypeError("A valid server time is required");
+  const dayDeltaMinutes = (parseDay(date) - parseDay(serverDate)) / 60000;
+  const startTotal = parseTime(start);
+  const nowTotal = Number(timeParts[1]) * 60 + Number(timeParts[2]) + Number(timeParts[3] || 0) / 60;
+  return dayDeltaMinutes + startTotal - nowTotal;
+}
+
+/**
+ * 变更通知的字段级对比：只保留面向用户的字段，其余（roomId、revision 等
+ * 技术字段）不进入弹窗。
+ */
+const NOTICE_DIFF_LABELS = {
+  date: "日期",
+  start: "开始时间",
+  end: "结束时间",
+  roomName: "笔录室",
+  partyName: "当事人",
+  caseNumber: "案号",
+  purpose: "用途",
+  notes: "备注",
+  tagLabel: "标签",
+};
+
+export function noticeDiffRows(diffs) {
+  if (!Array.isArray(diffs)) return [];
+  return diffs
+    .filter((diff) => diff && Object.prototype.hasOwnProperty.call(NOTICE_DIFF_LABELS, diff.field))
+    .map((diff) => ({
+      key: diff.field,
+      label: NOTICE_DIFF_LABELS[diff.field],
+      from: String(diff.from ?? ""),
+      to: String(diff.to ?? ""),
+    }));
+}
+
+export function arrivalReminderText(item) {
+  const summary = [item?.partyName, item?.roomName].filter(Boolean).join(" · ");
+  const lead = summary ? `「${summary}」` : "";
+  return `您的预约${lead} ${item?.start || ""} 开始，倒计时已标在日历上`;
 }
 
 /**

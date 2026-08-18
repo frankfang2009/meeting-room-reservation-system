@@ -1,6 +1,6 @@
 # V2 API v1 契约
 
-产品版本是 V2.2.3，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
+产品版本是 V2.3.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
 camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后缀以及创建、修改、
 事件和审计时间使用 UTC RFC3339。
 
@@ -37,7 +37,7 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 
 ```json
 {
-  "productVersion": "V2.2.3",
+  "productVersion": "V2.3.0",
   "setupComplete": true,
   "authenticated": true,
   "csrfToken": "...",
@@ -68,7 +68,7 @@ DNS rebinding 夺取首次管理员：
 
 ```json
 {
-  "productVersion": "V2.2.3",
+  "productVersion": "V2.3.0",
   "serverDate": "2026-08-10",
   "serverTime": "14:32:05",
   "currentUser": {},
@@ -180,9 +180,11 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   `error.conflicts` 与上述最多 50 条 `items` 一致；`total` 可能大于 conflicts 长度。
 - `GET|POST /api/v1/users`；`PATCH /api/v1/users/{id}`；`POST /api/v1/users/{id}/reset-password`。
 - `PUT /api/v1/tags/global` 更新槽 1、2。
-- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、默认标签、两项网页通知和个人标签 3、4。
+- `GET|PUT /api/v1/preferences` 更新当前用户默认时长、默认房间、默认标签、三项提醒
+  偏好（变更通知开关、临近提醒开关、提醒提示音开关）和个人标签 3、4。
   `defaultTagSlot` 只接受 `null | 1 | 2 | 3 | 4`，表示本人标签槽位引用，不存储标签文案；
   `reminderLeadMinutes` 只接受整数 `15 | 30 | 60`，新用户默认 `30`，关闭提醒不会清除该值；
+  `reminderSound` 只接受布尔，新用户默认开启；
   `reminderTemplate` 是清理首尾空白后不超过 200 字的本人纯文本模板，空字符串回退系统
   默认模板。服务端只存储和返回模板，不拼装成品文案；前端变量白名单仅为
   `{当事人姓名} {日期} {开始时间} {结束时间} {笔录室}`，不含案号、用途或备注。
@@ -218,18 +220,23 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 超过 20,000 行返回 `422 EXPORT_TOO_LARGE`。响应头提供 `X-Report-Field-Version`、
 `X-Report-Row-Count` 与安全文件名；成功和超限失败都写入不含业务内容的
 `report.csv_exported` 审计。
-- `GET /api/v1/reminders/due` 返回 `kind=upcoming|change`；临近提醒和他人修改/取消通知各自受个人开关控制。
-  临近提醒窗口以请求时的当前 `reminderLeadMinutes` 计算，不为预约保存历史快照。
-- `POST /api/v1/reminders/{reservationId}/ack` 提交 `{ "revision": 2, "kind": "change" }`；两种回执相互独立。
-  临近提醒确认与查询使用同一份当前窗口；缩短提前量后已移出窗口的提醒返回
-  `409 REMINDER_NOT_DUE`。
+- `GET /api/v1/reminders/due` 返回 `kind=upcoming|change` 的全部待处理条目（不再只
+  取单条）；临近提醒和他人修改/取消通知各自受个人开关控制。临近提醒是状态而非待办：
+  窗口以请求时的当前 `reminderLeadMinutes` 实时计算并返回窗口内全部条目，没有确认
+  动作。变更通知以事件为维度：每项含 `eventId`、`changeType`、`actorName`、
+  `occurredAt` 与 `diffs`（由事件快照计算的字段级对比，仅面向用户的字段），超过
+  45 天未确认的变更事件过期不再返回。
+- `POST /api/v1/reminders/ack` 提交 `{ "eventId": "…" }` 按变更事件确认（幂等）；
+  仅预约本人可确认，事件必须是他人的修改/取消，否则 `403/422`；开关关闭时返回
+  `409 NOTIFICATION_NOT_DUE`。确认动作顺带清理 90 天前的旧回执。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
   `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；其 `databaseVersion`
-  为当前 schema v2；`POST /api/v1/admin/backups`
+  为当前 schema v3；`POST /api/v1/admin/backups`
   返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
   `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
-- 备份侧车的 `databaseSchemaVersion` 新建时为 `2`；恢复器仍接受通过完整性和安装身份
-  验证的 schema v1 备份，并在恢复原子替换后迁移至 v2。迁移或复检失败不得标记恢复成功。
+- 备份侧车的 `databaseSchemaVersion` 新建时为 `3`；恢复器仍接受通过完整性和安装身份
+  验证的 schema v1/v2 备份，并在恢复原子替换后迁移至当前结构（v1→v2 补列、
+  v2→v3 重建回执表并转换已确认回执）。迁移或复检失败不得标记恢复成功。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。
@@ -257,7 +264,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
   日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
 - `GET /api/v1/integration/health` 需要 `health:read`，只返回
-  `{ "ok": true, "productVersion": "V2.2.3" }`。
+  `{ "ok": true, "productVersion": "V2.3.0" }`。
 
 令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
 时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少
