@@ -470,12 +470,12 @@ export function DataCenter({
           <MetricCard label="总时长" value={report ? duration.value : "—"} unit={report ? duration.unit : ""} />
           <MetricCard label="取消" value={report?.summary?.cancelledCount ?? "—"} unit="场" note={isOverall ? `取消率 ${formatCancellationRate(report?.summary?.cancellationRate)}` : undefined} tone="guardrail" />
         </section>
-        <section className="report-section report-trend-section" role="tabpanel"><header><div><h2>预约{trend.granularity === "month" ? "月" : "周"}趋势</h2></div></header>{state === "loading" && !report ? <div className="report-chart-loading"><CircleNotch className="spin" size={24} />正在汇总</div> : <TrendChart granularity={trend.granularity} items={trend.items} metric={trendMetric} onMetricChange={setTrendMetric} />}</section>
+        <section className="report-section report-trend-section" role="tabpanel"><header><div><h2>预约{trend.granularity === "month" ? "月" : "周"}趋势</h2></div></header>{state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <TrendChart granularity={trend.granularity} items={trend.items} metric={trendMetric} onMetricChange={setTrendMetric} />}</section>
       </>}
 
       {reportPage !== "overview" && <section className="report-focus-page" role="tabpanel">
         <header className="report-focus-heading"><div><h2>{pageHeading?.[0]}</h2><p>{pageHeading?.[1]}</p></div>{reportPage === "tags" && <span>共 {report?.summary?.activeCount ?? "—"} 场</span>}</header>
-        {state === "loading" && !report ? <div className="report-chart-loading"><CircleNotch className="spin" size={24} />正在汇总</div> : <>
+        {state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <>
           {reportPage === "time" && <TimeDistribution items={report?.weekdayTimeDistribution} settings={settings} />}
           {reportPage === "rooms" && <RoomDistribution items={report?.roomWorkload} />}
           {reportPage === "tags" && <TagComposition items={isOverall ? report?.globalTagDistribution : report?.tagDistribution} />}

@@ -81,7 +81,7 @@ class UpdateCoreTests(unittest.TestCase):
             for record in records_for_tree(root):
                 relative = f"_程序文件/{name}/{record['path']}"
                 files[relative] = root.joinpath(*str(record["path"]).split("/")).read_bytes()
-        files["_程序文件/app/service.py"] = b"# V2.2.2 updated service\n"
+        files["_程序文件/app/service.py"] = b"# V2.2.3 updated service\n"
         records = tuple(
             {
                 "path": relative,
@@ -101,8 +101,8 @@ class UpdateCoreTests(unittest.TestCase):
             "schema": 1,
             "kind": "v2-cumulative-update",
             "product_generation": 2,
-            "version": "2.2.2",
-            "release": "V2.2.2",
+            "version": "2.2.3",
+            "release": "V2.2.3",
         }
         return UpdateBundle(
             tool_root=self.root,
@@ -274,12 +274,12 @@ class UpdateCoreTests(unittest.TestCase):
             health_probe=None,
         ).run()
         self.assertEqual(result.source_version, "2.1.0")
-        self.assertEqual(result.target_version, "2.2.2")
-        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.2.2")
+        self.assertEqual(result.target_version, "2.2.3")
+        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.2.3")
         self.assertEqual(unknown.read_bytes(), b"customer-data")
         self.assertEqual(
             (self.install_root / "_程序文件" / "app" / "service.py").read_bytes(),
-            b"# V2.2.2 updated service\n",
+            b"# V2.2.3 updated service\n",
         )
         self.assertFalse(controller.running)
         self.assertTrue(result.receipt_path.is_file())
@@ -296,7 +296,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.2")
+        self.assertEqual(result.target_version, "2.2.3")
         # Windows 上 app/runtime 由 os.replace 换入时只带继承 ACL，
         # 必须先重固化受保护 DACL 再进入 verify_security。
         self.assertEqual(events, ["apply", "verify"])
@@ -350,7 +350,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.2")
+        self.assertEqual(result.target_version, "2.2.3")
         self.assertFalse(list(program.glob(".update-displaced-*")))
 
     def test_windows_controller_reapplies_protected_dacl_on_program_roots(self) -> None:
@@ -426,8 +426,8 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.2")
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.2")
+        self.assertEqual(result.target_version, "2.2.3")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
         self.assertTrue(controller.running)
 
     def test_interrupted_transaction_rejects_tampered_snapshot_binding(self) -> None:
@@ -501,7 +501,7 @@ class UpdateCoreTests(unittest.TestCase):
             json.loads((self.install_root / INSTALL_INFO).read_text(encoding="utf-8"))[
                 "installed_version"
             ],
-            "2.2.2",
+            "2.2.3",
         )
         self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.1.0")
 
@@ -512,8 +512,8 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.2")
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.2")
+        self.assertEqual(result.target_version, "2.2.3")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
         self.assertTrue(controller.running)
 
     def test_committed_rerun_never_rolls_back_new_data_and_restores_run_state(self) -> None:
@@ -542,7 +542,7 @@ class UpdateCoreTests(unittest.TestCase):
         interrupted._restore = failed_rollback
         with self.assertRaises(UpdateRollbackError):
             interrupted.run()
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.2")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
 
         result = V2UpdateTransaction(
             bundle,
@@ -551,7 +551,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.source_version, "2.2.2")
+        self.assertEqual(result.source_version, "2.2.3")
         self.assertEqual(new_data.read_bytes(), b"created-after-commit")
         self.assertTrue(controller.running)
 
@@ -641,7 +641,7 @@ class UpdateEntryElevationTests(unittest.TestCase):
                 return UpdateResult(
                     install_root=self.install_root,
                     source_version="2.1.0",
-                    target_version="2.2.2",
+                    target_version="2.2.3",
                     receipt_path=self.install_root / "receipt.json",
                 )
 

@@ -549,3 +549,36 @@
   color: var(--faint);
   font-size: 13px;
 }
+
+/* 抽屉打开时，为它对应的来源时段格保持一枚安静的石墨描边。 */
+.slot.slot-origin::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border: 1.5px solid rgba(20, 20, 19, 0.46);
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+/* 日期切换按方向轻移入场；首次加载不播放，reduced-motion 全局降级。 */
+@keyframes calendar-enter-forward {
+  from {
+    opacity: 0.36;
+    transform: translateX(18px);
+  }
+}
+
+@keyframes calendar-enter-backward {
+  from {
+    opacity: 0.36;
+    transform: translateX(-18px);
+  }
+}
+
+.calendar-section.calendar-enter-forward {
+  animation: calendar-enter-forward 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.calendar-section.calendar-enter-backward {
+  animation: calendar-enter-backward 190ms cubic-bezier(0.22, 1, 0.36, 1);
+}

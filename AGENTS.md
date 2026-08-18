@@ -25,6 +25,18 @@
   is the earliest of the configured maximum, workday end, and the next active booking in that room.
 - Calendar time labels share the horizontal-rule coordinate, and the today view shows a restrained
   server-time line only while the current time is inside configured working hours.
+- The calendar today view scrolls the server-time line near the upper third of the viewport once per
+  arrival (entering the view or switching to 今天); clock ticks and user scrolling never reposition it.
+- While a booking drawer is open, its source time slot keeps a quiet graphite inset ring that clears
+  when the drawer closes and never renders for a date other than the displayed one.
+- Mine, history, and Data Center chart loading states use quiet warm-gray skeleton bars without
+  shimmer, keeping their page shells and a role="status" announcement.
+- Calendar date switches play one short directional slide and the success bar drops in once; the
+  first load animates nothing and prefers-reduced-motion remains authoritative.
+- Relative-day wording (今天/明天/后天) prefixes date subtitles using the server business date as the
+  reference, never the client clock; the 我的预约 hero stays time-only.
+- System Status keeps plain-language labels: 服务范围, 数据序号, 备份序号, 接口令牌, and audit times are
+  described as converted to the local timezone.
 - Calendar and room-management layouts adapt deliberately for one, two, or three active rooms;
   do not leave one- and two-room views occupying only a three-column fraction of the canvas.
 - Administrators can jump directly to a calendar date. Room-management metrics refresh from the

@@ -71,7 +71,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         parsed = update_check.parse_manifest(_manifest("2.3.1"))
         self.assertEqual(parsed, {"version": "2.3.1", "tag": "v2.3.1"})
         self.assertEqual(
-            update_check.parse_manifest(_manifest("2.2.2"))["version"], "2.2.2"
+            update_check.parse_manifest(_manifest("2.2.3"))["version"], "2.2.3"
         )
 
     def test_parse_manifest_rejects_invalid_payloads(self) -> None:
@@ -102,7 +102,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
                 update_check.parse_manifest(payload)
 
     def test_version_normalization_and_release_url(self) -> None:
-        self.assertEqual(update_check.normalize_version("V2.2.2"), (2, 2, 2))
+        self.assertEqual(update_check.normalize_version("V2.2.3"), (2, 2, 3))
         self.assertEqual(update_check.normalize_version("2.10.0"), (2, 10, 0))
         self.assertIsNone(update_check.normalize_version("2.3"))
         self.assertIsNone(update_check.normalize_version(None))
@@ -118,14 +118,14 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(server.close)
         performed, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
             force=True,
         )
         self.assertTrue(performed)
         self.assertEqual(summary["status"], "available")
         self.assertEqual(summary["latestVersion"], "9.9.9")
-        self.assertEqual(summary["currentVersion"], "2.2.2")
+        self.assertEqual(summary["currentVersion"], "2.2.3")
         self.assertIn("/releases/tag/v9.9.9", summary["releaseUrl"])
         state = json.loads(
             update_check.sidecar_path(self.data_dir).read_text(encoding="utf-8")
@@ -134,29 +134,29 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.assertIsNotNone(state["lastSuccessAtUtc"])
 
     def test_perform_check_current_version_is_not_reported_as_update(self) -> None:
-        server = _ManifestServer(_manifest("2.2.2"))
+        server = _ManifestServer(_manifest("2.2.3"))
         self.addCleanup(server.close)
         _, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
             force=True,
         )
         self.assertEqual(summary["status"], "current")
-        self.assertEqual(summary["latestVersion"], "2.2.2")
+        self.assertEqual(summary["latestVersion"], "2.2.3")
 
     def test_perform_check_throttles_repeated_calls(self) -> None:
         server = _ManifestServer(_manifest("9.9.9"))
         self.addCleanup(server.close)
         first, _ = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
             force=True,
         )
         second, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
         )
         self.assertTrue(first)
@@ -168,7 +168,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(server.close)
         performed, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
             force=True,
         )
@@ -181,7 +181,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         closed.close()
         performed, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=url,
             force=True,
         )
@@ -193,7 +193,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(big.close)
         performed, summary = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=big.url,
             force=True,
         )
@@ -203,24 +203,24 @@ class UpdateCheckUnitTests(unittest.TestCase):
     def test_view_disabled_and_corrupt_state(self) -> None:
         self.assertEqual(
             update_check.view(
-                enabled=False, data_dir=self.data_dir, current_version="2.2.2"
+                enabled=False, data_dir=self.data_dir, current_version="2.2.3"
             ),
             {"enabled": False},
         )
         self.data_dir.mkdir(parents=True, exist_ok=True)
         update_check.sidecar_path(self.data_dir).write_bytes(b"{corrupt")
         summary = update_check.view(
-            enabled=True, data_dir=self.data_dir, current_version="2.2.2"
+            enabled=True, data_dir=self.data_dir, current_version="2.2.3"
         )
         self.assertEqual(summary["status"], "unknown")
 
     def test_stale_current_does_not_survive_failed_recheck(self) -> None:
         # 先成功（清单等于当前版本）→ 再失败（500）：不得继续宣称“已是最新”。
-        ok = _ManifestServer(_manifest("2.2.2"))
+        ok = _ManifestServer(_manifest("2.2.3"))
         self.addCleanup(ok.close)
         _, first = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=ok.url,
             force=True,
         )
@@ -229,7 +229,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(broken.close)
         performed, second = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=broken.url,
             force=True,
         )
@@ -243,7 +243,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(ok.close)
         _, first = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=ok.url,
             force=True,
         )
@@ -253,7 +253,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(broken.close)
         _, second = update_check.perform_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=broken.url,
             force=True,
         )
@@ -262,16 +262,16 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.assertIn("/releases/tag/v9.9.9", second["releaseUrl"])
 
     def test_view_recovers_after_later_success(self) -> None:
-        ok = _ManifestServer(_manifest("2.2.2"))
+        ok = _ManifestServer(_manifest("2.2.3"))
         self.addCleanup(ok.close)
         broken = _ManifestServer(b"broken", status=500)
         self.addCleanup(broken.close)
         update_check.perform_check(
-            data_dir=self.data_dir, current_version="2.2.2",
+            data_dir=self.data_dir, current_version="2.2.3",
             url=broken.url, force=True,
         )
         _, recovered = update_check.perform_check(
-            data_dir=self.data_dir, current_version="2.2.2",
+            data_dir=self.data_dir, current_version="2.2.3",
             url=ok.url, force=True,
         )
         self.assertEqual(recovered["status"], "current")
@@ -286,14 +286,14 @@ class UpdateCheckUnitTests(unittest.TestCase):
                     "lastAttemptAtUtc": "2026-08-18T10:00:00Z",
                     "lastSuccessAtUtc": "2026-08-17T10:00:00Z",
                     "lastErrorAtUtc": "2026-08-18T10:00:00Z",
-                    "latestVersion": "2.2.2",
-                    "latestTag": "v2.2.2",
+                    "latestVersion": "2.2.3",
+                    "latestTag": "v2.2.3",
                 }
             ),
             encoding="utf-8",
         )
         summary = update_check.view(
-            enabled=True, data_dir=self.data_dir, current_version="2.2.2"
+            enabled=True, data_dir=self.data_dir, current_version="2.2.3"
         )
         self.assertEqual(summary["status"], "unknown")
         self.assertTrue(summary["lastCheckFailed"])
@@ -303,13 +303,13 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.addCleanup(server.close)
         performed, _ = update_check.maybe_periodic_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
         )
         self.assertTrue(performed)
         skipped, _ = update_check.maybe_periodic_check(
             data_dir=self.data_dir,
-            current_version="2.2.2",
+            current_version="2.2.3",
             url=server.url,
         )
         self.assertFalse(skipped)

@@ -1,6 +1,6 @@
 # V2 API v1 契约
 
-产品版本是 V2.2.2，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
+产品版本是 V2.2.3，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
 camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后缀以及创建、修改、
 事件和审计时间使用 UTC RFC3339。
 
@@ -37,7 +37,7 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 
 ```json
 {
-  "productVersion": "V2.2.2",
+  "productVersion": "V2.2.3",
   "setupComplete": true,
   "authenticated": true,
   "csrfToken": "...",
@@ -68,7 +68,7 @@ DNS rebinding 夺取首次管理员：
 
 ```json
 {
-  "productVersion": "V2.2.2",
+  "productVersion": "V2.2.3",
   "serverDate": "2026-08-10",
   "serverTime": "14:32:05",
   "currentUser": {},
@@ -257,7 +257,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
   日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
 - `GET /api/v1/integration/health` 需要 `health:read`，只返回
-  `{ "ok": true, "productVersion": "V2.2.2" }`。
+  `{ "ok": true, "productVersion": "V2.2.3" }`。
 
 令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
 时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少

@@ -32,12 +32,20 @@ import {
   validateSetupUsername,
   waitForSetupRestart,
 } from "../src/domain.js";
-import { reservationStatusLabel } from "../src/ui/presentation.js";
+import { relativeDayLabel, reservationStatusLabel } from "../src/ui/presentation.js";
 
 test("reservation statuses are always projected as Chinese UI copy", () => {
   assert.equal(reservationStatusLabel("active"), "已预约");
   assert.equal(reservationStatusLabel("cancelled"), "已取消");
   assert.equal(reservationStatusLabel("unexpected"), "状态未知");
+});
+
+test("relative day labels follow the server business date across month and year boundaries", () => {
+  assert.equal(relativeDayLabel("2026-12-31", "2026-12-31"), "今天");
+  assert.equal(relativeDayLabel("2027-01-01", "2026-12-31"), "明天");
+  assert.equal(relativeDayLabel("2027-01-02", "2026-12-31"), "后天");
+  assert.equal(relativeDayLabel("2027-01-03", "2026-12-31"), "");
+  assert.equal(relativeDayLabel("2026-12-30", "2026-12-31"), "");
 });
 
 test("generates adjacent working-hour slots", () => {
