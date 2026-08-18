@@ -25,7 +25,7 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | --- | --- | --- |
 | E64 | `V2_PYTHON=… v2/scripts/check.sh`（本机允许回环测试服务器） | Ruff、compileall、`git diff --check` 全绿；backend 128、installer 85、跨层 29、frontend 163 项测试通过；Vite 6.4.3 生产构建成功（CSS 160.88 kB，JS 501.63 kB） |
 | E65 | 隔离真实服务 + 应用内浏览器 1456×890，管理员/双员工合成账号 | 「我的预约」移除突兀交接区块，新增独立「工作交接」主导航、待我确认徽标、待我确认/我发起的两段开放台账；交接弹窗可稍后处理且不改变请求；员工选择先选中再确认；待处理详情禁用重复发起；控制台 0 error/0 warning、文档无横向溢出 |
-| E66 | 真实 pending / completed 交接记录与后端回归 | 历史列表分别显示“交接中 / 已交接”，普通预约仍显示标签色点；取消可与已交接并存且取消不被覆盖；事件文案统一为“预约者由 A 交接给 B”，CSV 表头统一“预约者”；同时修复 handover 联表把 request id 投影为 reservation id 的缺陷并以请求/收件/发件三处 ID 断言锁定 |
+| E66 | 真实 pending / completed / cancelled 交接记录与后端回归 | active 历史列表分别显示“交接中 / 已交接”，普通预约仍显示标签色点；取消记录只显示“已取消”，先前交接保留在详情事件时间线。服务端对 cancelled 投影 `handoverState=null`，前端只为 active 渲染辅助状态；事件文案统一为“预约者由 A 交接给 B”，CSV 表头统一“预约者”；同时修复 handover 联表把 request id 投影为 reservation id 的缺陷并以请求/收件/发件三处 ID 断言锁定 |
 
 ## V2.3.0 变更通知身份与视觉修正证据（2026-08-18）
 

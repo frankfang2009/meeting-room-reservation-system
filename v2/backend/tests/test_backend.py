@@ -2571,7 +2571,7 @@ class HandoverTests(AuthenticatedReservationTestCase):
             "/api/v1/reservations/history?month=2026-08"
         ).get_json()["items"]
         self.assertEqual(cancelled_history[0]["status"], "cancelled")
-        self.assertEqual(cancelled_history[0]["handoverState"], "completed")
+        self.assertIsNone(cancelled_history[0]["handoverState"])
 
         self.assertEqual(self.employee.get("/api/v1/reservations/upcoming").get_json()["items"], [])
         events = self.client.get(

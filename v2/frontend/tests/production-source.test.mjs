@@ -281,6 +281,7 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(productionSource, /预约者由 \$\{from\} 交接给 \$\{to\}/);
   assert.match(app, /booking\.handoverState === "pending" \? "交接中" : "已交接"/);
   assert.match(app, /booking\.status === "cancelled" && <span className="history-cancelled-status">已取消<\/span>/);
+  assert.match(app, /booking\.status === "active" && booking\.handoverState && <span className=\{`history-handover-status/);
 });
 
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {

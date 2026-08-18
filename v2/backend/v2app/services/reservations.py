@@ -732,7 +732,7 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
                    SELECT 1 FROM handover_requests hr
                    WHERE hr.reservation_id = r.id AND hr.status = 'pending'
                  ) THEN 'pending'
-                 WHEN EXISTS (
+                 WHEN r.status = 'active' AND EXISTS (
                    SELECT 1 FROM reservation_events re
                    WHERE re.reservation_id = r.id AND re.event_type = 'handover'
                  ) THEN 'completed'

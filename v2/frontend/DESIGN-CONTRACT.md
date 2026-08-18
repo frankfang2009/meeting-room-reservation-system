@@ -250,10 +250,10 @@ calendar and role boundaries are unchanged.
   the actual reservation id; request ids must never leak into reservation ids.
 - After acceptance the calendar, upcoming list, and history all switch to the
   receiver's name snapshot; the event timeline renders 预约已交接 with
-  “预约者由 A 交接给 B” from the event snapshots. History keeps active /
-  cancelled as the reservation lifecycle status and adds an auxiliary badge:
-  pending request = 交接中, completed ownership transfer = 已交接. 已取消 may
-  coexist with 已交接 and always remains the primary lifecycle fact.
+  “预约者由 A 交接给 B” from the event snapshots. History adds an auxiliary
+  badge only while the reservation is active: pending request = 交接中,
+  completed ownership transfer = 已交接. A cancelled row renders only 已取消;
+  any earlier ownership transfer remains available in the event timeline.
 - The reminder poller now runs regardless of the two notification switches
   (handovers are to-dos, not notices); switch-off still clears change and
   upcoming presentation.
