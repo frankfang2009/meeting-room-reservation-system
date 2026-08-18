@@ -335,3 +335,22 @@ final result: passed (automated gates; on-device visual pass pending)
   该不稳定为测试环境问题，非产品缺陷（同期 DOM 读取与页面行为全部正常）。
 
 final result: passed (CI 9/9 green + on-server browser walkthrough; in-hours auto-scroll pending)
+
+### Codex 最终集成冷审与工作时间内复核（2026-08-18）
+
+- 体验分支已重放到 V2.2.2 修复版合并提交 `5cd6f1ae`，冲突处同时保留
+  “服务范围/数据序号/备份序号/接口令牌”的体验文案，以及更新检查
+  `current / available / unknown` 的可信状态语义；独立版本推进为 V2.2.3。
+- 冷审发现原自动定位 effect 会在同一天后续 `loadCalendar()` 结束时再次执行，可能覆盖
+  用户滚动；改为按“到达今天”的 request/handled 序号只处理一次，只有离开今天后再切回、
+  或离开日历后再进入才产生新请求。补充相对日期跨月/跨年单测。
+- `v2/scripts/check.sh` 集成全绿：backend 115、installer 84、跨层 29、frontend 155；
+  Ruff、compileall、ESLint、`git diff --check` 与 Vite 生产构建均通过。
+- 真实浏览器使用固定 `127.0.0.1:8080`、隔离临时 V2 数据完成首次设置、登录和日历走查。
+  工作时间内切回今天后，时间线相对 845px 日历视口顶部为 281.9px（约上三分之一）；
+  手动滚回 `scrollTop=0`，跨过一次 30 秒服务器时钟更新后仍为 0；切到明天再回今天后
+  才重新定位到 `scrollTop=170`。一次性定位的待验收项关闭。
+- 控制台日常交互 0 warning；唯一 error 为首次设置完成后监听器由回环切换到 LAN 模式时，
+  健康探测产生的一次预期 `ERR_CONNECTION_REFUSED /healthz`，随后自动进入登录页。
+
+final result: passed (V2.2.3 integrated gates + in-hours real-browser auto-scroll verification)

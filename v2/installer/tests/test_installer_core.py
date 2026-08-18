@@ -96,7 +96,7 @@ class InstallerCoreTests(unittest.TestCase):
         self.assertEqual(info["port"], 8080)
         self.assertEqual(info["setup_bind"], "127.0.0.1")
         self.assertFalse(info["setup_complete"])
-        self.assertEqual((target / VERSION_FILE).read_text().strip(), "2.2.2")
+        self.assertEqual((target / VERSION_FILE).read_text().strip(), "2.2.3")
         self.assertEqual((target / GENERATION_FILE).read_text().strip(), "2")
         self.assertTrue((target / SECRET_FILE).is_file())
         self.assertRegex(
