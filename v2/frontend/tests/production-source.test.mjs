@@ -222,20 +222,50 @@ test("external reminder copy stays manual, scoped, and recoverable", () => {
   assert.doesNotMatch(app, /已发送|跳转微信|window\.open\([^)]*微信/);
 });
 
-test("acknowledging a change refreshes affected views and fetches the next notice", () => {
-  assert.match(app, /acknowledged\.kind === "change"/);
+test("acknowledging change notices is event-scoped and refreshes affected views", () => {
+  assert.match(app, /api\.acknowledgeChangeNotice\(item\.eventId\)/);
+  assert.match(app, /await refreshDueReminders\(\);/);
   assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)\]\)/);
-  assert.match(app, /const result = await api\.getDueReminders\(\)/);
-  assert.match(app, /reminderDisplayMessage\(dueReminder\)/);
+  assert.doesNotMatch(app, /REMINDER_NOT_DUE/);
+  assert.doesNotMatch(app, /reminderDisplayMessage/);
 });
 
-test("upcoming reminders use the mine navigation clock badge instead of a bottom toast", () => {
-  assert.match(app, /id === "mine" && dueReminder\?\.kind === "upcoming"/);
-  assert.match(app, /className="rail-reminder-badge"/);
-  assert.match(app, /<Clock size=\{11\} weight="fill"/);
-  assert.match(app, /openMineAndAcknowledgeReminder/);
-  assert.match(app, /dueReminder\?\.kind === "change" && <div className="toast visible reminder-toast"/);
-  assert.doesNotMatch(app, /\{dueReminder && <div className="toast visible reminder-toast"/);
+test("upcoming reminders live in the calendar with a counting badge and a one-time arrival toast", () => {
+  // 临近提醒是状态而非待办：徽章显示计数，不再有确认动作。
+  assert.match(app, /const upcomingCount = id === "mine" \? dueReminders\.upcoming\.length : 0/);
+  assert.match(app, /\{upcomingCount > 9 \? "9\+" : upcomingCount\}/);
+  // 画进日历：预约块上的倒计时角标与紧急态。
+  assert.match(app, /const countdown = countdownFor\(booking\)/);
+  assert.match(app, /countdown && <span className="booking-countdown"/);
+  assert.match(app, /slot-countdown-urgent/);
+  // 浏览其他日期时「今天」按钮带小圆点。
+  assert.match(app, /has-today-dot/);
+  // 到达时刻只做一次性 toast（查看/知道了），自动消失。
+  assert.match(app, /arrivalNotice && !drawer && <div className="toast visible reminder-toast arrival-toast"/);
+  assert.match(app, /arrivalReminderText\(fresh\[0\]\)/);
+  assert.match(app, /playArrivalChime\(\)/);
+  // 变更通知不再是底部常驻 toast，也没有 upcoming 的确认语义。
+  assert.doesNotMatch(app, /dueReminder\?\.kind === "change" && <div className="toast/);
+  assert.doesNotMatch(app, /openMineAndAcknowledgeReminder/);
+});
+
+test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
+  assert.match(app, /const noticeModalOpen = dueReminders\.changes\.length > 0 && !drawer && !sessionExpired;/);
+  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,220}mainRef,/);
+  assert.match(app, /<\/div>\s*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
+  assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);
+  assert.match(app, /noticeDiffRows\(item\.diffs\)/);
+  assert.match(app, /noticeIdentitySummary\(item\)/);
+  assert.match(app, />当事人<\/dt><dd>\{identity\.partyName\}/);
+  assert.match(app, />事项<\/dt><dd>\{identity\.purpose\}/);
+  assert.match(app, />原预约<\/dt><dd>\{identity\.originalSchedule/);
+  assert.match(app, /你的预约发生了 <em>\{diffRows\.length\}<\/em> 项变更/);
+  assert.match(app, /item\.changeType === "cancelled"/);
+  assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
+  assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
+  // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
+  assert.match(app, /\{drawer && dueReminders\.changes\.length > 0 && <div className="notice-queue-chip"/);
+  assert.match(app, /将在您关闭当前窗口后出现/);
 });
 
 test("the frozen empty-state action consumes a valid default room", () => {
@@ -245,7 +275,8 @@ test("the frozen empty-state action consumes a valid default room", () => {
 });
 
 test("low-frequency UX safeguards remain explicit and testable", () => {
-  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminder\?\.kind === "change"[\s\S]*<Drawer/);
+  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminders\.changes\.length > 0[\s\S]*<\/div>\s*\{noticeModalOpen/);
+  assert.match(app, /<Drawer[\s\S]{0,500}backgroundRef=\{mainRef\}/);
   assert.match(app, /historyMonth <= historyMonths\.at\(-1\)\.id/);
   assert.match(app, /nextMonth < earliestMonth \|\| nextMonth > latestMonth/);
   assert.match(app, /min=\{calendarDateMinimum\} max=\{calendarDateMaximum\}/);

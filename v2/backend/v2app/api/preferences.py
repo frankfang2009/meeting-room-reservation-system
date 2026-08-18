@@ -94,6 +94,11 @@ def update_preferences():
             if "bookingReminder" in payload
             else bool(existing["booking_reminder"])
         )
+        reminder_sound = (
+            parse_bool(payload["reminderSound"], field="reminderSound")
+            if "reminderSound" in payload
+            else bool(existing["reminder_sound"])
+        )
         reminder_lead_minutes = (
             parse_int(payload["reminderLeadMinutes"], field="reminderLeadMinutes")
             if "reminderLeadMinutes" in payload
@@ -144,7 +149,8 @@ def update_preferences():
             UPDATE user_preferences
             SET default_duration = ?, default_room_id = ?, default_tag_slot = ?,
                 booking_change_notifications = ?, booking_reminder = ?,
-                reminder_lead_minutes = ?, reminder_template = ?,
+                reminder_sound = ?, reminder_lead_minutes = ?,
+                reminder_template = ?,
                 personal_tag_3_label = ?, personal_tag_4_label = ?,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
             WHERE user_id = ?
@@ -152,7 +158,7 @@ def update_preferences():
             (
                 duration, room_id, default_tag_slot,
                 int(change_notifications), int(reminder),
-                reminder_lead_minutes, reminder_template,
+                int(reminder_sound), reminder_lead_minutes, reminder_template,
                 personal[3], personal[4], actor["id"],
             ),
         )
@@ -167,6 +173,7 @@ def update_preferences():
                 "defaultRoomId": room_id,
                 "defaultTagSlot": default_tag_slot,
                 "reminderLeadMinutes": reminder_lead_minutes,
+                "reminderSound": reminder_sound,
                 "reminderTemplateUpdated": (
                     reminder_template != existing["reminder_template"]
                 ),

@@ -37,7 +37,9 @@ const expectedFiles = [
 // V2.2.x UX 打磨：日历来源时段描边与日期切换入场动画（calendar.css）、
 // 我的预约/预约记录/数据中心读取骨架（dashboard/history/reports.css）、
 // 成功确认条轻落入场（runtime-states.css）。
-const frozenSourceSha256 = "6d7afc5ed6b77ffd7c1a8307eda9949cba829fc9a9fafe72113a987d6a58d7a8";
+// V2.3.0 提醒重做：日历倒计时角标与「今天」圆点（calendar.css）、
+// 变更通知居中弹窗与排队提示条（production-flows.css）。
+const frozenSourceSha256 = "8cf9f18f6ad5f9ad8dc912a3b4ff75e316775a9a83b54fb26db16f91f20ecd16";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -93,10 +95,17 @@ test("compact production actions retain at least a 44px hit target", () => {
   const users = fs.readFileSync(path.join(stylesRoot, "users.css"), "utf8");
   assert.match(drawer, /\.drawer-back \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
   assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.notice-item-actions button \{[\s\S]*?min-height: 44px;/);
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("rail reminder count sits outside the reservation icon", () => {
+  const shell = fs.readFileSync(path.join(stylesRoot, "shell.css"), "utf8");
+  assert.match(shell, /\.rail-reminder-badge \{[\s\S]*?top: -3px;[\s\S]*?right: -5px;[\s\S]*?width: 20px;[\s\S]*?height: 20px;/);
+  assert.match(shell, /\.rail-reminder-badge \{[\s\S]*?font-variant-numeric: tabular-nums;/);
 });
 
 test("the three-room calendar can shrink to the 1024px workspace", () => {

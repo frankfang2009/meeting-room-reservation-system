@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify
 
-from ..common import local_now, parse_int, parse_json_object
+from ..common import clean_text, local_now, parse_json_object
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import current_user, locked_actor, login_required
@@ -13,21 +14,59 @@ from ..services.reservations import serialize_reservation
 
 bp = Blueprint("reminder_api", __name__, url_prefix="/api/v1/reminders")
 
+# 变更通知只保留最近 45 天的事件；确认回执保留 90 天后由确认动作顺带清理。
+CHANGE_NOTICE_MAX_AGE_DAYS = 45
+RECEIPT_RETENTION_DAYS = 90
+NOTICE_IDENTITY_FIELDS = ("partyName", "purpose", "date", "start", "end", "roomName")
+
+
+def _utc_minute_key(moment: datetime) -> str:
+    """事件时间戳是 UTC RFC3339（毫秒）；按前 16 位做分钟粒度的字符串比较。"""
+
+    return moment.strftime("%Y-%m-%dT%H:%M")
+
 
 def _upcoming_window_end(now: datetime, preference) -> datetime:
     return now + timedelta(minutes=int(preference["reminder_lead_minutes"]))
 
 
-def _was_acknowledged(db, row, actor_id: str, kind: str) -> bool:
-    receipt = db.execute(
-        """
-        SELECT acknowledged_at FROM reminder_receipts
-        WHERE reservation_id = ? AND user_id = ?
-          AND reservation_revision = ? AND kind = ?
-        """,
-        (row["id"], actor_id, row["revision"], kind),
-    ).fetchone()
-    return bool(receipt and receipt[0])
+def _change_snapshot(snapshot_json) -> dict:
+    """只接受预约事件写入的 JSON 对象；损坏快照不进入通知投影。"""
+
+    if not snapshot_json:
+        return {}
+    try:
+        snapshot = json.loads(snapshot_json)
+    except (TypeError, ValueError):
+        return {}
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
+def _change_diffs(before_json, after_json) -> list[dict]:
+    """从事件快照计算字段级对比；任一侧缺失或不可解析时返回空列表。"""
+
+    before = _change_snapshot(before_json)
+    after = _change_snapshot(after_json)
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return []
+    return [
+        {"field": key, "from": before[key], "to": after[key]}
+        for key in after
+        if key in before and before[key] != after[key]
+    ]
+
+
+def _change_notice_identity(before_json, after_json) -> dict:
+    """投影变更发生时的原预约，避免本人后续编辑让旧通知指错预约。"""
+
+    before = _change_snapshot(before_json)
+    after = _change_snapshot(after_json)
+    source = before or after
+    return {
+        field: source[field]
+        for field in NOTICE_IDENTITY_FIELDS
+        if field in source and source[field] is not None
+    }
 
 
 @bp.get("/due")
@@ -44,34 +83,50 @@ def due_reminders():
     ).fetchone()
     if preference is None:
         return jsonify({"items": []})
-    due = []
+    items: list[dict] = []
 
     if preference["booking_change_notifications"]:
+        cutoff = _utc_minute_key(
+            datetime.now(timezone.utc) - timedelta(days=CHANGE_NOTICE_MAX_AGE_DAYS)
+        )
         changed_rows = db.execute(
             """
             SELECT r.*, u.display_name AS owner_display_name,
-                   e.event_type AS change_type
-            FROM reservations r
+                   e.id AS event_id, e.event_type AS change_type,
+                   e.occurred_at AS change_occurred_at,
+                   e.before_json, e.after_json,
+                   a.display_name AS actor_display_name
+            FROM reservation_events e
+            JOIN reservations r ON r.id = e.reservation_id
             JOIN users u ON u.id = r.owner_user_id
-            JOIN reservation_events e
-              ON e.reservation_id = r.id AND e.revision = r.revision
+            JOIN users a ON a.id = e.actor_user_id
             WHERE r.owner_user_id = ?
               AND e.actor_user_id != r.owner_user_id
               AND e.event_type IN ('updated', 'cancelled')
+              AND substr(e.occurred_at, 1, 16) >= ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM notice_receipts nr
+                  WHERE nr.event_id = e.id AND nr.user_id = r.owner_user_id
+              )
             ORDER BY e.occurred_at, e.rowid
             """,
-            (actor["id"],),
+            (actor["id"], cutoff),
         ).fetchall()
         for row in changed_rows:
-            if _was_acknowledged(db, row, actor["id"], "change"):
-                continue
             item = serialize_reservation(row, actor)
             item["kind"] = "change"
             item["changeType"] = row["change_type"]
-            due.append(item)
+            item["eventId"] = row["event_id"]
+            item["occurredAt"] = row["change_occurred_at"]
+            item["actorName"] = row["actor_display_name"]
+            item["diffs"] = _change_diffs(row["before_json"], row["after_json"])
+            item["noticeIdentity"] = _change_notice_identity(
+                row["before_json"], row["after_json"]
+            )
+            items.append(item)
 
     if not preference["booking_reminder"]:
-        return jsonify({"items": due})
+        return jsonify({"items": items})
     now = local_now().replace(tzinfo=None)
     limit = _upcoming_window_end(now, preference)
     rows = db.execute(
@@ -90,79 +145,65 @@ def due_reminders():
         )
         if not now < starts_at <= limit:
             continue
-        if _was_acknowledged(db, row, actor["id"], "upcoming"):
-            continue
         item = serialize_reservation(row, actor)
         item["kind"] = "upcoming"
-        due.append(item)
-    return jsonify({"items": due})
+        items.append(item)
+    return jsonify({"items": items})
 
 
-@bp.post("/<reservation_id>/ack")
+@bp.post("/ack")
 @login_required
-def acknowledge_reminder(reservation_id: str):
+def acknowledge_change_notice():
     payload = parse_json_object()
+    event_id = clean_text(
+        payload.get("eventId"), field="eventId", label="变更事件", maximum=64
+    )
     db = get_db()
     with transaction(db):
         actor = locked_actor(db)
         row = db.execute(
-            "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
+            """
+            SELECT e.event_type, e.actor_user_id, r.owner_user_id
+            FROM reservation_events e
+            JOIN reservations r ON r.id = e.reservation_id
+            WHERE e.id = ?
+            """,
+            (event_id,),
         ).fetchone()
         if row is None:
-            raise ApiError(404, "NOT_FOUND", "预约不存在")
+            raise ApiError(404, "NOT_FOUND", "变更事件不存在")
         if row["owner_user_id"] != actor["id"]:
-            raise ApiError(403, "FORBIDDEN", "无权确认他人的预约提醒")
-        kind = payload.get("kind")
-        if kind not in ("change", "upcoming"):
-            raise ApiError(422, "VALIDATION_ERROR", "通知类型必须是 change 或 upcoming")
-        revision = parse_int(payload.get("revision"), field="revision")
-        if revision != row["revision"]:
-            raise ApiError(409, "REVISION_CONFLICT", "预约内容已发生变化")
+            raise ApiError(403, "FORBIDDEN", "无权确认他人的预约变更通知")
+        if (
+            row["event_type"] not in ("updated", "cancelled")
+            or row["actor_user_id"] == row["owner_user_id"]
+        ):
+            raise ApiError(422, "VALIDATION_ERROR", "该事件不是他人的预约变更")
         preference = db.execute(
             """
-            SELECT booking_change_notifications, booking_reminder, reminder_lead_minutes
+            SELECT booking_change_notifications
             FROM user_preferences WHERE user_id = ?
             """,
             (actor["id"],),
         ).fetchone()
-        if kind == "change":
-            event = db.execute(
-                """
-                SELECT 1 FROM reservation_events
-                WHERE reservation_id = ? AND revision = ?
-                  AND actor_user_id != ?
-                  AND event_type IN ('updated', 'cancelled')
-                """,
-                (reservation_id, revision, actor["id"]),
-            ).fetchone()
-            if not preference["booking_change_notifications"] or event is None:
-                raise ApiError(409, "NOTIFICATION_NOT_DUE", "该变更通知当前不可确认")
-        else:
-            now = local_now().replace(tzinfo=None)
-            starts_at = datetime.strptime(
-                f"{row['booking_date']} {row['start_time']}", "%Y-%m-%d %H:%M"
-            )
-            if (
-                not preference["booking_reminder"]
-                or row["status"] != "active"
-                or not now < starts_at <= _upcoming_window_end(now, preference)
-            ):
-                raise ApiError(409, "REMINDER_NOT_DUE", "该临近提醒当前不可确认")
+        if preference is None or not preference["booking_change_notifications"]:
+            raise ApiError(409, "NOTIFICATION_NOT_DUE", "该变更通知当前不可确认")
         db.execute(
             """
-            INSERT INTO reminder_receipts (
-                reservation_id, user_id, reservation_revision, kind, acknowledged_at
-            ) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-            ON CONFLICT(reservation_id, user_id, reservation_revision, kind)
+            INSERT INTO notice_receipts (event_id, user_id, acknowledged_at)
+            VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            ON CONFLICT(event_id, user_id)
             DO UPDATE SET acknowledged_at = excluded.acknowledged_at
             """,
-            (reservation_id, actor["id"], revision, kind),
+            (event_id, actor["id"]),
         )
-    return jsonify(
-        {
-            "acknowledged": True,
-            "reservationId": reservation_id,
-            "revision": revision,
-            "kind": kind,
-        }
-    )
+        db.execute(
+            "DELETE FROM notice_receipts WHERE substr(acknowledged_at, 1, 16) < ?",
+            (
+                _utc_minute_key(
+                    datetime.now(timezone.utc)
+                    - timedelta(days=RECEIPT_RETENTION_DAYS)
+                ),
+            ),
+        )
+    return jsonify({"acknowledged": True, "eventId": event_id})

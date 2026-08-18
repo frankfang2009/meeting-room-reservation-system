@@ -176,3 +176,46 @@ are preserved.
   converted to the local timezone instead of naming UTC. Room naming was audited:
   笔录室 is used consistently and 会议室 appears only inside the fixed product brand
   name, which stays unchanged.
+
+## Reminder rework addendum — 2026-08-18 (V2.3.0)
+
+This addendum reworks the reminder system without changing its boundary: reminders
+still work only while the page is open, and §9's exclusion of SMS/WeChat/email/native
+push channels is untouched.
+
+- Upcoming reminders are drawn into the calendar itself instead of a banner or a
+  persistent toast: booking blocks that belong to the current user and sit inside the
+  lead window grow a small terracotta countdown chip (top-right of the block,
+  minute-granularity “N 分后”, a softly breathing dot, solid-terracotta urgent style
+  at ≤2 minutes). The chip disappears when the booking starts. The calendar layout,
+  header hierarchy, and quiet-toolbar rules are unchanged; no banner is ever added
+  above the calendar.
+- The rail “我的预约” badge shows the count of in-window bookings (9+ capped)
+  instead of a single clock icon, and clicking it only navigates. Upcoming reminders
+  carry no acknowledgement action: they are state, not a to-do. The server returns
+  every in-window item each poll.
+- Arrival is announced exactly once per booking: a one-time dark bottom toast
+  (“查看 / 知道了”, auto-dismiss ≈5s) plus a gentle synthesized three-note chime
+  (Web Audio, identical to the auditioned preview; asset-free by design). The chime
+  can be turned off in Personal Center (“提醒提示音”, default on); the toast is
+  independent of the sound switch. Chime dedup is per session.
+- When the user is browsing a date other than the server business day and in-window
+  bookings exist, the segmented “今天” button shows a small terracotta dot
+  (`.has-today-dot`); no other header furniture is added.
+- Change notices move from the bottom toast to a centered modal that requires
+  explicit confirmation: it lists every unacknowledged foreign change event
+  (aggregated, never one-by-one). Each item first identifies the exact reservation
+  with an event-bound summary labelled 当事人 / 事项 / 原预约; “你的预约” always
+  refers to a reservation created by the current employee, never to the party named
+  in the case. Actor, time, identity, and the vertical before→after change story all
+  come from the event snapshots rather than a later current row (cancelled bookings
+  show a single cancelled line). The terracotta marker/line connects the changed
+  fields without turning the modal into a data table. Actions are at least 44px high,
+  focus is trapped while the background is inert, and focus returns on close.
+  Per-item 查看/我知道了 plus 全部知道了 remain available; Esc equals acknowledging all.
+  While any drawer is open the modal is deferred — a quiet dashed info chip explains
+  the pending notice — and it appears immediately after the drawer closes. The modal
+  is acknowledged per event id and never reappears for confirmed events.
+- The poller keeps its 60-second cadence and passive-session semantics, refetches
+  immediately when the tab becomes visible, clears all reminder state when both
+  preference switches are off, and surfaces at most one error per failure streak.

@@ -12,8 +12,8 @@ from .invariants import ApplicationInvariantError, validate_application_invarian
 
 
 PRODUCT_GENERATION = 2
-SCHEMA_VERSION = 2
-SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SCHEMA_VERSION})
+SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, SCHEMA_VERSION})
 V1_FINGERPRINT = {"users", "rooms", "reservations", "reservation_slots"}
 DEFAULT_REMINDER_TEMPLATE = (
     "【笔录提醒】{当事人姓名}您好，您预约的笔录时间为{日期} {开始时间}，"
@@ -30,10 +30,32 @@ EXPECTED_TABLES = {
     "reservations",
     "reservation_slots",
     "reservation_events",
-    "reminder_receipts",
     "api_tokens",
     "security_audit_log",
 }
+
+# 回执表按 schema 版本命名：v1/v2 为预约+版本维度的 reminder_receipts，
+# v3 起为事件维度的 notice_receipts（迁移时重建并转换已确认的变更回执）。
+RECEIPTS_TABLE_BY_VERSION = {
+    1: "reminder_receipts",
+    2: "reminder_receipts",
+    3: "notice_receipts",
+}
+
+NOTICE_RECEIPTS_TABLE_DDL = """
+    CREATE TABLE notice_receipts (
+        event_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        acknowledged_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY (event_id, user_id),
+        FOREIGN KEY (event_id) REFERENCES reservation_events(id) ON DELETE CASCADE,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+"""
+
+NOTICE_RECEIPTS_INDEX_DDL = (
+    "CREATE INDEX idx_notice_receipts_user ON notice_receipts(user_id)"
+)
 
 SCHEMA_V2_COLUMNS = (
     (
@@ -55,6 +77,14 @@ SCHEMA_V2_COLUMNS = (
         "user_preferences",
         "reminder_template",
         f"TEXT NOT NULL DEFAULT '{DEFAULT_REMINDER_TEMPLATE}'",
+    ),
+)
+
+SCHEMA_V3_COLUMNS = (
+    (
+        "user_preferences",
+        "reminder_sound",
+        "INTEGER NOT NULL DEFAULT 1 CHECK (reminder_sound IN (0, 1))",
     ),
 )
 
@@ -133,6 +163,8 @@ SCHEMA_STATEMENTS = (
             CHECK (booking_change_notifications IN (0, 1)),
         booking_reminder INTEGER NOT NULL DEFAULT 1
             CHECK (booking_reminder IN (0, 1)),
+        reminder_sound INTEGER NOT NULL DEFAULT 1
+            CHECK (reminder_sound IN (0, 1)),
         reminder_lead_minutes INTEGER NOT NULL DEFAULT 30
             CHECK (reminder_lead_minutes IN (15, 30, 60)),
         reminder_template TEXT NOT NULL DEFAULT '{DEFAULT_REMINDER_TEMPLATE}',
@@ -203,19 +235,7 @@ SCHEMA_STATEMENTS = (
         FOREIGN KEY (actor_user_id) REFERENCES users(id)
     )
     """,
-    """
-    CREATE TABLE reminder_receipts (
-        reservation_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        reservation_revision INTEGER NOT NULL,
-        kind TEXT NOT NULL CHECK (kind IN ('change', 'upcoming')),
-        delivered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-        acknowledged_at TEXT,
-        PRIMARY KEY (reservation_id, user_id, reservation_revision, kind),
-        FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE CASCADE,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-    """,
+    NOTICE_RECEIPTS_TABLE_DDL,
     """
     CREATE TABLE api_tokens (
         id TEXT PRIMARY KEY,
@@ -246,6 +266,7 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX idx_reservations_date_room ON reservations(booking_date, room_id, start_time)",
     "CREATE INDEX idx_reservations_owner_date ON reservations(owner_user_id, booking_date, start_time)",
     "CREATE INDEX idx_events_reservation ON reservation_events(reservation_id, occurred_at)",
+    NOTICE_RECEIPTS_INDEX_DDL,
 )
 
 
@@ -291,6 +312,22 @@ def _missing_v2_columns(db: sqlite3.Connection) -> list[str]:
     return missing
 
 
+def _missing_v3_columns(db: sqlite3.Connection) -> list[str]:
+    columns_by_table: dict[str, set[str]] = {}
+    missing = []
+    for table, column, _declaration in SCHEMA_V3_COLUMNS:
+        columns = columns_by_table.setdefault(table, _column_names(db, table))
+        if column not in columns:
+            missing.append(f"{table}.{column}")
+    return missing
+
+
+def _receipts_table_for(version: str) -> Optional[str]:
+    if version.isdigit() and int(version) in RECEIPTS_TABLE_BY_VERSION:
+        return RECEIPTS_TABLE_BY_VERSION[int(version)]
+    return None
+
+
 def classify_existing_database(path: Path) -> str:
     try:
         db = _connect(path, readonly=True)
@@ -315,7 +352,7 @@ def classify_existing_database(path: Path) -> str:
         version = _meta_value(db, "schema_version")
         if version not in {str(item) for item in SUPPORTED_SCHEMA_VERSIONS}:
             raise DatabaseGenerationError(
-                f"数据库结构版本不受支持：可迁移 1 或当前 {SCHEMA_VERSION}，"
+                f"数据库结构版本不受支持：可迁移 1、2 或当前 {SCHEMA_VERSION}，"
                 f"实际 {version or '缺失'}"
             )
         setup_value = _meta_value(db, "setup_complete")
@@ -334,8 +371,13 @@ def classify_existing_database(path: Path) -> str:
             raise DatabaseGenerationError(
                 "V2 数据库结构不完整：" + ", ".join(sorted(missing))
             )
+        receipts_table = _receipts_table_for(version)
+        if receipts_table is None or receipts_table not in tables:
+            raise DatabaseGenerationError(
+                "V2 数据库结构不完整：" + (receipts_table or "提醒回执表")
+            )
         if version == str(SCHEMA_VERSION):
-            missing_columns = _missing_v2_columns(db)
+            missing_columns = _missing_v2_columns(db) + _missing_v3_columns(db)
             if missing_columns:
                 raise DatabaseGenerationError(
                     "V2 数据库当前结构缺少列："
@@ -358,7 +400,11 @@ def _add_column_if_missing(
 
 
 def migrate_schema_v1_to_v2(path: Path) -> bool:
-    """Atomically and idempotently upgrade a generation-2 schema-v1 database."""
+    """Atomically and idempotently upgrade a generation-2 schema-v1 database.
+
+    本函数只负责 v1→v2（补列并把版本如实写为 2）；推进到更高版本由
+    prepare_database 串联的后续迁移负责。
+    """
 
     db = _connect(path)
     try:
@@ -367,7 +413,7 @@ def migrate_schema_v1_to_v2(path: Path) -> bool:
             if _meta_value(db, "product_generation") != str(PRODUCT_GENERATION):
                 raise DatabaseGenerationError("迁移目标不是 V2 产品代际")
             version = _meta_value(db, "schema_version")
-            if version == str(SCHEMA_VERSION):
+            if version == "2" or version == str(SCHEMA_VERSION):
                 missing = _missing_v2_columns(db)
                 if missing:
                     raise DatabaseGenerationError(
@@ -378,7 +424,7 @@ def migrate_schema_v1_to_v2(path: Path) -> bool:
                 return False
             if version != "1":
                 raise DatabaseGenerationError(
-                    f"不支持从 schema {version or '缺失'} 迁移到 {SCHEMA_VERSION}"
+                    f"不支持从 schema {version or '缺失'} 迁移到 2"
                 )
             missing_tables = EXPECTED_TABLES - _table_names(db)
             if missing_tables:
@@ -389,8 +435,8 @@ def migrate_schema_v1_to_v2(path: Path) -> bool:
             for table, column, declaration in SCHEMA_V2_COLUMNS:
                 _add_column_if_missing(db, table, column, declaration)
             updated = db.execute(
-                "UPDATE app_meta SET value = ? WHERE key = 'schema_version' AND value = '1'",
-                (str(SCHEMA_VERSION),),
+                "UPDATE app_meta SET value = '2' "
+                "WHERE key = 'schema_version' AND value = '1'",
             )
             if updated.rowcount != 1:
                 raise DatabaseGenerationError("数据库 schema_version 迁移写入失败")
@@ -399,6 +445,95 @@ def migrate_schema_v1_to_v2(path: Path) -> bool:
                 raise DatabaseGenerationError(
                     "数据库迁移后仍缺少列：" + ", ".join(missing)
                 )
+            db.execute("COMMIT")
+            return True
+        except Exception:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+    finally:
+        db.close()
+
+
+def migrate_schema_v2_to_v3(path: Path) -> bool:
+    """Atomically and idempotently upgrade a generation-2 schema-v2 database to v3.
+
+    v3 把提醒回执从预约+版本维度重建为事件维度的 notice_receipts：
+    已确认的变更回执按 (reservation_id, revision) 关联转换为事件回执；
+    未确认回执与临近提醒回执直接丢弃——新模型中临近提醒不再需要确认，
+    未确认的变更通知会在新模型下重新出现，由用户按事件确认。
+    同时补充 user_preferences.reminder_sound 列。
+    """
+
+    db = _connect(path)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if _meta_value(db, "product_generation") != str(PRODUCT_GENERATION):
+                raise DatabaseGenerationError("迁移目标不是 V2 产品代际")
+            version = _meta_value(db, "schema_version")
+            tables = _table_names(db)
+            if version == str(SCHEMA_VERSION):
+                missing = _missing_v2_columns(db) + _missing_v3_columns(db)
+                if missing:
+                    raise DatabaseGenerationError(
+                        "已标记为 schema v3 的数据库缺少列：" + ", ".join(missing)
+                    )
+                if "notice_receipts" not in tables:
+                    raise DatabaseGenerationError(
+                        "已标记为 schema v3 的数据库缺少 notice_receipts 表"
+                    )
+                db.execute("COMMIT")
+                return False
+            if version != "2":
+                raise DatabaseGenerationError(
+                    f"不支持从 schema {version or '缺失'} 迁移到 {SCHEMA_VERSION}"
+                )
+            missing_tables = EXPECTED_TABLES - tables
+            if missing_tables:
+                raise DatabaseGenerationError(
+                    "待迁移的 V2 数据库结构不完整："
+                    + ", ".join(sorted(missing_tables))
+                )
+            if "reminder_receipts" not in tables:
+                raise DatabaseGenerationError(
+                    "待迁移的 V2 数据库缺少 reminder_receipts 表"
+                )
+            for table, column, declaration in SCHEMA_V3_COLUMNS:
+                _add_column_if_missing(db, table, column, declaration)
+            db.execute(NOTICE_RECEIPTS_TABLE_DDL)
+            db.execute(
+                """
+                INSERT INTO notice_receipts (event_id, user_id, acknowledged_at)
+                SELECT e.id, rr.user_id, rr.acknowledged_at
+                FROM reminder_receipts rr
+                JOIN reservation_events e
+                  ON e.reservation_id = rr.reservation_id
+                 AND e.revision = rr.reservation_revision
+                WHERE rr.kind = 'change'
+                  AND rr.acknowledged_at IS NOT NULL
+                  AND e.event_type IN ('updated', 'cancelled')
+                  AND e.actor_user_id != rr.user_id
+                """
+            )
+            db.execute("DROP TABLE reminder_receipts")
+            db.execute(NOTICE_RECEIPTS_INDEX_DDL)
+            updated = db.execute(
+                """
+                UPDATE app_meta SET value = ?
+                WHERE key = 'schema_version' AND value = '2'
+                """,
+                (str(SCHEMA_VERSION),),
+            )
+            if updated.rowcount != 1:
+                raise DatabaseGenerationError("数据库 schema_version 迁移写入失败")
+            missing = _missing_v2_columns(db) + _missing_v3_columns(db)
+            if missing:
+                raise DatabaseGenerationError(
+                    "数据库迁移后仍缺少列：" + ", ".join(missing)
+                )
+            if "notice_receipts" not in _table_names(db):
+                raise DatabaseGenerationError("数据库迁移后仍缺少 notice_receipts 表")
             db.execute("COMMIT")
             return True
         except Exception:
@@ -500,9 +635,11 @@ def prepare_database(
     except (OSError, sqlite3.Error):
         return _recovery("DATABASE_UNAVAILABLE", "数据库无法读取，已进入恢复模式")
 
-    if classification == "v1":
+    if classification in ("v1", "v2"):
         try:
-            migrate_schema_v1_to_v2(path)
+            if classification == "v1":
+                migrate_schema_v1_to_v2(path)
+            migrate_schema_v2_to_v3(path)
             if classify_existing_database(path) != f"v{SCHEMA_VERSION}":
                 raise DatabaseGenerationError("数据库迁移后版本复检失败")
         except Exception:

@@ -358,7 +358,7 @@ test("supports audit filters, JSON diagnostics, and the admin token lifecycle", 
   }
 });
 
-test("acknowledges change and upcoming reminders with revision and kind", async () => {
+test("acknowledges a change notice by event id", async () => {
   const previousFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, options) => {
@@ -370,11 +370,11 @@ test("acknowledges change and upcoming reminders with revision and kind", async 
   };
   try {
     setCsrfToken("csrf-reminder");
-    await api.acknowledgeReminder("reservation/1", 7, "change");
-    assert.equal(requests[0].url, "/api/v1/reminders/reservation%2F1/ack");
+    await api.acknowledgeChangeNotice("event-1");
+    assert.equal(requests[0].url, "/api/v1/reminders/ack");
+    assert.equal(requests[0].options.method, "POST");
     assert.deepEqual(JSON.parse(requests[0].options.body), {
-      revision: 7,
-      kind: "change",
+      eventId: "event-1",
     });
     assert.equal(requests[0].options.headers["X-CSRF-Token"], "csrf-reminder");
   } finally {

@@ -81,7 +81,7 @@ class UpdateCoreTests(unittest.TestCase):
             for record in records_for_tree(root):
                 relative = f"_程序文件/{name}/{record['path']}"
                 files[relative] = root.joinpath(*str(record["path"]).split("/")).read_bytes()
-        files["_程序文件/app/service.py"] = b"# V2.2.3 updated service\n"
+        files["_程序文件/app/service.py"] = b"# V2.3.0 updated service\n"
         records = tuple(
             {
                 "path": relative,
@@ -101,8 +101,8 @@ class UpdateCoreTests(unittest.TestCase):
             "schema": 1,
             "kind": "v2-cumulative-update",
             "product_generation": 2,
-            "version": "2.2.3",
-            "release": "V2.2.3",
+            "version": "2.3.0",
+            "release": "V2.3.0",
         }
         return UpdateBundle(
             tool_root=self.root,
@@ -126,6 +126,8 @@ class UpdateCoreTests(unittest.TestCase):
         )
         for table in sorted(EXPECTED_V2_TABLES - {"app_meta"}):
             connection.execute(f'CREATE TABLE "{table}" (id TEXT PRIMARY KEY)')
+        # 回执表按 schema 版本二选一：假库使用 v3 形态（notice_receipts）。
+        connection.execute('CREATE TABLE "notice_receipts" (id TEXT PRIMARY KEY)')
         if setup_complete:
             connection.execute("INSERT INTO users VALUES ('admin')")
             connection.execute("INSERT INTO rooms VALUES ('room-1')")
@@ -156,6 +158,17 @@ class UpdateCoreTests(unittest.TestCase):
 
     def test_schema_v1_baseline_is_accepted_for_in_place_migration(self) -> None:
         self._create_v2_database(setup_complete=True, schema_version=1)
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["setup_complete"] = True
+        info_path.write_text(json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        identity = load_v2_identity(self.install_root)
+        self.assertTrue(identity.setup_complete)
+
+    def test_schema_v3_database_after_service_migration_is_accepted(self) -> None:
+        # 升级器替换程序并启动新服务后，服务已把数据库迁移到当前 schema；
+        # 终验（load_v2_identity）必须接受迁移后的 v3 数据库。
+        self._create_v2_database(setup_complete=True, schema_version=3)
         info_path = self.install_root / INSTALL_INFO
         info = json.loads(info_path.read_text(encoding="utf-8"))
         info["setup_complete"] = True
@@ -274,12 +287,12 @@ class UpdateCoreTests(unittest.TestCase):
             health_probe=None,
         ).run()
         self.assertEqual(result.source_version, "2.1.0")
-        self.assertEqual(result.target_version, "2.2.3")
-        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.2.3")
+        self.assertEqual(result.target_version, "2.3.0")
+        self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.3.0")
         self.assertEqual(unknown.read_bytes(), b"customer-data")
         self.assertEqual(
             (self.install_root / "_程序文件" / "app" / "service.py").read_bytes(),
-            b"# V2.2.3 updated service\n",
+            b"# V2.3.0 updated service\n",
         )
         self.assertFalse(controller.running)
         self.assertTrue(result.receipt_path.is_file())
@@ -296,7 +309,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.3")
+        self.assertEqual(result.target_version, "2.3.0")
         # Windows 上 app/runtime 由 os.replace 换入时只带继承 ACL，
         # 必须先重固化受保护 DACL 再进入 verify_security。
         self.assertEqual(events, ["apply", "verify"])
@@ -350,7 +363,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.3")
+        self.assertEqual(result.target_version, "2.3.0")
         self.assertFalse(list(program.glob(".update-displaced-*")))
 
     def test_windows_controller_reapplies_protected_dacl_on_program_roots(self) -> None:
@@ -426,8 +439,8 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.3")
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
+        self.assertEqual(result.target_version, "2.3.0")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.3.0")
         self.assertTrue(controller.running)
 
     def test_interrupted_transaction_rejects_tampered_snapshot_binding(self) -> None:
@@ -501,7 +514,7 @@ class UpdateCoreTests(unittest.TestCase):
             json.loads((self.install_root / INSTALL_INFO).read_text(encoding="utf-8"))[
                 "installed_version"
             ],
-            "2.2.3",
+            "2.3.0",
         )
         self.assertEqual((self.install_root / VERSION_FILE).read_text().strip(), "2.1.0")
 
@@ -512,8 +525,8 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.target_version, "2.2.3")
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
+        self.assertEqual(result.target_version, "2.3.0")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.3.0")
         self.assertTrue(controller.running)
 
     def test_committed_rerun_never_rolls_back_new_data_and_restores_run_state(self) -> None:
@@ -542,7 +555,7 @@ class UpdateCoreTests(unittest.TestCase):
         interrupted._restore = failed_rollback
         with self.assertRaises(UpdateRollbackError):
             interrupted.run()
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.2.3")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.3.0")
 
         result = V2UpdateTransaction(
             bundle,
@@ -551,7 +564,7 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
-        self.assertEqual(result.source_version, "2.2.3")
+        self.assertEqual(result.source_version, "2.3.0")
         self.assertEqual(new_data.read_bytes(), b"created-after-commit")
         self.assertTrue(controller.running)
 
@@ -641,7 +654,7 @@ class UpdateEntryElevationTests(unittest.TestCase):
                 return UpdateResult(
                     install_root=self.install_root,
                     source_version="2.1.0",
-                    target_version="2.2.3",
+                    target_version="2.3.0",
                     receipt_path=self.install_root / "receipt.json",
                 )
 

@@ -172,6 +172,25 @@ class GenerationAndSetupTests(BackendTestCase):
                 "ALTER TABLE user_preferences DROP COLUMN reminder_lead_minutes"
             )
             db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_sound")
+            db.execute("DROP TABLE notice_receipts")
+            db.execute(
+                """
+                CREATE TABLE reminder_receipts (
+                    reservation_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    reservation_revision INTEGER NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('change', 'upcoming')),
+                    delivered_at TEXT NOT NULL DEFAULT
+                        (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    acknowledged_at TEXT,
+                    PRIMARY KEY (reservation_id, user_id, reservation_revision, kind),
+                    FOREIGN KEY (reservation_id) REFERENCES reservations(id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
             db.execute(
                 "UPDATE app_meta SET value = '1' WHERE key = 'schema_version'"
             )
@@ -180,7 +199,7 @@ class GenerationAndSetupTests(BackendTestCase):
         with closing(sqlite3.connect(self.database)) as db, db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
             self.assertEqual(meta["product_generation"], "2")
-            self.assertEqual(meta["schema_version"], "2")
+            self.assertEqual(meta["schema_version"], "3")
             self.assertEqual(meta["setup_complete"], "0")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
             room_columns = {
@@ -194,10 +213,20 @@ class GenerationAndSetupTests(BackendTestCase):
                 {
                     "default_tag_slot",
                     "reminder_lead_minutes",
+                    "reminder_sound",
                     "reminder_template",
                 }.issubset(
                     preference_columns
                 )
+            )
+            self.assertIn(
+                "notice_receipts",
+                {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                },
             )
         self.assertEqual(determine_bind_host(self.app), "127.0.0.1")
 
@@ -226,7 +255,7 @@ class GenerationAndSetupTests(BackendTestCase):
         self.assertTrue(migrated.config["SYSTEM_READY"])
         with closing(sqlite3.connect(self.database)) as db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
-            self.assertEqual(meta["schema_version"], "2")
+            self.assertEqual(meta["schema_version"], "3")
             self.assertEqual(
                 db.execute(
                     "SELECT party_name FROM reservations WHERE id = ?", (booking["id"],)
@@ -235,11 +264,12 @@ class GenerationAndSetupTests(BackendTestCase):
             )
             self.assertEqual(
                 db.execute(
-                    "SELECT default_tag_slot, reminder_lead_minutes, reminder_template "
+                    "SELECT default_tag_slot, reminder_lead_minutes, reminder_sound, "
+                    "reminder_template "
                     "FROM user_preferences WHERE user_id = ?",
                     (user_id,),
                 ).fetchone(),
-                (None, 30, db_module.DEFAULT_REMINDER_TEMPLATE),
+                (None, 30, 1, db_module.DEFAULT_REMINDER_TEMPLATE),
             )
             self.assertEqual(
                 db.execute(
@@ -247,7 +277,17 @@ class GenerationAndSetupTests(BackendTestCase):
                 ).fetchone()[0],
                 1,
             )
+            self.assertIn(
+                "notice_receipts",
+                {
+                    row[0]
+                    for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                },
+            )
         self.assertFalse(db_module.migrate_schema_v1_to_v2(self.database))
+        self.assertFalse(db_module.migrate_schema_v2_to_v3(self.database))
 
     def test_schema_migration_failure_rolls_back_every_column_and_version(self):
         self.downgrade_schema_to_v1(self.database)
@@ -287,6 +327,145 @@ class GenerationAndSetupTests(BackendTestCase):
                     for row in db.execute("PRAGMA table_info(user_preferences)")
                 }
             )
+
+    @staticmethod
+    def downgrade_schema_to_v2(database: Path) -> None:
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_sound")
+            db.execute("DROP TABLE notice_receipts")
+            db.execute(
+                """
+                CREATE TABLE reminder_receipts (
+                    reservation_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    reservation_revision INTEGER NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('change', 'upcoming')),
+                    delivered_at TEXT NOT NULL DEFAULT
+                        (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    acknowledged_at TEXT,
+                    PRIMARY KEY (reservation_id, user_id, reservation_revision, kind),
+                    FOREIGN KEY (reservation_id) REFERENCES reservations(id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            db.execute(
+                "UPDATE app_meta SET value = '2' WHERE key = 'schema_version'"
+            )
+
+    def test_schema_v2_to_v3_converts_acknowledged_change_receipts(self):
+        self.setup_system()
+        self.login()
+        bootstrap = self.bootstrap()
+        room_id = bootstrap["rooms"][0]["id"]
+        employee_record = self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        created = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, start="09:00"),
+            client=employee,
+        ).get_json()
+        first_edit = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                room_id, start="10:00", expectedRevision=created["revision"]
+            ),
+        ).get_json()
+        notice = employee.get("/api/v1/reminders/due").get_json()["items"][0]
+        acknowledged = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
+            client=employee,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+        second_edit = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                room_id, start="11:00", expectedRevision=first_edit["revision"]
+            ),
+        ).get_json()
+
+        # 降级回 v2 形态，并把已确认回执写成 v2 的预约+版本维度。
+        self.downgrade_schema_to_v2(self.database)
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute(
+                """
+                INSERT INTO reminder_receipts (
+                    reservation_id, user_id, reservation_revision, kind, acknowledged_at
+                ) VALUES (?, ?, ?, 'change', '2026-08-10T00:10:00.000Z')
+                """,
+                (created["id"], employee_record["id"], first_edit["revision"]),
+            )
+
+        self.assertTrue(db_module.migrate_schema_v2_to_v3(self.database))
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'schema_version'"
+                ).fetchone()[0],
+                "3",
+            )
+            self.assertEqual(
+                db.execute("SELECT COUNT(*) FROM notice_receipts").fetchone()[0], 1
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT reminder_sound FROM user_preferences WHERE user_id = ?",
+                    (employee_record["id"],),
+                ).fetchone()[0],
+                1,
+            )
+        # 已确认的 rev2 变更不再出现；未确认的 rev3 变更仍然待确认。
+        remaining = [
+            item
+            for item in employee.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        self.assertEqual(
+            [(item["changeType"], item["revision"]) for item in remaining],
+            [("updated", second_edit["revision"])],
+        )
+        # 幂等：重复迁移直接返回 False。
+        self.assertFalse(db_module.migrate_schema_v2_to_v3(self.database))
+
+    def test_schema_v2_to_v3_failure_rolls_back_receipts_and_version(self):
+        self.downgrade_schema_to_v2(self.database)
+        original_add = db_module._add_column_if_missing
+
+        def fail_first_column(db, table, column, declaration):
+            original_add(db, table, column, declaration)
+            raise RuntimeError("v3 migration failpoint")
+
+        with mock.patch.object(
+            db_module,
+            "_add_column_if_missing",
+            side_effect=fail_first_column,
+        ):
+            state = db_module.prepare_database(self.database)
+        self.assertFalse(state.ready)
+        self.assertEqual(state.code, "DATABASE_MIGRATION_FAILED")
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT value FROM app_meta WHERE key = 'schema_version'"
+                ).fetchone()[0],
+                "2",
+            )
+            tables = {
+                row[0]
+                for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            self.assertIn("reminder_receipts", tables)
+            self.assertNotIn("notice_receipts", tables)
 
     def test_v1_database_is_rejected_without_mutation_or_identity_files(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1775,23 +1954,28 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
             self.client.get("/api/v1/display/today").get_json()["rooms"], []
         )
 
-    def test_reminder_ack_is_revision_scoped(self):
+    def test_upcoming_reminders_are_state_and_need_no_ack(self):
         self.now = datetime(2026, 8, 10, 8, 40, tzinfo=timezone(timedelta(hours=8)))
         booking = self.create_booking(start="09:00", duration=30)
         due = self.client.get("/api/v1/reminders/due").get_json()["items"]
-        self.assertEqual([item["id"] for item in due], [booking["id"]])
-        ack = self.write(
-            "POST",
-            f"/api/v1/reminders/{booking['id']}/ack",
-            {"revision": 1, "kind": "upcoming"},
+        self.assertEqual(
+            [(item["id"], item["kind"]) for item in due],
+            [(booking["id"], "upcoming")],
         )
-        self.assertEqual(ack.status_code, 200)
-        self.assertEqual(self.client.get("/api/v1/reminders/due").get_json()["items"], [])
+        # 临近提醒是状态而非待办：重复读取持续可见，不需要确认。
+        repeated = self.client.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([item["id"] for item in repeated], [booking["id"]])
+        # 窗口移出后条目自然消失。
+        self.now = datetime(2026, 8, 10, 8, 20, tzinfo=timezone(timedelta(hours=8)))
+        self.assertEqual(
+            self.client.get("/api/v1/reminders/due").get_json()["items"], []
+        )
 
-    def test_reminder_lead_preference_drives_due_and_ack_from_one_current_window(self):
+    def test_reminder_lead_preference_and_sound_drive_due_window(self):
         self.now = datetime(2026, 8, 10, 8, 10, tzinfo=timezone(timedelta(hours=8)))
         booking = self.create_booking(start="09:00", duration=30)
         self.assertEqual(self.bootstrap()["preferences"]["reminderLeadMinutes"], 30)
+        self.assertTrue(self.bootstrap()["preferences"]["reminderSound"])
         self.assertEqual(
             self.client.get("/api/v1/reminders/due").get_json()["items"], []
         )
@@ -1812,6 +1996,14 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
                     {"reminderLeadMinutes": invalid},
                 )
                 self.assertEqual(response.status_code, 422, response.get_json())
+        for invalid_sound in ("1", 1, "yes"):
+            with self.subTest(reminderSound=invalid_sound):
+                response = self.write(
+                    "PUT",
+                    "/api/v1/preferences",
+                    {"reminderSound": invalid_sound},
+                )
+                self.assertEqual(response.status_code, 422, response.get_json())
 
         due_with_larger_window = self.client.get(
             "/api/v1/reminders/due"
@@ -1826,20 +2018,14 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         self.assertEqual(
             self.client.get("/api/v1/reminders/due").get_json()["items"], []
         )
-        outside_window = self.write(
-            "POST",
-            f"/api/v1/reminders/{booking['id']}/ack",
-            {"revision": booking["revision"], "kind": "upcoming"},
-        )
-        self.assertEqual(outside_window.status_code, 409, outside_window.get_json())
-        self.assertEqual(outside_window.get_json()["error"]["code"], "REMINDER_NOT_DUE")
 
         disabled = self.write(
             "PUT",
             "/api/v1/preferences",
-            {"bookingReminder": False, "reminderLeadMinutes": 60},
+            {"bookingReminder": False, "reminderSound": False, "reminderLeadMinutes": 60},
         )
         self.assertFalse(disabled.get_json()["bookingReminder"])
+        self.assertFalse(disabled.get_json()["reminderSound"])
         self.assertEqual(disabled.get_json()["reminderLeadMinutes"], 60)
         self.assertEqual(
             self.client.get("/api/v1/reminders/due").get_json()["items"], []
@@ -1847,20 +2033,21 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         enabled = self.write(
             "PUT",
             "/api/v1/preferences",
-            {"bookingReminder": True},
+            {"bookingReminder": True, "reminderSound": True},
         )
+        self.assertTrue(enabled.get_json()["bookingReminder"])
+        self.assertTrue(enabled.get_json()["reminderSound"])
         self.assertEqual(enabled.get_json()["reminderLeadMinutes"], 60)
-        acknowledged = self.write(
-            "POST",
-            f"/api/v1/reminders/{booking['id']}/ack",
-            {"revision": booking["revision"], "kind": "upcoming"},
+        self.assertEqual(
+            [item["id"] for item in self.client.get("/api/v1/reminders/due").get_json()["items"]],
+            [booking["id"]],
         )
-        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
 
-    def test_external_change_and_upcoming_receipts_are_independent(self):
+    def test_change_notices_are_event_scoped_and_survive_later_edits(self):
         self.add_employee()
         employee = self.app.test_client()
         self.login("employee", "employee-pass-123", employee)
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
         created = self.write(
             "POST",
             "/api/v1/reservations",
@@ -1878,30 +2065,175 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         )
         self.assertEqual(changed.status_code, 200, changed.get_json())
         revision = changed.get_json()["revision"]
+
+        # 本人随后又自行修改：旧的管理员变更通知必须仍然待确认（回归：按当前版本
+        # 联接的旧实现会把它静默丢弃）。
+        self_edited = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:30",
+                expectedRevision=revision,
+            ),
+            client=employee,
+        )
+        self.assertEqual(self_edited.status_code, 200, self_edited.get_json())
+
         notifications = employee.get("/api/v1/reminders/due").get_json()["items"]
         self.assertEqual(
             [(item["kind"], item["changeType"]) for item in notifications],
             [("change", "updated")],
         )
+        notice = notifications[0]
+        self.assertEqual(notice["revision"], self_edited.get_json()["revision"])
+        self.assertEqual(notice["actorName"], "系统管理员")
+        self.assertTrue(notice["eventId"])
+        self.assertEqual(
+            notice["noticeIdentity"],
+            {
+                "partyName": "张晓燕",
+                "purpose": "工伤笔录",
+                "date": "2026-08-10",
+                "start": "09:00",
+                "end": "10:00",
+                "roomName": created["roomName"],
+            },
+        )
+        # 通知摘要绑定管理员变更发生前的事件快照，不被本人随后改到 10:30 污染。
+        self.assertNotEqual(notice["noticeIdentity"]["start"], notice["start"])
+        fields = {diff["field"]: diff for diff in notice["diffs"]}
+        self.assertEqual(fields["start"], {"field": "start", "from": "09:00", "to": "10:00"})
+        self.assertEqual(fields["end"], {"field": "end", "from": "10:00", "to": "11:00"})
+
+        # 只有预约本人能按事件确认；管理员代确认被拒绝。
+        denied = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
         acknowledged = self.write(
             "POST",
-            f"/api/v1/reminders/{created['id']}/ack",
-            {"revision": revision, "kind": "change"},
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
+            client=employee,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+        # 事件维度确认幂等。
+        again = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
+            client=employee,
+        )
+        self.assertEqual(again.status_code, 200, again.get_json())
+        self.assertEqual(
+            [item for item in employee.get("/api/v1/reminders/due").get_json()["items"]
+             if item["kind"] == "change"],
+            [],
+        )
+
+        # 临近提醒与变更通知互相独立：变更已确认不影响临近条目出现。
+        self.now = datetime(2026, 8, 10, 10, 10, tzinfo=timezone(timedelta(hours=8)))
+        upcoming = employee.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual(
+            [(item["kind"], item["start"]) for item in upcoming],
+            [("upcoming", "10:30")],
+        )
+
+    def test_change_notice_expiry_and_receipt_pruning(self):
+        self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        self.now = datetime(2026, 8, 10, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        created = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(self.room_id, start="09:00"),
+            client=employee,
+        ).get_json()
+        self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:00",
+                expectedRevision=created["revision"],
+            ),
+        )
+        notice = employee.get("/api/v1/reminders/due").get_json()["items"][0]
+        acknowledged = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
             client=employee,
         )
         self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
 
-        self.now = datetime(2026, 8, 10, 9, 40, tzinfo=timezone(timedelta(hours=8)))
-        upcoming = employee.get("/api/v1/reminders/due").get_json()["items"]
-        self.assertEqual([(item["kind"], item["revision"]) for item in upcoming], [("upcoming", revision)])
-        ack_upcoming = self.write(
+        # 超过 45 天的未确认变更事件过期，不再出现。
+        self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="11:00",
+                expectedRevision=notice["revision"],
+            ),
+        )
+        stale = employee.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([item["kind"] for item in stale], ["change"])
+        stale_event_id = stale[0]["eventId"]
+        with closing(
+            sqlite3.connect(self.database)
+        ) as db, db:
+            db.execute(
+                "UPDATE reservation_events SET occurred_at = '2026-06-01T00:00:00.000Z'"
+                " WHERE id = ?",
+                (stale_event_id,),
+            )
+        self.assertEqual(
+            [item for item in employee.get("/api/v1/reminders/due").get_json()["items"]
+             if item["kind"] == "change"],
+            [],
+        )
+
+        # 确认动作顺带清理 90 天前的旧回执。
+        with closing(
+            sqlite3.connect(self.database)
+        ) as db, db:
+            db.execute(
+                "UPDATE notice_receipts SET acknowledged_at = '2026-05-01T00:00:00.000Z'"
+            )
+            rows_before = db.execute("SELECT COUNT(*) FROM notice_receipts").fetchone()[0]
+        self.assertEqual(rows_before, 1)
+        self.write(
+            "PATCH",
+            f"/api/v1/reservations/{created['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="12:00",
+                expectedRevision=stale[0]["revision"],
+            ),
+        )
+        fresh = [
+            item
+            for item in employee.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        self.assertEqual(len(fresh), 1)
+        pruned = self.write(
             "POST",
-            f"/api/v1/reminders/{created['id']}/ack",
-            {"revision": revision, "kind": "upcoming"},
+            "/api/v1/reminders/ack",
+            {"eventId": fresh[0]["eventId"]},
             client=employee,
         )
-        self.assertEqual(ack_upcoming.status_code, 200, ack_upcoming.get_json())
-        self.assertEqual(employee.get("/api/v1/reminders/due").get_json()["items"], [])
+        self.assertEqual(pruned.status_code, 200, pruned.get_json())
+        with closing(
+            sqlite3.connect(self.database)
+        ) as db:
+            rows_after = db.execute("SELECT COUNT(*) FROM notice_receipts").fetchone()[0]
+        self.assertEqual(rows_after, 1)
 
     def test_backup_diagnostics_and_token_read_scope(self):
         backup = self.write("POST", "/api/v1/admin/backups")

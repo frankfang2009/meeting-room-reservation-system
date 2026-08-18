@@ -160,7 +160,7 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             (backend / name).write_text("# synthetic\n", encoding="utf-8")
         (backend / "v2app" / "__init__.py").write_text("# synthetic\n", encoding="utf-8")
         (backend / "v2app" / "api" / "__init__.py").write_text("# synthetic\n", encoding="utf-8")
-        (self.root / "VERSION").write_text("2.2.3\n", encoding="utf-8")
+        (self.root / "VERSION").write_text("2.3.0\n", encoding="utf-8")
         frontend_dir = self.root / "frontend"
         frontend_dir.mkdir()
         (frontend_dir / "package-lock.json").write_text(
@@ -220,7 +220,7 @@ class MacOSPackageBuilderTests(unittest.TestCase):
                 output_dir=output_dir,
             )
             outputs.append(output_dir / Path(summary["artifact"]).name)
-            self.assertEqual(summary["version"], "2.2.3")
+            self.assertEqual(summary["version"], "2.3.0")
         self.assertEqual(
             outputs[0].read_bytes(), outputs[1].read_bytes(), "两次构建必须字节一致"
         )
@@ -274,8 +274,8 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             {
                 "product": "meeting-room-reservation-system-v2",
                 "channel": "macos-selfhost",
-                "version": "2.2.3",
-                "tag": "v2.2.3",
+                "version": "2.3.0",
+                "tag": "v2.3.0",
             },
         )
 

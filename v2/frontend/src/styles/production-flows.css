@@ -267,3 +267,384 @@
   cursor: wait;
   opacity: 0.65;
 }
+
+/* 预约变更通知：先交代哪一条原预约，再用竖向时间线讲清楚具体变化。 */
+.notice-modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 20, 19, 0.32);
+  animation: notice-modal-fade 180ms ease;
+}
+
+.notice-modal {
+  width: 660px;
+  max-width: 100%;
+  max-height: min(660px, calc(100vh - 64px));
+  display: flex;
+  flex-direction: column;
+  padding: 30px 32px 20px;
+  background: var(--paper-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(20, 20, 19, 0.22);
+}
+
+.notice-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.notice-modal-icon {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  display: grid;
+  place-items: center;
+  color: var(--terracotta-text);
+  background: var(--terracotta-soft);
+  border: 1px solid rgba(217, 119, 87, 0.16);
+  border-radius: 13px;
+}
+
+.notice-modal-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.notice-modal-head p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.notice-modal-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.notice-modal-item + .notice-modal-item {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--hairline);
+}
+
+.notice-item-meta {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.notice-modal-item h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.notice-modal-item h3 em {
+  color: var(--terracotta-text);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.notice-item-identity {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin: 18px 0 0;
+  padding: 16px 18px;
+  background: var(--paper-soft);
+  border: 1px solid rgba(20, 20, 19, 0.055);
+  border-radius: 10px;
+}
+
+.notice-item-identity div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.notice-item-identity dt {
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.notice-item-identity dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.notice-item-identity .notice-identity-schedule {
+  grid-column: auto;
+}
+
+.notice-identity-unavailable {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  background: var(--paper-soft);
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.notice-item-cancelled {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  color: var(--terracotta-text);
+  background: var(--terracotta-soft);
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.notice-item-changes {
+  margin-top: 24px;
+}
+
+.notice-item-changes h4 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.notice-item-diffs {
+  position: relative;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.notice-item-diffs::before {
+  content: "";
+  position: absolute;
+  top: 15px;
+  bottom: 15px;
+  left: 3px;
+  width: 1px;
+  background: var(--terracotta-line);
+}
+
+.notice-item-diffs div {
+  position: relative;
+  display: grid;
+  grid-template-columns: 86px minmax(72px, 1fr) 22px minmax(84px, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-height: 56px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 13px;
+}
+
+.notice-item-diffs div:last-child {
+  border-bottom: 0;
+}
+
+.notice-diff-marker {
+  position: absolute;
+  left: -18px;
+  color: var(--terracotta);
+}
+
+.notice-item-diffs dt {
+  color: var(--ink-secondary);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.notice-item-diffs dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.notice-diff-before {
+  color: var(--faint);
+  text-decoration: line-through;
+  text-decoration-color: rgba(109, 108, 102, 0.45);
+}
+
+.notice-diff-arrow {
+  color: var(--terracotta-text);
+  justify-self: center;
+}
+
+.notice-diff-after {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.notice-item-diffs div:last-child .notice-diff-after {
+  color: var(--terracotta-text);
+}
+
+.notice-item-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.notice-item-actions button {
+  min-width: 96px;
+  min-height: 44px;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  color: var(--ink-secondary);
+  background: var(--paper-raised);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+}
+
+.notice-item-actions button:hover:not(:disabled) {
+  border-color: rgba(20, 20, 19, 0.3);
+  background: rgba(20, 20, 19, 0.025);
+}
+
+.notice-item-actions .notice-item-ack {
+  color: var(--paper-raised);
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.notice-item-actions .notice-item-ack:hover:not(:disabled) {
+  background: var(--ink-secondary);
+  border-color: var(--ink-secondary);
+}
+
+.notice-item-actions button:disabled,
+.notice-ack-all:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.notice-modal-single-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--hairline);
+}
+
+.notice-modal-single-foot .notice-item-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.notice-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.notice-ack-all {
+  min-height: 44px;
+  padding: 0 16px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--paper-raised);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 9px;
+}
+
+.notice-modal-hint {
+  margin: 0;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.notice-modal-multi-hint {
+  margin-top: 10px;
+  text-align: right;
+}
+
+/* 抽屉打开期间排队等待的变更提醒：安静的信息条，关闭抽屉后弹窗立即出现。 */
+.notice-queue-chip {
+  position: fixed;
+  top: 14px;
+  left: calc(50% + var(--rail-width) / 2);
+  transform: translateX(-50%);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--terracotta-text);
+  background: var(--terracotta-soft);
+  border: 1px dashed var(--terracotta-line);
+  border-radius: 10px;
+}
+
+@keyframes notice-modal-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 680px) {
+  .notice-modal-layer {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .notice-modal {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+    padding: 22px 20px 18px;
+  }
+
+  .notice-item-identity {
+    grid-template-columns: 1fr;
+  }
+
+  .notice-item-identity .notice-identity-schedule {
+    grid-column: auto;
+  }
+
+  .notice-item-diffs div {
+    grid-template-columns: 72px minmax(56px, 1fr) 18px minmax(64px, 1fr);
+    gap: 6px;
+  }
+
+  .notice-modal-single-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .notice-modal-single-foot .notice-item-actions {
+    width: 100%;
+  }
+
+  .notice-item-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}

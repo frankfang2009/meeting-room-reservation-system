@@ -552,6 +552,25 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 "ALTER TABLE user_preferences DROP COLUMN reminder_lead_minutes"
             )
             db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
+            db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_sound")
+            db.execute("DROP TABLE notice_receipts")
+            db.execute(
+                """
+                CREATE TABLE reminder_receipts (
+                    reservation_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    reservation_revision INTEGER NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('change', 'upcoming')),
+                    delivered_at TEXT NOT NULL DEFAULT
+                        (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    acknowledged_at TEXT,
+                    PRIMARY KEY (reservation_id, user_id, reservation_revision, kind),
+                    FOREIGN KEY (reservation_id) REFERENCES reservations(id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
             db.execute(
                 "UPDATE app_meta SET value = '1' WHERE key = 'schema_version'"
             )
@@ -577,7 +596,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         )
         self.assertEqual(sidecar["databaseSha256"], sha256_file(first_path))
         self.assertEqual(sidecar["sequence"], 1)
-        self.assertEqual(sidecar["databaseSchemaVersion"], 2)
+        self.assertEqual(sidecar["databaseSchemaVersion"], 3)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
         self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
         self.assertFalse(Path(str(first_path) + "-wal").exists())
@@ -889,7 +908,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 db.execute(
                     "SELECT value FROM app_meta WHERE key = 'schema_version'"
                 ).fetchone()[0],
-                "2",
+                "3",
             )
             self.assertIsNone(
                 db.execute(

@@ -71,10 +71,10 @@
 
 .rail-reminder-badge {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 18px;
-  height: 18px;
+  top: -3px;
+  right: -5px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   color: var(--paper-raised);
@@ -82,6 +82,10 @@
   border-radius: 50%;
   background: var(--terracotta);
   box-shadow: 0 1px 5px rgba(20, 20, 19, 0.16);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   pointer-events: none;
 }
 
