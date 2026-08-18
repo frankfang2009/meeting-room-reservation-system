@@ -388,10 +388,10 @@ final result: passed (check.sh 全绿：backend 118、installer 84、跨层 29�
 
 ### 对照目标与归一化
 
-- 来源视觉真值：`/Users/frank/.codex/generated_images/01a01412-2061-7d71-82bb-b4e8ee12bf11/exec-753b75d7-23e0-4bae-9f21-09664e201f7d.png`。
-- 浏览器最终实现：`/Users/frank/Desktop/projects/预约系统/99_临时文件/v230-notice-redesign-qa-final.png`。
-- 同图对照：`/Users/frank/Desktop/projects/预约系统/99_临时文件/v230-notice-redesign-compare-final.png`。
-- 窄屏实现：`/Users/frank/Desktop/projects/预约系统/99_临时文件/v230-notice-redesign-qa-640-final.png`。
+- 来源视觉真值（本地、不跟踪）：`<Codex generated-images>/01a01412-2061-7d71-82bb-b4e8ee12bf11/exec-753b75d7-23e0-4bae-9f21-09664e201f7d.png`。
+- 浏览器最终实现（工作区本地、不跟踪）：`99_临时文件/v230-notice-redesign-qa-final.png`。
+- 同图对照（工作区本地、不跟踪）：`99_临时文件/v230-notice-redesign-compare-final.png`。
+- 窄屏实现（工作区本地、不跟踪）：`99_临时文件/v230-notice-redesign-qa-640-final.png`。
 - 来源与桌面实现均为 1495×1052 像素；CSS 视口 1495×1052，浏览器
   `devicePixelRatio=1`，未缩放、未裁切。窄屏 CSS 视口与截图均为 640×900。
 - 状态：员工本人创建的“王芳 / 工伤笔录 / 2026-08-19 12:00–13:00 / 第一笔录室”
