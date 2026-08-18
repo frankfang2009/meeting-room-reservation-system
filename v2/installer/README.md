@@ -1,6 +1,6 @@
 # V2 安装与累计更新基线
 
-本目录实现 V2.3.0 全新安装、V2.1.0 起源离线累计升级与 macOS 自托管便携包，
+本目录实现 V2.4.0 全新安装、V2.1.0 起源离线累计升级与 macOS 自托管便携包，
 不包含 V1 迁移、导入、目录搜索或自动删除。
 
 ## 先组装客户 payload
@@ -70,7 +70,7 @@ wheel 文件冲突、路径穿越、链接、`.data` 特殊安装布局和许可
 python3 -m v2.installer.build_package \
   --payload-root /absolute/path/to/payload \
   --runtime-root /absolute/path/to/runtime \
-  --output /absolute/path/to/会议室预约系统-V2.3.0-安装包.zip
+  --output /absolute/path/to/会议室预约系统-V2.4.0-安装包.zip
 ```
 
 构建器生成 ZIP、外部 SHA-256、发布清单、制品级 SBOM、第三方许可证说明和 runtime
@@ -78,7 +78,7 @@ python3 -m v2.installer.build_package \
 CPython/Python 依赖及前端 package-lock 中的生产依赖；runtime provenance 仍与 ZIP 内
 同名材料逐字节一致。所有侧车哈希、正式 package-lock 摘要都写入内外清单。payload、runtime、`install.py` 和
 `installer_core.py` 均有文件级和树级 SHA-256 清单并反向加载验证。ZIP 顶层
-只有零参数 `安装V2.3.0.bat`、安装说明和 `_V2安装工具`。SHA-256 只能证明与
+只有零参数 `安装V2.4.0.bat`、安装说明和 `_V2安装工具`。SHA-256 只能证明与
 已知摘要一致，不能代替代码签名、上游制品签名复核或可信发布渠道。
 构建时还会要求 payload 中随正式后端交付的 `requirements-win-amd64.lock` 与
 runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 package-lock SHA，
@@ -184,8 +184,8 @@ python -m v2.installer.build_macos_package \
 
 # 3) 从已校验 zip 生成 DMG 并反向核对内容
 python -m v2.installer.build_macos_dmg \
-  --from-zip /absolute/path/to/output/会议室预约系统-V2.3.0-macOS-arm64.zip \
-  --output /absolute/path/to/output/会议室预约系统-V2.3.0-macOS-arm64.dmg
+  --from-zip /absolute/path/to/output/会议室预约系统-V2.4.0-macOS-arm64.zip \
+  --output /absolute/path/to/output/会议室预约系统-V2.4.0-macOS-arm64.dmg
 ```
 
 zip 是字节级可复现事实源（CI 候选车道做两次独立构建 `cmp`）；DMG 只做内容级

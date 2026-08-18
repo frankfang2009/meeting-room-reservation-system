@@ -18,15 +18,15 @@ def read(relative: str) -> str:
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.3.0")
+        self.assertEqual(read("VERSION").strip(), "2.4.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.3.0")
+        self.assertEqual(package["version"], "2.4.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(package["scripts"]["build"], "vite build")
-        self.assertIn('PRODUCT_VERSION = "V2.3.0"', read("backend/v2app/__init__.py"))
+        self.assertIn('PRODUCT_VERSION = "V2.4.0"', read("backend/v2app/__init__.py"))
         installer = read("installer/installer_core.py")
-        self.assertIn('VERSION = "2.3.0"', installer)
-        self.assertIn('RELEASE = "V2.3.0"', installer)
+        self.assertIn('VERSION = "2.4.0"', installer)
+        self.assertIn('RELEASE = "V2.4.0"', installer)
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -153,9 +153,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('data_dir / "reservation.db"', app_factory)
         self.assertIn('"data" / "reservation.db"', updater)
         self.assertRegex(database, r"PRODUCT_GENERATION\s*=\s*2")
-        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*3")
+        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*4")
         self.assertIn(
-            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, SCHEMA_VERSION})", database
+            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, SCHEMA_VERSION})", database
         )
         self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 
@@ -312,7 +312,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.3.0.bat")
+        launcher = read("installer/安装V2.4.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
@@ -384,7 +384,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         updater = read("installer/update_core.py")
         builder = read("installer/build_update_package.py")
         entry = read("installer/update.py")
-        launcher = read("installer/升级到V2.3.0.bat")
+        launcher = read("installer/升级到V2.4.0.bat")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = True", updater)
         self.assertIn('SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})', updater)

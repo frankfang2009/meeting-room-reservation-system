@@ -222,6 +222,8 @@ def serialize_reservation(row: Any, actor: Optional[dict[str, Any]] = None) -> d
 def _snapshot(row: Any) -> dict[str, Any]:
     item = dict(row)
     return {
+        "ownerId": item["owner_user_id"],
+        "ownerName": item["owner_name_snapshot"],
         "roomId": item["room_id"],
         "roomName": item["room_name_snapshot"],
         "date": item["booking_date"],

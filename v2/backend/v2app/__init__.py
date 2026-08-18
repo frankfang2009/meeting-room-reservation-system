@@ -29,7 +29,7 @@ from .security import register_security
 from .services import update_check
 
 
-PRODUCT_VERSION = "V2.3.0"
+PRODUCT_VERSION = "V2.4.0"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
@@ -182,6 +182,7 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
     from .api.display import bp as display_bp
     from .api.preferences import bp as preferences_bp
     from .api.reports import bp as reports_bp
+    from .api.handovers import bp as handovers_bp
     from .api.reminders import bp as reminders_bp
     from .api.reservations import bp as reservations_bp
     from .api.system import bp as system_bp
@@ -194,6 +195,7 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         reports_bp,
         preferences_bp,
         reminders_bp,
+        handovers_bp,
         display_bp,
         system_bp,
     ):

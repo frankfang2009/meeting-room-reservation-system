@@ -1,6 +1,6 @@
 {
   "name": "meeting-room-v2-frontend",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "会议室预约系统 V2 的 React 前端",
   "license": "Apache-2.0",

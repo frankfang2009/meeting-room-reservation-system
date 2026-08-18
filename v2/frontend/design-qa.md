@@ -449,3 +449,23 @@ final result: passed (check.sh 全绿：backend 118、installer 84、跨层 29�
   取舍，不影响身份识别、阅读顺序或可操作性。
 
 final result: passed
+
+### V2.4.0 工作交接 · 真实服务 E2E（2026-08-18 晚）
+
+- 走查环境：worktree 内真实 Flask/waitress（`127.0.0.1:8080`）+ 隔离全新数据（宽工作
+  时间、双笔录室、管理员+双员工、当日多场预约）。
+- API 级真实 E2E（真实 HTTP 会话/CSRF/SQLite，10/10 通过）：①三账号登录；②员工甲
+  建约；③员工目录最小投影（姓名+部门）；④发起交接 → pending；⑤员工乙经
+  `/handover-requests` 与 `/reminders/due`（kind=handover、fromName）触达；⑥接受 →
+  归属翻转（revision+1、owner 姓名快照、handover 事件链 A→B、甲 upcoming 移出）；
+  ⑦`handover.accepted` 审计；⑧管理员强制指派立即生效；⑨发起人撤回后对方收件清空；
+  ⑩发起后编辑预约 → 接受返回 409 REVISION_CONFLICT 且请求作废。附加验证：交接给
+  现任 owner 被正确拒绝（422 不能交接给自己）。
+- 浏览器通道限制（如实记录）：本会话后期 IAB 的指针事件通道间歇性失灵（页面渲染、
+  表单填充、DOM 读取均正常，但按钮点击无响应，重开新标签页无效），属测试环境问题。
+  交接 UI 建立在 V2.3.0 已实测通过的需处理弹窗/抽屉基础设施上，交互细节由 162 项
+  前端契约测试与源码审查覆盖；待环境恢复后可补一次真实浏览器点击走查。
+- 门禁：check.sh 全绿（backend 128 / installer 85 / 跨层 29 / frontend 162 +
+  Vite 生产构建 + ruff + git diff --check）。
+
+final result: passed (check.sh 全绿 + 真实服务 API 级 E2E 10/10；浏览器点击走查待环境恢复后补)

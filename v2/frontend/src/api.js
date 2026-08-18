@@ -171,6 +171,24 @@ export const api = {
     body: { eventId },
   }),
 
+  createHandover: (reservationId, toUserId) => request(`/reservations/${encodeURIComponent(reservationId)}/handover`, {
+    method: "POST",
+    body: { toUserId },
+  }),
+  acceptHandover: (requestId) => request(`/handover-requests/${encodeURIComponent(requestId)}/accept`, {
+    method: "POST",
+    body: {},
+  }),
+  declineHandover: (requestId) => request(`/handover-requests/${encodeURIComponent(requestId)}/decline`, {
+    method: "POST",
+    body: {},
+  }),
+  withdrawHandover: (requestId) => request(`/handover-requests/${encodeURIComponent(requestId)}`, {
+    method: "DELETE",
+  }),
+  getHandoverRequests: () => request("/handover-requests"),
+  getUserDirectory: () => request("/users/directory"),
+
   getSystem: () => request("/admin/system"),
   checkForUpdate: () => request("/admin/system/update-check", { method: "POST" }),
   updateSystemSettings: (input) => request("/admin/settings", { method: "PUT", body: input }),

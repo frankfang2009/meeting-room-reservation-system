@@ -196,8 +196,10 @@ test("toast tones map success, information, and errors to honest icons", () => {
   assert.match(app, /个人设置已保存", "success"/);
 });
 
-test("change notifications start the same due-reminder poller", () => {
-  assert.match(app, /bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications/);
+test("the due-reminder poller stays on for handover requests regardless of switches", () => {
+  // V2.4.0：交接请求是待办而非通知，两项提醒开关全关也保持轮询。
+  assert.match(app, /\/\/ 交接请求是待办而非通知：即使两项提醒开关全关也保持轮询。/);
+  assert.doesNotMatch(app, /if \(!bootstrap\?\.preferences\?\.bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications\) \{[\s\S]{0,200}return undefined/);
 });
 
 test("reminder lead preference controls both visible copy and editability", () => {
@@ -210,7 +212,7 @@ test("reminder lead preference controls both visible copy and editability", () =
 });
 
 test("external reminder copy stays manual, scoped, and recoverable", () => {
-  assert.match(app, /canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /const canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /canCopyReminder && <button className="copy-reminder-button"/);
   assert.match(app, /renderReminderTemplate\(bootstrap\?\.preferences\?\.reminderTemplate/);
   assert.match(app, /提醒信息已复制，可在微信中粘贴发送", "success"/);
@@ -249,9 +251,26 @@ test("upcoming reminders live in the calendar with a counting badge and a one-ti
   assert.doesNotMatch(app, /openMineAndAcknowledgeReminder/);
 });
 
+test("handover requests ride the action modal, the mine board, and the details drawer", () => {
+  assert.match(app, /dueReminders\.handovers\.length > 0/);
+  assert.match(app, /decideHandover\(item\.handoverRequestId, "accept"\)/);
+  assert.match(app, /decideHandover\(item\.handoverRequestId, "decline"\)/);
+  assert.match(app, /交接请求需选择接受或拒绝/);
+  assert.match(app, /const canHandover = booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /drawer\.type === "handover"/);
+  assert.match(app, /api\.getUserDirectory\(\)/);
+  assert.match(app, /sendHandover\(booking\.id, user\.id\)/);
+  assert.match(app, /指派立即生效，对方无需确认/);
+  assert.match(app, /className="handover-board" aria-label="待处理交接"/);
+  assert.match(app, /withdrawHandoverRequest\(request\.id\)/);
+  assert.match(app, /reservationEventLabel/);
+  assert.match(productionSource, /handover: "预约已交接"/);
+  assert.match(productionSource, /预约人由 \$\{from\} 交接给 \$\{to\}/);
+});
+
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
-  assert.match(app, /const noticeModalOpen = dueReminders\.changes\.length > 0 && !drawer && !sessionExpired;/);
-  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,220}mainRef,/);
+  assert.match(app, /const noticeModalOpen = \(dueReminders\.changes\.length > 0 \|\| dueReminders\.handovers\.length > 0\) && !drawer && !sessionExpired;/);
+  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,420}mainRef,/);
   assert.match(app, /<\/div>\s*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
   assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);
   assert.match(app, /noticeDiffRows\(item\.diffs\)/);
@@ -264,7 +283,7 @@ test("change notices require an explicit centered modal with field diffs and dra
   assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
   assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
   // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
-  assert.match(app, /\{drawer && dueReminders\.changes\.length > 0 && <div className="notice-queue-chip"/);
+  assert.match(app, /\{drawer && \(dueReminders\.changes\.length > 0 \|\| dueReminders\.handovers\.length > 0\) && <div className="notice-queue-chip"/);
   assert.match(app, /将在您关闭当前窗口后出现/);
 });
 

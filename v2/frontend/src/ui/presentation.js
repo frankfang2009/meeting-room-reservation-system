@@ -70,6 +70,11 @@ export function formatLocalDateTime(value) {
 export function reservationEventSummary(event) {
   if (event?.type === "created") return "预约已创建";
   if (event?.type === "cancelled") return "预约已取消";
+  if (event?.type === "handover") {
+    const from = event?.before?.ownerName || "原预约人";
+    const to = event?.after?.ownerName || "新预约人";
+    return `预约人由 ${from} 交接给 ${to}`;
+  }
   const labels = { roomId: "笔录室", date: "日期", start: "开始时间", end: "结束时间", partyName: "预约对象", caseNumber: "案号", purpose: "事项", notes: "备注", tagId: "标签" };
   const changed = Object.keys(labels).filter((key) => event?.before?.[key] !== event?.after?.[key]);
   return changed.length ? `${changed.map((key) => labels[key]).join("、")}已修改` : "预约内容已更新";

@@ -39,7 +39,9 @@ const expectedFiles = [
 // 成功确认条轻落入场（runtime-states.css）。
 // V2.3.0 提醒重做：日历倒计时角标与「今天」圆点（calendar.css）、
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
-const frozenSourceSha256 = "8cf9f18f6ad5f9ad8dc912a3b4ff75e316775a9a83b54fb26db16f91f20ecd16";
+// V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
+// 「我的预约」待处理交接区块（dashboard.css）。
+const frozenSourceSha256 = "2e7fa0f0aec467f4bf02b0803438994c56a66622d32e7bd009911fcfac6b5f4c";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

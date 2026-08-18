@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ArrowClockwise,
   ArrowRight,
+  ArrowsLeftRight,
   Asterisk,
   CalendarBlank,
   ChartBar,
@@ -927,7 +928,7 @@ function BookingForm({ form, setForm, errors, rooms, tags, settings, maximumDura
   </form>;
 }
 
-function BookingDetails({ booking, tag, dateSubtitle, canCopyReminder, canEdit, canCancel, events, eventsState, eventsAllowed, onCopyReminder, onEdit, onCancel, onClose, onRetryEvents }) {
+function BookingDetails({ booking, tag, dateSubtitle, canCopyReminder, canHandover, handoverLabel, onHandover, canEdit, canCancel, events, eventsState, eventsAllowed, onCopyReminder, onEdit, onCancel, onClose, onRetryEvents }) {
   return <div className="booking-details">
     <div className="selection-summary"><h2>{booking.start}–{booking.end}</h2><p>{dateSubtitle || dateLabel(booking.date)}</p>{booking.status && <span className={`drawer-status ${booking.status}`}><i />{reservationStatusLabel(booking.status)}</span>}</div>
     <dl>
@@ -943,7 +944,7 @@ function BookingDetails({ booking, tag, dateSubtitle, canCopyReminder, canEdit, 
       <h3 id="booking-events-heading">变更记录</h3>
       {eventsState === "loading" ? <p className="booking-events-note"><CircleNotch className="spin" size={17} />正在读取</p> : eventsState === "error" ? <p className="booking-events-note booking-events-error">暂时无法读取变更记录<button type="button" onClick={onRetryEvents}>重新读取</button></p> : events.length ? <ol>{events.map((event) => <li key={event.id}><i aria-hidden="true" /><div><strong>{reservationEventLabel(event.type)}</strong><p>{reservationEventSummary(event)}</p><small>{event.actor?.name || "系统"} · {formatLocalDateTime(event.occurredAt || event.occurredAtUtc)} · 版本 {event.revision}</small></div></li>)}</ol> : <p className="booking-events-note">暂无变更记录</p>}
     </section>}
-    {(canCopyReminder || canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canCopyReminder && <button className="copy-reminder-button" onClick={onCopyReminder}><CopySimple size={17} />复制提醒信息</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}{!canEdit && !canCancel && <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
+    {(canCopyReminder || canHandover || canEdit || canCancel) ? <div className="booking-detail-actions">{canEdit && <button className="edit-booking-button" onClick={onEdit}>修改预约</button>}{canHandover && <button className="handover-booking-button" onClick={onHandover}><ArrowsLeftRight size={17} />{handoverLabel || "交接预约"}</button>}{canCopyReminder && <button className="copy-reminder-button" onClick={onCopyReminder}><CopySimple size={17} />复制提醒信息</button>}{canCancel && <button className="cancel-booking-button" onClick={onCancel}>取消预约</button>}{!canEdit && !canCancel && <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}</div> : <button className="secondary-button booking-detail-close" onClick={onClose}>关闭</button>}
   </div>;
 }
 
@@ -1025,7 +1026,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [preferencesSaving, setPreferencesSaving] = useState(false);
   const [preferencesErrors, setPreferencesErrors] = useState({});
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
-  const [dueReminders, setDueReminders] = useState({ changes: [], upcoming: [] });
+  const [dueReminders, setDueReminders] = useState({ changes: [], upcoming: [], handovers: [] });
+  const [handoverBoard, setHandoverBoard] = useState({ incoming: [], outgoing: [] });
+  const [handoverDirectory, setHandoverDirectory] = useState([]);
+  const [handoverDirectoryState, setHandoverDirectoryState] = useState("idle");
   const [noticeAckBusy, setNoticeAckBusy] = useState(false);
   const [arrivalNotice, setArrivalNotice] = useState(null);
   const seenUpcomingIdsRef = useRef(new Set());
@@ -1334,6 +1338,29 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   useEffect(() => { if (bootstrap) loadUpcoming(); }, [bootstrap, loadUpcoming]);
   useEffect(() => { if (bootstrap) loadHistory(); }, [bootstrap, loadHistory]);
   useEffect(() => {
+    if (bootstrap && activeView === "mine" && !sessionExpired) refreshHandoverBoard();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, bootstrap, sessionExpired]);
+  useEffect(() => {
+    if (drawer?.type !== "handover") return undefined;
+    let cancelled = false;
+    setHandoverDirectoryState("loading");
+    api.getUserDirectory()
+      .then((result) => {
+        if (cancelled) return;
+        setHandoverDirectory(result?.users || []);
+        setHandoverDirectoryState("ready");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setHandoverDirectoryState("ready");
+        setHandoverDirectory([]);
+        handleError(error, "无法读取人员列表");
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer?.type]);
+  useEffect(() => {
     if (activeView !== "rooms" || !permissions.manageRooms) return undefined;
     loadRooms();
     const timer = window.setInterval(() => loadRooms({ silent: true }), 30000);
@@ -1344,7 +1371,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const items = unwrapItems(await api.getDueReminders());
       const changes = items.filter((item) => item.kind === "change");
       const upcoming = items.filter((item) => item.kind === "upcoming");
-      setDueReminders({ changes, upcoming });
+      const handovers = items.filter((item) => item.kind === "handover");
+      setDueReminders({ changes, upcoming, handovers });
       reminderPollFailedRef.current = false;
       // 到达时刻：首次进入提前窗口的临近提醒 → 一次性 toast + 轻提示音。
       const seen = seenUpcomingIdsRef.current;
@@ -1367,11 +1395,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     }
   }, [bootstrap, handleError]);
   useEffect(() => {
-    if (!bootstrap?.preferences?.bookingReminder && !bootstrap?.preferences?.bookingChangeNotifications) {
-      setDueReminders({ changes: [], upcoming: [] });
-      setArrivalNotice(null);
-      return undefined;
-    }
+    // 交接请求是待办而非通知：即使两项提醒开关全关也保持轮询。
     let cancelled = false;
     const check = async () => {
       if (!cancelled) await refreshDueReminders();
@@ -1387,7 +1411,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [bootstrap, refreshDueReminders]);
+  }, [refreshDueReminders]);
   useEffect(() => {
     if (!toast) return undefined;
     const timer = window.setTimeout(() => setToastState(null), 4200);
@@ -1398,16 +1422,19 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     const timer = window.setTimeout(() => setArrivalNotice(null), 5200);
     return () => window.clearTimeout(timer);
   }, [arrivalNotice]);
-  // 变更通知弹窗：复用完整焦点陷阱；Esc 等同确认当前聚合列表。
-  const noticeModalOpen = dueReminders.changes.length > 0 && !drawer && !sessionExpired;
+  // 需处理弹窗：变更通知 + 交接请求共用同一焦点陷阱。
+  // Esc 语义：仅有变更通知时等同逐条确认；存在交接请求时 Esc 不做决定（需明确选择）。
+  const noticeModalOpen = (dueReminders.changes.length > 0 || dueReminders.handovers.length > 0) && !drawer && !sessionExpired;
   useFocusTrap(
     noticeModalRef,
     noticeModalOpen,
     () => {
+      if (dueReminders.handovers.length > 0) return;
       if (!noticeAckBusy) void acknowledgeChangeNotices(dueReminders.changes);
     },
     true,
-    dueReminders.changes.map((item) => item.eventId).join("|"),
+    dueReminders.changes.map((item) => item.eventId).join("|")
+      + "#" + dueReminders.handovers.map((item) => item.handoverRequestId).join("|"),
     mainRef,
   );
   useEffect(() => {
@@ -1861,6 +1888,60 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (await acknowledgeChangeNotices([item])) openDetails(item);
   }
 
+  async function refreshHandoverBoard() {
+    try {
+      setHandoverBoard(await api.getHandoverRequests());
+    } catch (error) {
+      handleError(error, "无法读取交接请求");
+    }
+  }
+
+  async function refreshAfterHandoverChange() {
+    await Promise.all([refreshDueReminders(), refreshHandoverBoard()]);
+    await Promise.all([loadCalendar(), loadUpcoming(), loadHistory(), loadRooms({ silent: true })]);
+  }
+
+  async function decideHandover(requestId, decision) {
+    if (noticeAckBusy) return;
+    setNoticeAckBusy(true);
+    try {
+      if (decision === "accept") await api.acceptHandover(requestId);
+      else await api.declineHandover(requestId);
+      setToast(decision === "accept" ? "已接受，预约已转入您名下" : "已拒绝，预约仍归原预约人", decision === "accept" ? "success" : "info");
+      await refreshAfterHandoverChange();
+    } catch (error) {
+      handleError(error, "交接请求处理失败，请稍后重试");
+      await refreshAfterHandoverChange();
+    } finally {
+      setNoticeAckBusy(false);
+    }
+  }
+
+  async function withdrawHandoverRequest(requestId) {
+    try {
+      await api.withdrawHandover(requestId);
+      setToast("已撤回交接请求", "info");
+      await refreshAfterHandoverChange();
+    } catch (error) {
+      handleError(error, "撤回交接请求失败");
+    }
+  }
+
+  async function sendHandover(reservationId, toUserId) {
+    try {
+      const result = await api.createHandover(reservationId, toUserId);
+      if (result.assigned) {
+        setToast("已指派，预约已转入对方名下", "success");
+      } else {
+        setToast("交接请求已发起，等待对方确认", "success");
+      }
+      setDrawer(null);
+      await refreshAfterHandoverChange();
+    } catch (error) {
+      handleError(error, "交接发起失败");
+    }
+  }
+
   function renderMine() {
     const ownItems = upcoming.filter((booking) => booking.ownerId === currentUser.id);
     const items = ownItems.filter((booking) => bookingRooms.has(booking.roomId) && (!booking.tagId || bookingTags.has(booking.tagId)));
@@ -1879,6 +1960,16 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       return nextValues;
     });
     return <main className="main-canvas bookings-canvas" tabIndex={0}><header className="page-header bookings-header"><h1>我的预约</h1><div className="filter-wrap"><button ref={bookingFilterPopover.triggerRef} className={`filter-trigger ${bookingFilterOpen ? "pressed" : ""} ${filtersActive ? "filtered" : ""}`} aria-label="筛选我的预约" aria-expanded={bookingFilterOpen} aria-haspopup="true" onClick={() => setBookingFilterOpen((open) => !open)}><SlidersHorizontal size={19} /></button>{bookingFilterOpen && <div ref={bookingFilterPopover.popoverRef} className="booking-filter-popover" role="group" aria-label="筛选我的预约"><div className="popover-heading"><span>筛选预约</span><button onClick={resetMineFilters}>重置</button></div><p>笔录室</p>{rooms.map((room) => <label key={room.id}><input type="checkbox" checked={bookingRooms.has(room.id)} onChange={() => toggleMineFilter(room.id, setBookingRooms)} /><span>{room.name}</span></label>)}<p className="filter-section-label">标签</p>{tags.map((tag) => <label className="booking-tag-filter" style={tagStyle(tag)} key={tag.id}><input type="checkbox" checked={bookingTags.has(tag.id)} onChange={() => toggleMineFilter(tag.id, setBookingTags)} /><i /><span>{tag.label}</span></label>)}<div className="filter-result-count">当前显示 {items.length} 场</div></div>}</div></header>
+      {(handoverBoard.incoming.length > 0 || handoverBoard.outgoing.length > 0) && <section className="handover-board" aria-label="待处理交接">
+        {handoverBoard.incoming.length > 0 && <div className="handover-board-group"><h2>待我确认的交接</h2>{handoverBoard.incoming.map((request) => <div className="handover-board-row incoming" key={request.id}>
+          <div className="handover-board-copy"><strong>{request.fromUser.name} → 我</strong><span>{request.reservation.partyName} · {request.reservation.purpose} · {request.reservation.roomName} · {request.reservation.start}–{request.reservation.end}</span></div>
+          <div className="handover-board-ops"><button type="button" onClick={() => void decideHandover(request.id, "decline")}>拒绝</button><button type="button" className="handover-accept" onClick={() => void decideHandover(request.id, "accept")}>接受交接</button></div>
+        </div>)}</div>}
+        {handoverBoard.outgoing.length > 0 && <div className="handover-board-group"><h2>我发起的交接</h2>{handoverBoard.outgoing.map((request) => <div className="handover-board-row outgoing" key={request.id}>
+          <div className="handover-board-copy"><strong>我 → {request.toUser.name}</strong><span>{request.reservation.partyName} · {request.reservation.purpose} · {request.reservation.roomName} · {request.reservation.start}–{request.reservation.end}</span></div>
+          <div className="handover-board-ops"><span className="handover-waiting">等待确认</span><button type="button" onClick={() => void withdrawHandoverRequest(request.id)}>撤回</button></div>
+        </div>)}</div>}
+      </section>}
       <div className="bookings-layout">
         {loading.mine ? <div className="bookings-skeleton" role="status" aria-label="正在读取预约"><div className="bookings-skeleton-hero" aria-hidden="true"><i className="time" /><i className="room" /></div><div className="bookings-skeleton-rows" aria-hidden="true"><div className="bookings-skeleton-row"><i className="date" /><i className="meta" /></div><div className="bookings-skeleton-row"><i className="date" /><i className="meta" /></div></div></div> :
           next ? <button className="next-booking" onClick={() => openDetails(next)}><span className="next-booking-time"><span className="next-booking-time-value">{next.start}</span><span className="next-booking-time-separator">–</span><span className="next-booking-time-value">{next.end}</span></span><span className="next-booking-room" style={tagStyle(tagFor(next))}><i />{next.roomName}</span><CaretRight className="next-booking-caret" size={25} /></button> :
@@ -2437,7 +2528,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   }
 
   function drawerHeading() {
-    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "draft-relocation": "确认使用草稿", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", "system-settings": "修改工作时间", backup: "最近备份", "token-create": "新建接口令牌", "token-created": "令牌已创建", "token-revoke": "撤销接口令牌" }[drawer?.type] || "";
+    return { create: "新建预约", edit: "修改预约", details: "预约详情", cancel: "取消预约", "slot-conflict": "时段已被占用", "draft-relocation": "确认使用草稿", "handover": "交接预约", "room-create": "添加笔录室", "room-edit": "管理笔录室", "room-delete-confirm": "删除笔录室", "room-delete-blocked": "需要先处理预约", "user-create": "新建用户", "user-edit": "编辑用户", "user-reset": "重置密码", "system-settings": "修改工作时间", backup: "最近备份", "token-create": "新建接口令牌", "token-created": "令牌已创建", "token-revoke": "撤销接口令牌" }[drawer?.type] || "";
   }
 
   function renderDrawer() {
@@ -2464,7 +2555,21 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const booking = drawer.booking;
       const canManage = canManageBooking({ role, currentUserId: currentUser.id, booking }) && booking.status !== "cancelled";
       const canCopyReminder = canManage && booking.status === "active" && !hasBookingStarted({ date: booking.date, start: booking.start, serverDate: businessClock.date, serverTime: businessClock.time });
-      return <BookingDetails booking={booking} tag={tagFor(booking)} dateSubtitle={withRelativeDay(booking.date)} canCopyReminder={canCopyReminder} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onCopyReminder={async () => { const message = renderReminderTemplate(bootstrap?.preferences?.reminderTemplate, { partyName: booking.partyName, date: dateLabel(booking.date).split(" · ")[0], start: booking.start, end: booking.end, roomName: booking.roomName }); try { await copyText(message); setToast("提醒信息已复制，可在微信中粘贴发送", "success"); } catch { setToast("无法自动复制，请手动复制提醒信息", "error"); } }} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
+      const canHandover = booking.status === "active" && !hasBookingStarted({ date: booking.date, start: booking.start, serverDate: businessClock.date, serverTime: businessClock.time }) && (booking.ownerId === currentUser.id || role === "admin");
+      return <BookingDetails booking={booking} tag={tagFor(booking)} dateSubtitle={withRelativeDay(booking.date)} canCopyReminder={canCopyReminder} canHandover={canHandover} handoverLabel={role === "admin" && booking.ownerId !== currentUser.id ? "指派给同事" : "交接给同事"} onHandover={() => setDrawer({ type: "handover", booking })} canEdit={!drawer.readOnly && canManage && booking.canEdit === true} canCancel={!drawer.readOnly && canManage && booking.canCancel === true} events={bookingEvents} eventsState={bookingEventsState} eventsAllowed={role === "admin" || booking.ownerId === currentUser.id} onCopyReminder={async () => { const message = renderReminderTemplate(bootstrap?.preferences?.reminderTemplate, { partyName: booking.partyName, date: dateLabel(booking.date).split(" · ")[0], start: booking.start, end: booking.end, roomName: booking.roomName }); try { await copyText(message); setToast("提醒信息已复制，可在微信中粘贴发送", "success"); } catch { setToast("无法自动复制，请手动复制提醒信息", "error"); } }} onEdit={() => openEdit(booking, drawer.returnTo)} onCancel={() => setDrawer({ type: "cancel", booking, returnTo: drawer.returnTo })} onClose={() => setDrawer(null)} onRetryEvents={() => loadBookingEvents(booking)} />;
+    }
+    if (drawer.type === "handover") {
+      const booking = drawer.booking;
+      const adminForce = role === "admin" && booking.ownerId !== currentUser.id;
+      const directory = handoverDirectory;
+      return <div className="handover-picker">
+        <div className="selection-summary"><h2>{booking.start}–{booking.end}</h2><p>{booking.roomName} · {withRelativeDay(booking.date)} · {booking.partyName}</p></div>
+        <div className="handover-picker-copy"><h3>{adminForce ? "指派这场预约" : "交接这场预约"}</h3><p>{adminForce ? "指派立即生效，对方无需确认。" : "发起后需对方确认；对方拒绝或到预约开始仍未处理，预约仍归你。"}</p></div>
+        {handoverDirectoryState === "loading" ? <p className="handover-picker-note" role="status">正在读取人员…</p> :
+          directory.length ? <ul className="handover-picker-list" role="listbox" aria-label="选择接手人">{directory.map((user) => <li key={user.id}><button type="button" onClick={() => void sendHandover(booking.id, user.id)}><strong>{user.name}</strong>{user.department ? <span>{user.department}</span> : null}</button></li>)}</ul> :
+          <p className="handover-picker-note">当前没有可指派的其他人员。</p>}
+        <div className="handover-picker-actions"><button className="secondary-button" type="button" onClick={() => setDrawer({ type: "details", booking })}>返回</button></div>
+      </div>;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {withRelativeDay(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking, false, drawer.returnTo)}>返回</button></div></div>;
     if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;
@@ -2510,15 +2615,22 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         <button className={"avatar-button tooltip-right " + (activeView === "settings" ? "active" : "")} data-tooltip={itemName(currentUser) + " · 个人中心"} aria-label={itemName(currentUser) + "，个人中心"} onClick={openPersonalCenter}><UserCircle size={42} weight="thin" /></button>
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "data-center" && permissions.viewReports && renderDataCenter()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
-      {drawer && dueReminders.changes.length > 0 && <div className="notice-queue-chip" role="status"><ClockCounterClockwise size={15} />{dueReminders.changes.length} 条预约变更提醒待确认——将在您关闭当前窗口后出现</div>}
+      {drawer && (dueReminders.changes.length > 0 || dueReminders.handovers.length > 0) && <div className="notice-queue-chip" role="status"><ClockCounterClockwise size={15} />{dueReminders.changes.length > 0 ? `${dueReminders.changes.length} 条预约变更提醒待确认` : `${dueReminders.handovers.length} 条交接请求待处理`}——将在您关闭当前窗口后出现</div>}
       {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
       {arrivalNotice && !drawer && <div className="toast visible reminder-toast arrival-toast" role="status" aria-live="polite"><Clock size={20} /><span>{arrivalNotice.message}</span><button onClick={() => { const booking = arrivalNotice.booking; setArrivalNotice(null); openDetails(booking); }}>查看</button><button onClick={() => setArrivalNotice(null)}>知道了</button></div>}
     </div>
     {noticeModalOpen && <div className="notice-modal-layer"><section ref={noticeModalRef} className="notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy={noticeAckBusy}>
-      <header className="notice-modal-head"><span className="notice-modal-icon" aria-hidden="true"><ClockCounterClockwise size={22} /></span><div><h2 id="notice-modal-heading">预约变更通知</h2><p>{dueReminders.changes.length > 1 ? `${dueReminders.changes.length} 条待确认变更` : `${dueReminders.changes[0].actorName || "其他用户"} · ${formatLocalDateTime(dueReminders.changes[0].occurredAt)}`}</p></div></header>
-      <ul className="notice-modal-list">{dueReminders.changes.map((item, index) => <ChangeNoticeItem item={item} busy={noticeAckBusy} initialFocus={index === 0} showMeta={dueReminders.changes.length > 1} showActions={dueReminders.changes.length > 1} onView={(target) => void viewChangeNotice(target)} onAcknowledge={(targets) => void acknowledgeChangeNotices(targets)} key={item.eventId} />)}</ul>
+      <header className="notice-modal-head"><span className="notice-modal-icon" aria-hidden="true"><ClockCounterClockwise size={22} /></span><div><h2 id="notice-modal-heading">预约变更通知</h2><p>{dueReminders.handovers.length > 0 && dueReminders.changes.length === 0 ? `${dueReminders.handovers.length} 条交接请求待处理` : dueReminders.changes.length > 1 ? `${dueReminders.changes.length} 条待确认变更${dueReminders.handovers.length > 0 ? `，${dueReminders.handovers.length} 条交接请求` : ""}` : `${dueReminders.changes[0].actorName || "其他用户"} · ${formatLocalDateTime(dueReminders.changes[0].occurredAt)}`}</p></div></header>
+      {dueReminders.handovers.length > 0 && <ul className="notice-modal-list notice-handover-list">{dueReminders.handovers.map((item, index) => <li className="notice-modal-item notice-handover-item" key={item.handoverRequestId}>
+        {dueReminders.changes.length > 0 && <p className="notice-item-meta">{item.fromName} · 刚刚发起的交接</p>}
+        <h3>{item.fromName} 请求将以下预约交接给您</h3>
+        <dl className="notice-item-identity" aria-label="交接预约信息"><div><dt>当事人</dt><dd>{item.partyName}</dd></div><div><dt>事项</dt><dd>{item.purpose}</dd></div><div className="notice-identity-schedule"><dt>时间</dt><dd>{item.start}–{item.end} · {item.roomName}</dd></div></dl>
+        <p className="notice-handover-note">接受后预约转入您名下；拒绝后仍归 {item.fromName}。开始前有效，也可在「我的预约」中处理。</p>
+        <div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "decline")}>拒绝</button><button type="button" className="notice-item-ack" data-initial-focus={index === 0 && dueReminders.changes.length === 0 || undefined} disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "accept")}>{noticeAckBusy ? "正在处理…" : "接受交接"}</button></div>
+      </li>)}</ul>}
+      {dueReminders.changes.length > 0 && <ul className="notice-modal-list">{dueReminders.changes.map((item, index) => <ChangeNoticeItem item={item} busy={noticeAckBusy} initialFocus={index === 0 && dueReminders.handovers.length === 0} showMeta={dueReminders.changes.length > 1} showActions={dueReminders.changes.length > 1} onView={(target) => void viewChangeNotice(target)} onAcknowledge={(targets) => void acknowledgeChangeNotices(targets)} key={item.eventId} />)}</ul>}
       {dueReminders.changes.length === 1
-        ? <footer className="notice-modal-single-foot"><p id="notice-modal-hint" className="notice-modal-hint">按 Esc 可确认并关闭</p><div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void viewChangeNotice(dueReminders.changes[0])}>查看预约</button><button type="button" className="notice-item-ack" data-initial-focus disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "我知道了"}</button></div></footer>
+        ? <footer className="notice-modal-single-foot"><p id="notice-modal-hint" className="notice-modal-hint">{dueReminders.handovers.length > 0 ? "交接请求需选择接受或拒绝" : "按 Esc 可确认并关闭"}</p><div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void viewChangeNotice(dueReminders.changes[0])}>查看预约</button><button type="button" className="notice-item-ack" data-initial-focus disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "我知道了"}</button></div></footer>
         : <><footer className="notice-modal-foot"><button type="button" className="notice-ack-all" disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "全部知道了"}</button></footer><p id="notice-modal-hint" className="notice-modal-hint notice-modal-multi-hint">按 Esc 可确认全部；“查看预约”会先确认该条通知</p></>}
     </section></div>}
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>

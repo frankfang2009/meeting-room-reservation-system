@@ -648,3 +648,97 @@
     min-width: 0;
   }
 }
+
+/* 需处理弹窗中的交接请求区块。 */
+.notice-handover-item h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.notice-handover-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+/* 交接人员选择抽屉。 */
+.handover-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.handover-picker-copy h3 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.handover-picker-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.handover-picker-note {
+  margin: 0;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.handover-picker-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+}
+
+.handover-picker-list li + li {
+  border-top: 1px solid var(--hairline);
+}
+
+.handover-picker-list button {
+  width: 100%;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  color: var(--ink-secondary);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: background 130ms ease;
+}
+
+.handover-picker-list button:hover {
+  background: var(--paper-soft);
+}
+
+.handover-picker-list strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.handover-picker-list span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.handover-picker-actions {
+  display: flex;
+  justify-content: flex-end;
+}

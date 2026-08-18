@@ -50,10 +50,10 @@ class AssemblePayloadTests(unittest.TestCase):
         integrity = "sha512-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw=="
         self.frontend_lock.write_text(json.dumps({
             "name": "meeting-room-v2-frontend",
-            "version": "2.3.0",
+            "version": "2.4.0",
             "lockfileVersion": 3,
             "packages": {
-                "": {"name": "meeting-room-v2-frontend", "version": "2.3.0"},
+                "": {"name": "meeting-room-v2-frontend", "version": "2.4.0"},
                 "node_modules/react": {
                     "version": "19.2.0", "integrity": integrity,
                     "license": "MIT", "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
