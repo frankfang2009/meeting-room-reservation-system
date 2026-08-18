@@ -123,8 +123,10 @@ print("install.json 与 ZIP 结构校验通过")
 PYEOF
 
 echo "[8/9] macOS 版版本检查已启用（仅读侧车，不发起清单请求）"
+EXPECTED_VERSION="$(basename "$ZIP_PATH" | sed -n 's/.*-V\([0-9][0-9.]*\)-macOS-arm64.zip/\1/p')"
+[ -n "$EXPECTED_VERSION" ] || { echo "FAIL: 无法从 ZIP 文件名解析版本：$ZIP_PATH"; exit 1; }
 ADMIN_SYSTEM="$(curl --silent -b "$WORK_ROOT/cookies.txt" -H "Host: localhost:8080" http://127.0.0.1:$PORT/api/v1/admin/system)"
-UPDATE_VIEW="$(echo "$ADMIN_SYSTEM" | "$PY" -c 'import json,sys; c=json.load(sys.stdin).get("updateCheck"); assert c and c.get("enabled") is True, c; assert c.get("currentVersion")=="2.2.1", c; assert c.get("status") in {"current","unknown","available"}, c; print("updateCheck.enabled=true,currentVersion=2.2.1")')"
+UPDATE_VIEW="$(echo "$ADMIN_SYSTEM" | "$PY" -c 'import json,sys; c=json.load(sys.stdin).get("updateCheck"); assert c and c.get("enabled") is True, c; assert c.get("currentVersion")==sys.argv[1], c; assert c.get("status") in {"current","unknown","available"}, c; print("updateCheck.enabled=true,currentVersion="+sys.argv[1])' "$EXPECTED_VERSION")"
 echo "$UPDATE_VIEW"
 
 echo "[9/9] 停止入口干净退出"

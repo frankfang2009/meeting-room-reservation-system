@@ -568,4 +568,9 @@ test("macOS edition update notice stays notice-only and administrator-visible", 
   assert.doesNotMatch(app, /downloadUpdate|installUpdate|autoUpdate/);
   assert.match(systemStyles, /\.system-update-badge/);
   assert.match(systemStyles, /\.system-update-check/);
+  // 陈旧知识规则：只有服务端 status=current 才显示“已是最新版本”；
+  // 检查过但状态未知时显示中性文案，绝不用成功语义掩盖失败。
+  assert.match(app, /status === "current" \? <strong>已是最新版本<\/strong>/);
+  assert.match(app, /<strong>暂时无法确认版本<\/strong>/);
+  assert.match(app, /<strong>尚未检查更新<\/strong>/);
 });
