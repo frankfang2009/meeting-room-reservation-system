@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/ci.yml) [![CodeQL](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml/badge.svg)](https://github.com/frankfang2009/meeting-room-reservation-system/actions/workflows/codeql.yml)
 
-一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.2.1 使用 React、Flask 与 SQLite，提供共享日历、预约管理、数据中心与办件明细 CSV、公开大屏、用户与房间管理、备份恢复、Windows 全新安装与离线累计升级链，以及可直接下载的 macOS 自托管版。
+一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.2.2 使用 React、Flask 与 SQLite，提供共享日历、预约管理、数据中心与办件明细 CSV、公开大屏、用户与房间管理、备份恢复、Windows 全新安装与离线累计升级链，以及可直接下载的 macOS 自托管版。
 
 > 当前公开的是源代码，不是正式 Windows 安装包。Windows 安装包与升级包尚未完成普通用户
 > Windows 10/11 实机验收和 Authenticode 签名，自动构建产物只能作为内部候选，不能视为

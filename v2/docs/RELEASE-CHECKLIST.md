@@ -1,4 +1,4 @@
-# V2.2.1 发布门禁
+# V2.2.2 发布门禁
 
 状态说明：`[x]` 只表示下方“本轮可复跑证据”已经通过；`[ ]` 表示仍需 CI、
 Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
@@ -18,6 +18,14 @@ V2 Linux、V2 Windows 与 V2 macOS 门禁，但不制作或上传安装包；`v2
 main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一提交构建全新安装与
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+
+## V2.2.2 修复版证据（2026-08-18）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E54 | `tests.test_update_check`（21 项，含新增陈旧知识场景） | 先成功（清单==当前）后失败（500）：状态 current → unknown 且 `lastCheckFailed=true`，不再宣称"已是最新"；已知"有新版本"在失败后保留；再成功恢复 current；sidecar 直测 lastErrorAtUtc 非空即陈旧 |
+| E55 | 前端契约测试与本地 `check.sh` | 行文案改为按服务端 status 判定（current→已是最新、其余且已检查→"暂时无法确认版本"、未检查→"尚未检查更新"）；check.sh 全绿 |
+| E56 | V2.2.2 本机候选构建与 9 步真实验收（2026-08-18，Apple Silicon；打标后以标签 run 为准补记 CI） | 便携包双构建 cmp 字节一致（zip SHA-256 `ad940365…33d8`，1138 条目）；DMG `4161f78a…9502` 反向校验通过；9 步验收 PASS（版本断言从 ZIP 文件名自动推导，currentVersion=2.2.2）；另以真实 GitHub 清单做只读 E2E：V2.2.1 视角 status=current，latest-macos.json 生产链路验证通过（发布 V2.2.2 后同一路径将显示 available） |
 
 ## V2.2.1 macOS 自托管版证据（2026-08-17）
 
@@ -170,7 +178,8 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [ ] 对当前增量源码的新候选重新确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 两套候选及侧车移入受控发布归档。
-- [ ] macOS：以 `v2.2.1` 标签 run 的候选 zip/DMG/清单/侧车为正式发布物，GitHub Release 发布说明附 SHA-256 与未签名首启说明，发布后验证 `releases/latest/download/latest-macos.json` 重定向。
+- [x] macOS：以 `v2.2.1` 标签 run 的候选 zip/DMG/清单为正式发布物，GitHub Release 发布说明附 SHA-256 与未签名首启说明，发布后验证 `releases/latest/download/latest-macos.json` 重定向。（E52）
+- [ ] macOS 团队 Apple Silicon 真机抽验：从 GitHub Release 下载正式 DMG 核对 SHA 并复跑 9 步验收（待补记 E53）。
 - [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
 ## 已撤销候选
