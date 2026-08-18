@@ -258,6 +258,9 @@ test("low-frequency UX safeguards remain explicit and testable", () => {
   assert.match(app, /validateBookingForm\(bookingForm, settings\.slotMinutes\)/);
   assert.match(app, /当前没有可用笔录室，请联系管理员启用后再预约/);
   assert.match(app, /if \(!preferredRoom\) \{[\s\S]{0,420}return;[\s\S]{0,80}navigate\("calendar"\)/);
+  assert.match(app, /calendarAutoScrollRef = useRef\(\{ inCalendar: false, day: "", requested: 0, handled: 0 \}\)/);
+  assert.match(app, /if \(!state\.requested \|\| state\.handled === state\.requested\) return undefined/);
+  assert.match(app, /state\.handled = state\.requested/);
 });
 
 test("system recovery has a dedicated gate with recovery and request references", () => {

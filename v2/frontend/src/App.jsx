@@ -991,6 +991,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [calendarEnterDirection, setCalendarEnterDirection] = useState("");
   const mainRef = useRef(null);
   const calendarCanvasRef = useRef(null);
+  const calendarAutoScrollRef = useRef({ inCalendar: false, day: "", requested: 0, handled: 0 });
   const previousCalendarDayRef = useRef("");
   const eventRequestRef = useRef(0);
   const calendarRequestRef = useRef(0);
@@ -1085,7 +1086,20 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   // 进入日历或切到“今天”时，安静地把当前时间线带到视口上三分之一处；
   // 只在到达时执行一次，不随后续时钟跳动或用户滚动重复定位。
   useEffect(() => {
+    const state = calendarAutoScrollRef.current;
+    const day = dateKey(currentDate);
+    const inCalendar = activeView === "calendar";
+    if (inCalendar && day === businessClock.date && (!state.inCalendar || state.day !== day)) {
+      state.requested += 1;
+    }
+    state.inCalendar = inCalendar;
+    state.day = day;
+  }, [activeView, businessClock.date, currentDate]);
+
+  useEffect(() => {
     if (activeView !== "calendar" || dateKey(currentDate) !== businessClock.date) return undefined;
+    const state = calendarAutoScrollRef.current;
+    if (!state.requested || state.handled === state.requested) return undefined;
     const frame = window.requestAnimationFrame(() => {
       const canvas = calendarCanvasRef.current;
       const timeLine = canvas?.querySelector(".current-time-line");
@@ -1095,6 +1109,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         + canvas.scrollTop
         - canvas.clientHeight / 3;
       canvas.scrollTop = Math.max(0, offset);
+      state.handled = state.requested;
     });
     return () => window.cancelAnimationFrame(frame);
   }, [activeView, businessClock.date, calendarDataDate, currentDate, loading.calendar]);
