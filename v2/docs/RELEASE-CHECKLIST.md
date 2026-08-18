@@ -25,6 +25,8 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | --- | --- | --- |
 | E57 | V2.2.3 集成分支冷审 | V2.2.2 更新状态语义与体验版人话文案人工合并；修复后台刷新可能重复触发今日日历自动定位的问题；新增相对日期跨月/跨年测试；业务权限、API 与 schema 零变化 |
 | E58 | `v2/scripts/check.sh` 与真实服务浏览器走查 | 集成全量检查通过：backend 115、installer 84、跨层 29、frontend 155，Vite 生产构建成功；固定 8080 端口、隔离临时数据完成首次设置与登录，工作时间内切回今天后时间线位于 845px 视口的 281.9px（约上三分之一）；手动滚回 `scrollTop=0` 并跨过一次 30 秒时钟更新后仍为 0，切到明天再回今天才重新定位；控制台仅首次设置监听器重启期间出现一条预期 `/healthz` 瞬时断连，日常流程 0 warning |
+| E60 | `v2.2.3` 标签 run [32089926336](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/32089926336)（合并提交 `0a199811`） | candidate-linux、candidate-windows、candidate-macos 三车道全绿；macOS zip `423195cc…45e35`、DMG `75e6ac52…f47e`；Windows 安装包内部候选 `94710996…acd0`、累计升级包内部候选 `a12ce792…508`；Windows 候选继续受 T2 实机与签名门禁约束，不得正式外发 |
+| E61 | GitHub Release [v2.2.3](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.2.3) 与 latest 重定向验证 | 正式发布（非草稿/非预发）：仅附 macOS DMG、zip、sha256 侧车与 `latest-macos.json` 四项资产，GitHub 端摘要与标签 artifact 一致；`releases/latest/download/latest-macos.json` 返回 version/tag `2.2.3`/`v2.2.3`，latest DMG 经 `v2.2.3` 资产页重定向到 200、内容长度 49,799,462 字节 |
 
 ## V2.2.2 修复版证据（2026-08-18）
 
@@ -33,6 +35,7 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | E54 | `tests.test_update_check`（21 项，含新增陈旧知识场景） | 先成功（清单==当前）后失败（500）：状态 current → unknown 且 `lastCheckFailed=true`，不再宣称"已是最新"；已知"有新版本"在失败后保留；再成功恢复 current；sidecar 直测 lastErrorAtUtc 非空即陈旧 |
 | E55 | 前端契约测试与本地 `check.sh` | 行文案改为按服务端 status 判定（current→已是最新、其余且已检查→"暂时无法确认版本"、未检查→"尚未检查更新"）；check.sh 全绿 |
 | E56 | V2.2.2 本机候选构建与 9 步真实验收（2026-08-18，Apple Silicon；打标后以标签 run 为准补记 CI） | 便携包双构建 cmp 字节一致（zip SHA-256 `ad940365…33d8`，1138 条目）；DMG `4161f78a…9502` 反向校验通过；9 步验收 PASS（版本断言从 ZIP 文件名自动推导，currentVersion=2.2.2）；另以真实 GitHub 清单做只读 E2E：V2.2.1 视角 status=current，latest-macos.json 生产链路验证通过（发布 V2.2.2 后同一路径将显示 available） |
+| E59 | `v2.2.2` 标签 run [32088401617](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/32088401617) 与 GitHub Release [v2.2.2](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.2.2) | 三车道全绿；标签位于合并提交 `5cd6f1ae`；正式 Release 非草稿/非预发并附 macOS 四项资产，zip `ad940365…33d8`、DMG `46c53c96…533a`；Windows 安装包 `d5c06a28…91de` 与累计升级包 `6c66ebf4…fda7` 仅记录为内部候选，未上传 Release |
 
 ## V2.2.1 macOS 自托管版证据（2026-08-17）
 
@@ -158,13 +161,13 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [x] 项目本地 Python/Node 版本、隔离依赖、Ruff/ESLint 及一键 bootstrap/check 命令已经固定；V2 不再复用视觉原型的 `node_modules`。（E4、E5）
 - [x] 全局 CSS 继续按功能域拆分；入口顺序和更新后的源码 SHA 由测试锁定，滑块、日历、房间和安全审计规则只落在对应功能域。（E4、E6、E9）
 
-## 当前增量提交待新 CI，Windows 实机与签名仍未完成
+## 当前标签候选已通过，Windows 实机与签名仍未完成
 
-- [ ] 对当前增量提交在 GitHub Actions 重新运行 Linux 双构建和 Windows hosted candidate gate，并归档日志及 artifact。
+- [x] 当前 `v2.2.3` 标签已在 GitHub Actions 完成 Linux 双构建、Windows hosted candidate gate 与 macOS 候选验收并归档 artifact。（E60）
 - [ ] 普通用户在 Windows 10 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 普通用户在 Windows 11 双击真实候选零参数 BAT，记录 UAC 接受与取消。
-- [ ] 从最终冻结 V2.1.0 实机安装执行 V2.2.0 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
-- [ ] 在 V2.1.0→V2.2.0 实机升级的程序替换、健康检查和身份提交阶段分别故障注入，验证提交前回滚与提交后不回滚新数据。
+- [ ] 从最终冻结 V2.1.0 实机安装执行 V2.2.3 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
+- [ ] 在 V2.1.0→V2.2.3 实机升级的程序替换、健康检查和身份提交阶段分别故障注入，验证提交前回滚与提交后不回滚新数据。
 - [ ] 验证固定 `%ProgramFiles%\会议室预约系统V2` 安装、中文 UI、标准用户账户和 UAC 路径。
 - [ ] 首次设置前第二台局域网电脑无法连接；设置完成后自动上线且第二台电脑可连接。
 - [ ] private/domain 防火墙规则只开放 TCP 8080 到 `LocalSubnet`。
@@ -180,12 +183,12 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 
 ## 发布物
 
-- [ ] 为当前增量源码重新生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并反向加载。
-- [ ] 为当前增量源码完成两个独立本地构建，并在同一提交的正式 workflow 重复两套候选的整个构建链。
-- [ ] 对当前增量源码的新候选重新确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。
+- [x] 为当前标签源码生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并完成反向加载。（E60）
+- [x] 正式标签 workflow 对两套 Windows 候选与 macOS 便携包完成独立双构建及字节一致性门禁。（E60）
+- [x] 当前标签候选已确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。（E60）
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 两套候选及侧车移入受控发布归档。
-- [x] macOS：以 `v2.2.1` 标签 run 的候选 zip/DMG/清单为正式发布物，GitHub Release 发布说明附 SHA-256 与未签名首启说明，发布后验证 `releases/latest/download/latest-macos.json` 重定向。（E52）
+- [x] macOS：以 `v2.2.3` 标签 run 的候选 zip/DMG/清单为正式发布物，GitHub Release 发布说明附 SHA-256 与未签名首启说明，发布后验证 `releases/latest/download/latest-macos.json` 和 DMG 重定向。（E60、E61）
 - [ ] macOS 团队 Apple Silicon 真机抽验：从 GitHub Release 下载正式 DMG 核对 SHA 并复跑 9 步验收（待补记 E53）。
 - [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
