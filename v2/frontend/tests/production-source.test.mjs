@@ -251,10 +251,18 @@ test("upcoming reminders live in the calendar with a counting badge and a one-ti
 
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
   assert.match(app, /const noticeModalOpen = dueReminders\.changes\.length > 0 && !drawer && !sessionExpired;/);
-  assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading"/);
+  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,220}mainRef,/);
+  assert.match(app, /<\/div>\s*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
+  assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);
   assert.match(app, /noticeDiffRows\(item\.diffs\)/);
+  assert.match(app, /noticeIdentitySummary\(item\)/);
+  assert.match(app, />当事人<\/dt><dd>\{identity\.partyName\}/);
+  assert.match(app, />事项<\/dt><dd>\{identity\.purpose\}/);
+  assert.match(app, />原预约<\/dt><dd>\{identity\.originalSchedule/);
+  assert.match(app, /你的预约发生了 <em>\{diffRows\.length\}<\/em> 项变更/);
   assert.match(app, /item\.changeType === "cancelled"/);
-  assert.match(app, /event\.key === "Escape"[\s\S]{0,200}acknowledgeChangeNoticesRef\.current\?\.\(dueRemindersRef\.current\.changes\)/);
+  assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
+  assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
   // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
   assert.match(app, /\{drawer && dueReminders\.changes\.length > 0 && <div className="notice-queue-chip"/);
   assert.match(app, /将在您关闭当前窗口后出现/);
@@ -267,7 +275,8 @@ test("the frozen empty-state action consumes a valid default room", () => {
 });
 
 test("low-frequency UX safeguards remain explicit and testable", () => {
-  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminders\.changes\.length > 0[\s\S]*<Drawer/);
+  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminders\.changes\.length > 0[\s\S]*<\/div>\s*\{noticeModalOpen/);
+  assert.match(app, /<Drawer[\s\S]{0,500}backgroundRef=\{mainRef\}/);
   assert.match(app, /historyMonth <= historyMonths\.at\(-1\)\.id/);
   assert.match(app, /nextMonth < earliestMonth \|\| nextMonth > latestMonth/);
   assert.match(app, /min=\{calendarDateMinimum\} max=\{calendarDateMaximum\}/);

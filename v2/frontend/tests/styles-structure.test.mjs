@@ -39,7 +39,7 @@ const expectedFiles = [
 // 成功确认条轻落入场（runtime-states.css）。
 // V2.3.0 提醒重做：日历倒计时角标与「今天」圆点（calendar.css）、
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
-const frozenSourceSha256 = "3277c0fea2ae80585652cd079a0ddb9e99e83b4a77d5019dc94a7a1e96573b9c";
+const frozenSourceSha256 = "8cf9f18f6ad5f9ad8dc912a3b4ff75e316775a9a83b54fb26db16f91f20ecd16";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -95,10 +95,17 @@ test("compact production actions retain at least a 44px hit target", () => {
   const users = fs.readFileSync(path.join(stylesRoot, "users.css"), "utf8");
   assert.match(drawer, /\.drawer-back \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
   assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.notice-item-actions button \{[\s\S]*?min-height: 44px;/);
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("rail reminder count sits outside the reservation icon", () => {
+  const shell = fs.readFileSync(path.join(stylesRoot, "shell.css"), "utf8");
+  assert.match(shell, /\.rail-reminder-badge \{[\s\S]*?top: -3px;[\s\S]*?right: -5px;[\s\S]*?width: 20px;[\s\S]*?height: 20px;/);
+  assert.match(shell, /\.rail-reminder-badge \{[\s\S]*?font-variant-numeric: tabular-nums;/);
 });
 
 test("the three-room calendar can shrink to the 1024px workspace", () => {

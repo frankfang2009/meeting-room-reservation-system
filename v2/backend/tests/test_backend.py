@@ -2089,6 +2089,19 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         self.assertEqual(notice["revision"], self_edited.get_json()["revision"])
         self.assertEqual(notice["actorName"], "系统管理员")
         self.assertTrue(notice["eventId"])
+        self.assertEqual(
+            notice["noticeIdentity"],
+            {
+                "partyName": "张晓燕",
+                "purpose": "工伤笔录",
+                "date": "2026-08-10",
+                "start": "09:00",
+                "end": "10:00",
+                "roomName": created["roomName"],
+            },
+        )
+        # 通知摘要绑定管理员变更发生前的事件快照，不被本人随后改到 10:30 污染。
+        self.assertNotEqual(notice["noticeIdentity"]["start"], notice["start"])
         fields = {diff["field"]: diff for diff in notice["diffs"]}
         self.assertEqual(fields["start"], {"field": "start", "from": "09:00", "to": "10:00"})
         self.assertEqual(fields["end"], {"field": "end", "from": "10:00", "to": "11:00"})

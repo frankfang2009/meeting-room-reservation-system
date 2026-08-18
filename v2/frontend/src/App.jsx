@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowClockwise,
+  ArrowRight,
   Asterisk,
   CalendarBlank,
   ChartBar,
@@ -8,6 +9,7 @@ import {
   CaretLeft,
   CaretRight,
   CheckCircle,
+  Circle,
   CircleNotch,
   Clock,
   ClockCounterClockwise,
@@ -91,6 +93,7 @@ import {
   isDrawerAllowed,
   maximumAvailableDuration,
   noticeDiffRows,
+  noticeIdentitySummary,
   overlaps,
   mapSetupFieldErrors,
   projectServerClock,
@@ -131,6 +134,39 @@ const EMPTY_BOOKING = {
 function ToastIcon({ tone }) {
   const Icon = tone === "success" ? CheckCircle : tone === "error" ? WarningCircle : Info;
   return <Icon size={20} weight="fill" aria-hidden="true" />;
+}
+
+function ChangeNoticeItem({ item, busy, initialFocus, showMeta, showActions, onView, onAcknowledge }) {
+  const identity = noticeIdentitySummary(item);
+  const diffRows = noticeDiffRows(item.diffs);
+  const cancelled = item.changeType === "cancelled";
+  return <li className="notice-modal-item">
+    {showMeta && <p className="notice-item-meta">{item.actorName || "其他用户"} · {formatLocalDateTime(item.occurredAt)}</p>}
+    <h3>{cancelled ? "你的预约已被取消" : <>你的预约发生了 <em>{diffRows.length}</em> 项变更</>}</h3>
+    {identity
+      ? <dl className="notice-item-identity" aria-label="原预约信息">
+        <div><dt>当事人</dt><dd>{identity.partyName}</dd></div>
+        <div><dt>事项</dt><dd>{identity.purpose}</dd></div>
+        <div className="notice-identity-schedule"><dt>原预约</dt><dd>{identity.originalSchedule || "时间与笔录室暂不可用"}</dd></div>
+      </dl>
+      : <p className="notice-identity-unavailable">原预约信息暂不可用，请查看预约确认详情。</p>}
+    {cancelled
+      ? <p className="notice-item-cancelled">该场预约已取消，原时段不再保留。</p>
+      : <section className="notice-item-changes" aria-label="具体调整">
+        <h4>具体调整</h4>
+        <dl className="notice-item-diffs">{diffRows.map((row) => <div key={row.key}>
+          <Circle className="notice-diff-marker" size={7} weight="fill" aria-hidden="true" />
+          <dt>{row.label}</dt>
+          <dd className="notice-diff-before">{row.from || "（空）"}</dd>
+          <ArrowRight className="notice-diff-arrow" size={15} aria-hidden="true" />
+          <dd className="notice-diff-after">{row.to || "（空）"}</dd>
+        </div>)}</dl>
+      </section>}
+    {showActions && <div className="notice-item-actions">
+      <button type="button" disabled={busy} onClick={() => onView(item)}>查看预约</button>
+      <button type="button" className="notice-item-ack" data-initial-focus={initialFocus || undefined} disabled={busy} onClick={() => onAcknowledge([item])}>{busy ? "正在确认…" : "我知道了"}</button>
+    </div>}
+  </li>;
 }
 
 function auditActionLabel(action) {
@@ -990,12 +1026,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [preferencesErrors, setPreferencesErrors] = useState({});
   const [uiPreferencesDraft, setUiPreferencesDraft] = useState(initialUiPreferences);
   const [dueReminders, setDueReminders] = useState({ changes: [], upcoming: [] });
+  const [noticeAckBusy, setNoticeAckBusy] = useState(false);
   const [arrivalNotice, setArrivalNotice] = useState(null);
   const seenUpcomingIdsRef = useRef(new Set());
   const reminderPollFailedRef = useRef(false);
   const [preservedDraft, setPreservedDraft] = useState(null);
   const [calendarEnterDirection, setCalendarEnterDirection] = useState("");
   const mainRef = useRef(null);
+  const noticeModalRef = useRef(null);
   const calendarCanvasRef = useRef(null);
   const calendarAutoScrollRef = useRef({ inCalendar: false, day: "", requested: 0, handled: 0 });
   const previousCalendarDayRef = useRef("");
@@ -1360,23 +1398,18 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     const timer = window.setTimeout(() => setArrivalNotice(null), 5200);
     return () => window.clearTimeout(timer);
   }, [arrivalNotice]);
-  // 变更通知弹窗：打开时 Esc 等同于逐条确认（需处理弹窗必须主动关闭）。
-  const dueRemindersRef = useRef(dueReminders);
-  const acknowledgeChangeNoticesRef = useRef(() => {});
-  useEffect(() => { dueRemindersRef.current = dueReminders; });
-  useEffect(() => { acknowledgeChangeNoticesRef.current = acknowledgeChangeNotices; });
+  // 变更通知弹窗：复用完整焦点陷阱；Esc 等同确认当前聚合列表。
   const noticeModalOpen = dueReminders.changes.length > 0 && !drawer && !sessionExpired;
-  useEffect(() => {
-    if (!noticeModalOpen) return undefined;
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        acknowledgeChangeNoticesRef.current?.(dueRemindersRef.current.changes);
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [noticeModalOpen]);
+  useFocusTrap(
+    noticeModalRef,
+    noticeModalOpen,
+    () => {
+      if (!noticeAckBusy) void acknowledgeChangeNotices(dueReminders.changes);
+    },
+    true,
+    dueReminders.changes.map((item) => item.eventId).join("|"),
+    mainRef,
+  );
   useEffect(() => {
     if (!successNotice) return undefined;
     const timer = window.setTimeout(() => setSuccessNotice(null), 8000);
@@ -1806,20 +1839,26 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function acknowledgeChangeNotices(items) {
     const targets = (items || []).filter((item) => item?.eventId);
-    if (!targets.length) return;
-    const results = await Promise.allSettled(
-      targets.map((item) => api.acknowledgeChangeNotice(item.eventId)),
-    );
-    const rejected = results.find((result) => result.status === "rejected");
-    if (rejected) {
-      handleError(rejected.reason, "部分变更通知确认失败，稍后会重新出现");
+    if (!targets.length || noticeAckBusy) return false;
+    setNoticeAckBusy(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((item) => api.acknowledgeChangeNotice(item.eventId)),
+      );
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected) {
+        handleError(rejected.reason, "部分变更通知确认失败，稍后会重新出现");
+      }
+      await refreshDueReminders();
+      await Promise.all([loadCalendar(), loadUpcoming(), loadHistory(), loadRooms({ silent: true })]);
+      return !rejected;
+    } finally {
+      setNoticeAckBusy(false);
     }
-    await refreshDueReminders();
-    await Promise.all([loadCalendar(), loadUpcoming(), loadHistory(), loadRooms({ silent: true })]);
   }
 
-  function viewChangeNotice(item) {
-    void acknowledgeChangeNotices([item]).then(() => openDetails(item));
+  async function viewChangeNotice(item) {
+    if (await acknowledgeChangeNotices([item])) openDetails(item);
   }
 
   function renderMine() {
@@ -2472,21 +2511,16 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       </aside>
       {activeView === "mine" && renderMine()}{activeView === "calendar" && renderCalendar()}{activeView === "history" && renderHistory()}{activeView === "data-center" && permissions.viewReports && renderDataCenter()}{activeView === "rooms" && permissions.manageRooms && renderRooms()}{activeView === "users" && permissions.manageUsers && renderUsers()}{activeView === "system" && permissions.manageSystem && renderSystem()}{activeView === "settings" && renderSettings()}{activeView === "unauthorized" && renderUnauthorized()}
       {drawer && dueReminders.changes.length > 0 && <div className="notice-queue-chip" role="status"><ClockCounterClockwise size={15} />{dueReminders.changes.length} 条预约变更提醒待确认——将在您关闭当前窗口后出现</div>}
-      {noticeModalOpen && <div className="notice-modal-layer"><section className="notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint">
-        <header className="notice-modal-head"><ClockCounterClockwise size={20} /><div><h2 id="notice-modal-heading">预约变更通知</h2><p>{dueReminders.changes.length > 1 ? `${dueReminders.changes.length} 条待确认变更` : `${dueReminders.changes[0].actorName || "其他用户"} · ${formatLocalDateTime(dueReminders.changes[0].occurredAt)}`}</p></div></header>
-        <ul className="notice-modal-list">{dueReminders.changes.map((item) => <li className="notice-modal-item" key={item.eventId}>
-          <div className="notice-item-head"><strong>{item.partyName}</strong><span>{item.roomName} · {item.start}–{item.end}</span></div>
-          {item.changeType === "cancelled"
-            ? <p className="notice-item-cancelled">该预约已被取消</p>
-            : <dl className="notice-item-diffs">{noticeDiffRows(item.diffs).map((row) => <div key={row.key}><dt>{row.label}</dt><dd><s>{row.from || "（空）"}</s><i aria-hidden="true">→</i><b>{row.to || "（空）"}</b></dd></div>)}</dl>}
-          <div className="notice-item-actions"><button type="button" onClick={() => viewChangeNotice(item)}>查看</button><button type="button" onClick={() => acknowledgeChangeNotices([item])}>知道了</button></div>
-        </li>)}</ul>
-        {dueReminders.changes.length > 1 && <footer className="notice-modal-foot"><button type="button" className="notice-ack-all" onClick={() => acknowledgeChangeNotices(dueReminders.changes)}>全部知道了</button></footer>}
-        <p id="notice-modal-hint" className="notice-modal-hint">按 Esc 或「知道了」确认；「查看」会打开预约详情并确认该条</p>
-      </section></div>}
       {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
       {arrivalNotice && !drawer && <div className="toast visible reminder-toast arrival-toast" role="status" aria-live="polite"><Clock size={20} /><span>{arrivalNotice.message}</span><button onClick={() => { const booking = arrivalNotice.booking; setArrivalNotice(null); openDetails(booking); }}>查看</button><button onClick={() => setArrivalNotice(null)}>知道了</button></div>}
     </div>
+    {noticeModalOpen && <div className="notice-modal-layer"><section ref={noticeModalRef} className="notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy={noticeAckBusy}>
+      <header className="notice-modal-head"><span className="notice-modal-icon" aria-hidden="true"><ClockCounterClockwise size={22} /></span><div><h2 id="notice-modal-heading">预约变更通知</h2><p>{dueReminders.changes.length > 1 ? `${dueReminders.changes.length} 条待确认变更` : `${dueReminders.changes[0].actorName || "其他用户"} · ${formatLocalDateTime(dueReminders.changes[0].occurredAt)}`}</p></div></header>
+      <ul className="notice-modal-list">{dueReminders.changes.map((item, index) => <ChangeNoticeItem item={item} busy={noticeAckBusy} initialFocus={index === 0} showMeta={dueReminders.changes.length > 1} showActions={dueReminders.changes.length > 1} onView={(target) => void viewChangeNotice(target)} onAcknowledge={(targets) => void acknowledgeChangeNotices(targets)} key={item.eventId} />)}</ul>
+      {dueReminders.changes.length === 1
+        ? <footer className="notice-modal-single-foot"><p id="notice-modal-hint" className="notice-modal-hint">按 Esc 可确认并关闭</p><div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void viewChangeNotice(dueReminders.changes[0])}>查看预约</button><button type="button" className="notice-item-ack" data-initial-focus disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "我知道了"}</button></div></footer>
+        : <><footer className="notice-modal-foot"><button type="button" className="notice-ack-all" disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "全部知道了"}</button></footer><p id="notice-modal-hint" className="notice-modal-hint notice-modal-multi-hint">按 Esc 可确认全部；“查看预约”会先确认该条通知</p></>}
+    </section></div>}
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>
   </div></SessionIsolationBoundary>;
 }

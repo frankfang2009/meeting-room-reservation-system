@@ -568,17 +568,34 @@ const NOTICE_DIFF_LABELS = {
   notes: "备注",
   tagLabel: "标签",
 };
+const NOTICE_DIFF_ORDER = Object.keys(NOTICE_DIFF_LABELS);
 
 export function noticeDiffRows(diffs) {
   if (!Array.isArray(diffs)) return [];
   return diffs
     .filter((diff) => diff && Object.prototype.hasOwnProperty.call(NOTICE_DIFF_LABELS, diff.field))
+    .sort((left, right) => NOTICE_DIFF_ORDER.indexOf(left.field) - NOTICE_DIFF_ORDER.indexOf(right.field))
     .map((diff) => ({
       key: diff.field,
       label: NOTICE_DIFF_LABELS[diff.field],
       from: String(diff.from ?? ""),
       to: String(diff.to ?? ""),
     }));
+}
+
+export function noticeIdentitySummary(item) {
+  const identity = item?.noticeIdentity;
+  if (!identity || typeof identity !== "object") return null;
+  const date = String(identity.date || "").replace(
+    /^(\d{4})-(\d{2})-(\d{2})$/,
+    (_, year, month, day) => `${year}/${Number(month)}/${Number(day)}`,
+  );
+  const range = identity.start && identity.end ? `${identity.start}–${identity.end}` : "";
+  return {
+    partyName: String(identity.partyName || "未填写当事人"),
+    purpose: String(identity.purpose || "未填写事项"),
+    originalSchedule: [date, range, identity.roomName].filter(Boolean).join(" · "),
+  };
 }
 
 export function arrivalReminderText(item) {

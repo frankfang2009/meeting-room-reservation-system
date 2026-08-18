@@ -19,6 +19,13 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
+## V2.3.0 变更通知身份与视觉修正证据（2026-08-18）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E62 | `V2_PYTHON=… v2/scripts/check.sh`（本机允许回环测试服务器） | Ruff、backend/installer/跨层 unittest、compileall、ESLint、前端 160 项契约测试、Vite 生产构建与 `git diff --check` 全绿；新增回归确认旧通知的“原预约”绑定变更事件快照，不被预约本人后续编辑污染 |
+| E63 | 选定 mockup 与隔离真实服务同图对照、1495×1052 + 640×900 浏览器走查 | “王芳”明确标为当事人，并同时显示事项与原预约；竖向三项变更、44px 动作、默认焦点、Tab/Shift+Tab 闭环、背景 inert、控制台 0 error；首轮 590px 密度偏小和 640px 溢出均修复，最终无 P0/P1/P2，详见 `v2/frontend/design-qa.md` |
+
 ## V2.2.3 体验打磨版证据（2026-08-18）
 
 | 编号 | 命令或证据 | 实际结果 |

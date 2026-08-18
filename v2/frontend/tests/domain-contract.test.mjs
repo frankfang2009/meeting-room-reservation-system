@@ -24,6 +24,7 @@ import {
   arrivalReminderText,
   bookingCountdownMinutes,
   noticeDiffRows,
+  noticeIdentitySummary,
   reservationEventLabel,
   mapSetupFieldErrors,
   setupStepForField,
@@ -393,16 +394,36 @@ test("computes upcoming countdown minutes against the projected server clock", (
 
 test("projects change-notice diffs onto user-facing fields only", () => {
   const rows = noticeDiffRows([
-    { field: "start", from: "09:00", to: "10:00" },
+    { field: "roomName", from: "笔录室 1", to: "笔录室 2" },
+    { field: "end", from: "10:00", to: "11:00" },
     { field: "roomId", from: "room-1", to: "room-2" },
     { field: "revision", from: 1, to: 2 },
-    { field: "roomName", from: "笔录室 1", to: "笔录室 2" },
+    { field: "start", from: "09:00", to: "10:00" },
   ]);
   assert.deepEqual(rows, [
     { key: "start", label: "开始时间", from: "09:00", to: "10:00" },
+    { key: "end", label: "结束时间", from: "10:00", to: "11:00" },
     { key: "roomName", label: "笔录室", from: "笔录室 1", to: "笔录室 2" },
   ]);
   assert.deepEqual(noticeDiffRows(undefined), []);
+});
+
+test("builds an unambiguous change-notice identity from the event snapshot", () => {
+  assert.deepEqual(noticeIdentitySummary({
+    noticeIdentity: {
+      partyName: "王芳",
+      purpose: "工伤笔录",
+      date: "2026-08-18",
+      start: "12:00",
+      end: "13:00",
+      roomName: "第一笔录室",
+    },
+  }), {
+    partyName: "王芳",
+    purpose: "工伤笔录",
+    originalSchedule: "2026/8/18 · 12:00–13:00 · 第一笔录室",
+  });
+  assert.equal(noticeIdentitySummary({ partyName: "当前值不能冒充事件快照" }), null);
 });
 
 test("arrival reminder text names the party and room without case data", () => {

@@ -17,6 +17,7 @@ bp = Blueprint("reminder_api", __name__, url_prefix="/api/v1/reminders")
 # 变更通知只保留最近 45 天的事件；确认回执保留 90 天后由确认动作顺带清理。
 CHANGE_NOTICE_MAX_AGE_DAYS = 45
 RECEIPT_RETENTION_DAYS = 90
+NOTICE_IDENTITY_FIELDS = ("partyName", "purpose", "date", "start", "end", "roomName")
 
 
 def _utc_minute_key(moment: datetime) -> str:
@@ -29,16 +30,23 @@ def _upcoming_window_end(now: datetime, preference) -> datetime:
     return now + timedelta(minutes=int(preference["reminder_lead_minutes"]))
 
 
+def _change_snapshot(snapshot_json) -> dict:
+    """只接受预约事件写入的 JSON 对象；损坏快照不进入通知投影。"""
+
+    if not snapshot_json:
+        return {}
+    try:
+        snapshot = json.loads(snapshot_json)
+    except (TypeError, ValueError):
+        return {}
+    return snapshot if isinstance(snapshot, dict) else {}
+
+
 def _change_diffs(before_json, after_json) -> list[dict]:
     """从事件快照计算字段级对比；任一侧缺失或不可解析时返回空列表。"""
 
-    if not before_json or not after_json:
-        return []
-    try:
-        before = json.loads(before_json)
-        after = json.loads(after_json)
-    except (TypeError, ValueError):
-        return []
+    before = _change_snapshot(before_json)
+    after = _change_snapshot(after_json)
     if not isinstance(before, dict) or not isinstance(after, dict):
         return []
     return [
@@ -46,6 +54,19 @@ def _change_diffs(before_json, after_json) -> list[dict]:
         for key in after
         if key in before and before[key] != after[key]
     ]
+
+
+def _change_notice_identity(before_json, after_json) -> dict:
+    """投影变更发生时的原预约，避免本人后续编辑让旧通知指错预约。"""
+
+    before = _change_snapshot(before_json)
+    after = _change_snapshot(after_json)
+    source = before or after
+    return {
+        field: source[field]
+        for field in NOTICE_IDENTITY_FIELDS
+        if field in source and source[field] is not None
+    }
 
 
 @bp.get("/due")
@@ -99,6 +120,9 @@ def due_reminders():
             item["occurredAt"] = row["change_occurred_at"]
             item["actorName"] = row["actor_display_name"]
             item["diffs"] = _change_diffs(row["before_json"], row["after_json"])
+            item["noticeIdentity"] = _change_notice_identity(
+                row["before_json"], row["after_json"]
+            )
             items.append(item)
 
     if not preference["booking_reminder"]:

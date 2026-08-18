@@ -204,9 +204,15 @@ push channels is untouched.
   (`.has-today-dot`); no other header furniture is added.
 - Change notices move from the bottom toast to a centered modal that requires
   explicit confirmation: it lists every unacknowledged foreign change event
-  (aggregated, never one-by-one), shows actor, time, and field-level before→after
-  diffs from the event snapshots (cancelled bookings show a single cancelled line),
-  and offers per-item 查看/知道了 plus 全部知道了; Esc equals acknowledging all.
+  (aggregated, never one-by-one). Each item first identifies the exact reservation
+  with an event-bound summary labelled 当事人 / 事项 / 原预约; “你的预约” always
+  refers to a reservation created by the current employee, never to the party named
+  in the case. Actor, time, identity, and the vertical before→after change story all
+  come from the event snapshots rather than a later current row (cancelled bookings
+  show a single cancelled line). The terracotta marker/line connects the changed
+  fields without turning the modal into a data table. Actions are at least 44px high,
+  focus is trapped while the background is inert, and focus returns on close.
+  Per-item 查看/我知道了 plus 全部知道了 remain available; Esc equals acknowledging all.
   While any drawer is open the modal is deferred — a quiet dashed info chip explains
   the pending notice — and it appears immediately after the drawer closes. The modal
   is acknowledged per event id and never reappears for confirmed events.
