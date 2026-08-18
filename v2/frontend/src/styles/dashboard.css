@@ -366,7 +366,6 @@
   display: grid;
   grid-template-columns: 170px 170px minmax(0, 1fr);
   align-items: center;
-  border-top: 1px solid var(--hairline-strong);
   border-bottom: 1px solid var(--hairline-strong);
 }
 
@@ -425,6 +424,7 @@
   background: var(--terracotta-soft);
 }
 
+.handover-ledger-icon.neutral,
 .handover-ledger-icon.muted {
   color: var(--muted);
   background: var(--paper-soft);
@@ -569,7 +569,6 @@
   justify-content: center;
   gap: 12px;
   color: var(--faint);
-  border-bottom: 1px solid var(--hairline);
 }
 
 .handover-ledger-empty p {
