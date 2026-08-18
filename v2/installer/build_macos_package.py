@@ -271,7 +271,7 @@ def build_macos_package(
             "top_folder": TOP_FOLDER,
             "distribution_channel": "GitHub Release",
             "release_gate": (
-                "v2/docs/RELEASE-CHECKLIST.md（E47–E52 全绿 + 真机抽验 + SHA 公布）"
+                "以 v2/docs/RELEASE-CHECKLIST.md 的当前版本条目与全部 macOS 正式分发门禁为准"
             ),
             "entrypoints": ["启动.command", "停止.command"],
             "files": records,
