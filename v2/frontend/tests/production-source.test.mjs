@@ -265,7 +265,10 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /disabled=\{!selectedUser \|\| handoverActionBusy\}/);
   assert.match(app, /sendHandover\(booking\.id, selectedUser\.id\)/);
   assert.doesNotMatch(app, /onClick=\{\(\) => void sendHandover\(booking\.id, user\.id\)\}/);
-  assert.match(app, /确认指派后立即生效，对方无需确认/);
+  assert.match(app, /className="handover-picker-summary"/);
+  assert.match(app, /交给谁？/);
+  assert.match(app, /确认后将立即完成指派，无需对方确认/);
+  assert.match(app, /返回预约详情/);
   assert.match(app, /\{ id: "handovers", label: "工作交接", Icon: ArrowsLeftRight \}/);
   assert.match(app, /function renderHandovers\(\)/);
   assert.match(app, /className="main-canvas handover-canvas"/);

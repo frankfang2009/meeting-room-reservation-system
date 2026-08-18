@@ -41,7 +41,7 @@ const expectedFiles = [
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
 // V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
 // 独立工作交接页（dashboard.css）。
-const frozenSourceSha256 = "24841dff25683bf3aa5c60c00ed22ad18ab0fac4a5995a7a18aa68a1fa0118d1";
+const frozenSourceSha256 = "815d9e93ba1afe3c1f428299dd44eb2da2d62885b9ee1beb1a59a9348c548ab5";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -100,7 +100,8 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
   assert.match(flows, /\.notice-item-actions button \{[\s\S]*?min-height: 44px;/);
   assert.match(flows, /\.handover-defer-button \{[\s\S]*?min-height: 44px;/);
-  assert.match(flows, /\.handover-picker-actions button \{[\s\S]*?min-height: 48px;/);
+  assert.match(flows, /\.handover-picker-actions button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.handover-picker-actions \.primary-button \{[\s\S]*?min-height: 52px;/);
   assert.match(flows, /\.handover-booking-button \{[\s\S]*?min-height: 52px;/);
   assert.match(dashboard, /\.handover-ledger-actions button,[\s\S]*?min-height: 44px;/);
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);

@@ -748,17 +748,78 @@
 
 /* 交接人员选择抽屉。 */
 .handover-picker {
+  height: calc(100dvh - 76px);
   display: flex;
   flex-direction: column;
-  gap: 16px;
   min-height: 0;
+  overflow: hidden;
+}
+
+.handover-picker-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 32px 24px;
+}
+
+.handover-picker-summary {
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 17px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+}
+
+.handover-picker-summary > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.handover-picker-summary strong {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.handover-picker-summary > div > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.handover-party-chip {
+  max-width: 96px;
+  flex: none;
+  overflow: hidden;
+  padding: 5px 10px;
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+
+.handover-picker-copy {
+  margin-top: 31px;
 }
 
 .handover-picker-copy h3 {
-  margin: 0 0 6px;
+  margin: 0 0 7px;
   color: var(--ink);
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .handover-picker-copy p {
@@ -769,10 +830,9 @@
 }
 
 .handover-picker-copy.admin {
-  padding: 12px 14px;
-  background: var(--terracotta-soft);
-  border-left: 3px solid var(--terracotta);
-  border-radius: 0 8px 8px 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
 .handover-picker-copy.admin p {
@@ -780,52 +840,70 @@
 }
 
 .handover-picker-note {
-  margin: 0;
+  margin: 22px 0 0;
   color: var(--faint);
   font-size: 13px;
 }
 
 .handover-picker-list {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
+  max-height: min(42vh, 420px);
+  margin: 18px 0 0;
   padding: 0;
   list-style: none;
   overflow-y: auto;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 10px;
-}
-
-.handover-picker-list li + li {
-  border-top: 1px solid var(--hairline);
 }
 
 .handover-picker-list button {
   width: 100%;
-  min-height: 52px;
+  min-height: 74px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 13px;
+  padding: 10px 13px;
   color: var(--ink-secondary);
   background: transparent;
   border: 0;
+  border-radius: 9px;
   cursor: pointer;
   text-align: left;
-  transition: background 130ms ease, color 130ms ease;
+  transition: background 150ms ease, color 150ms ease;
 }
 
 .handover-picker-list button:hover {
   background: var(--paper-soft);
 }
 
+:root .handover-picker-list button:focus-visible {
+  outline: 2px solid rgba(164, 82, 61, 0.52) !important;
+  outline-offset: -2px !important;
+}
+
 .handover-picker-list button.selected {
-  color: var(--terracotta-text);
+  color: var(--ink);
   background: var(--terracotta-soft);
+  box-shadow: inset 0 0 0 1px rgba(164, 82, 61, 0.22);
+}
+
+.handover-person-avatar {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 550;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+}
+
+.handover-picker-list button.selected .handover-person-avatar {
+  color: var(--terracotta-text);
+  border-color: var(--terracotta);
 }
 
 .handover-picker-list button > svg {
+  margin-left: auto;
   flex: none;
   color: var(--hairline-strong);
 }
@@ -843,8 +921,8 @@
 
 .handover-picker-list strong {
   color: var(--ink);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 620;
 }
 
 .handover-picker-list small {
@@ -852,24 +930,54 @@
   font-size: 12.5px;
 }
 
+.handover-picker-rule {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  margin-top: 22px;
+  color: var(--muted);
+}
+
+.handover-picker-rule svg {
+  margin-top: 2px;
+}
+
+.handover-picker-rule p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
 .handover-picker-actions {
+  flex: 0 0 auto;
   display: flex;
-  gap: 10px;
-  margin-top: auto;
-  padding-top: 16px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 20px 32px 22px;
   border-top: 1px solid var(--hairline);
+  background: var(--paper-raised);
 }
 
 .handover-picker-actions button {
-  min-height: 48px;
-}
-
-.handover-picker-actions .secondary-button {
-  flex: 0 0 112px;
+  min-height: 44px;
 }
 
 .handover-picker-actions .primary-button {
-  flex: 1;
+  min-height: 52px;
+  margin: 0;
+}
+
+.handover-picker-back {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.handover-picker-back:hover:not(:disabled) {
+  background: var(--paper-soft);
 }
 
 .handover-booking-button {
@@ -909,8 +1017,7 @@
 }
 
 @media (max-width: 680px) {
-  .handover-modal-foot,
-  .handover-picker-actions {
+  .handover-modal-foot {
     align-items: stretch;
     flex-direction: column;
   }
@@ -919,8 +1026,16 @@
     max-width: none;
   }
 
-  .handover-picker-actions .secondary-button {
-    flex-basis: auto;
-    order: 2;
+  .handover-picker-scroll,
+  .handover-picker-actions {
+    padding-inline: 22px;
+  }
+
+  .handover-picker-summary {
+    align-items: flex-start;
+  }
+
+  .handover-picker-summary strong {
+    font-size: 20px;
   }
 }
