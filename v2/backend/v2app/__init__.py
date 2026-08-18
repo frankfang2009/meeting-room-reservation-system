@@ -29,7 +29,7 @@ from .security import register_security
 from .services import update_check
 
 
-PRODUCT_VERSION = "V2.2.1"
+PRODUCT_VERSION = "V2.2.2"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"

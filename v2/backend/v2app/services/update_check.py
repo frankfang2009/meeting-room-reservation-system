@@ -208,20 +208,31 @@ def view(
     data_dir: Path,
     current_version: str,
 ) -> dict[str, Any]:
-    """为管理员系统状态页汇总当前检查状态；禁用时只返回开关。"""
+    """为管理员系统状态页汇总当前检查状态；禁用时只返回开关。
+
+    陈旧知识规则：最近一次尝试失败后，此前的“无更新”结论不再可信——
+    新版本可能已经发布而本次没有读到，因此不能宣称“已是最新”。
+    已知“有新版本”的事实不因后续检查失败而失效（该发布仍然存在）。
+    """
 
     if not enabled:
         return {"enabled": False}
     state = load_state(data_dir)
     current = normalize_version(current_version)
     latest = normalize_version(state.get("latestVersion"))
+    # 成功路径总会清空 lastErrorAtUtc，因此它非空即代表最近一次落盘尝试失败，
+    # 此前的“无更新”结论随之过期（时间戳只到秒，不比较先后）。
+    knowledge_stale = state.get("lastErrorAtUtc") is not None
     status = "unknown"
     latest_version: Optional[str] = None
     release: Optional[str] = None
     if current is not None and latest is not None:
         latest_version = state.get("latestVersion")
         release = release_url(state.get("latestTag"))
-        status = "available" if latest > current else "current"
+        if latest > current:
+            status = "available"
+        elif not knowledge_stale:
+            status = "current"
     return {
         "enabled": True,
         "status": status,
@@ -233,6 +244,7 @@ def view(
         "lastCheckedAtUtc": (
             state.get("lastSuccessAtUtc") or state.get("lastAttemptAtUtc")
         ),
+        "lastCheckFailed": knowledge_stale,
     }
 
 

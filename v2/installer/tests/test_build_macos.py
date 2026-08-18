@@ -160,7 +160,7 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             (backend / name).write_text("# synthetic\n", encoding="utf-8")
         (backend / "v2app" / "__init__.py").write_text("# synthetic\n", encoding="utf-8")
         (backend / "v2app" / "api" / "__init__.py").write_text("# synthetic\n", encoding="utf-8")
-        (self.root / "VERSION").write_text("2.2.1\n", encoding="utf-8")
+        (self.root / "VERSION").write_text("2.2.2\n", encoding="utf-8")
         frontend_dir = self.root / "frontend"
         frontend_dir.mkdir()
         (frontend_dir / "package-lock.json").write_text(
@@ -220,7 +220,7 @@ class MacOSPackageBuilderTests(unittest.TestCase):
                 output_dir=output_dir,
             )
             outputs.append(output_dir / Path(summary["artifact"]).name)
-            self.assertEqual(summary["version"], "2.2.1")
+            self.assertEqual(summary["version"], "2.2.2")
         self.assertEqual(
             outputs[0].read_bytes(), outputs[1].read_bytes(), "两次构建必须字节一致"
         )
@@ -263,7 +263,9 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             )
         )
         self.assertEqual(manifest["platform"], "macos-arm64")
-        self.assertFalse(manifest["formal_external_release_allowed"])
+        self.assertEqual(manifest["distribution_channel"], "GitHub Release")
+        self.assertIn("RELEASE-CHECKLIST", manifest["release_gate"])
+        self.assertNotIn("formal_external_release_allowed", manifest)
         latest = json.loads(
             (artifact.parent / "latest-macos.json").read_text(encoding="utf-8")
         )
@@ -272,8 +274,8 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             {
                 "product": "meeting-room-reservation-system-v2",
                 "channel": "macos-selfhost",
-                "version": "2.2.1",
-                "tag": "v2.2.1",
+                "version": "2.2.2",
+                "tag": "v2.2.2",
             },
         )
 

@@ -269,7 +269,10 @@ def build_macos_package(
             "edition": MANIFEST_CHANNEL,
             "version": f"V{version}",
             "top_folder": TOP_FOLDER,
-            "formal_external_release_allowed": False,
+            "distribution_channel": "GitHub Release",
+            "release_gate": (
+                "以 v2/docs/RELEASE-CHECKLIST.md 的当前版本条目与全部 macOS 正式分发门禁为准"
+            ),
             "entrypoints": ["启动.command", "停止.command"],
             "files": records,
         }
