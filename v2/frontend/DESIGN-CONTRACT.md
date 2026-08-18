@@ -230,19 +230,30 @@ calendar and role boundaries are unchanged.
   immediately). It opens a handover picker drawer listing the employee
   directory (`GET /users/directory`, name + department only, self excluded)
   with the booking summary pinned on top and the confirmation semantics
-  stated in plain copy.
-- Incoming handover requests ride the V2.3.0 action modal: identity rows
+  stated in plain copy. Clicking a person only selects them: the row gains a
+  visible check state and the separate footer CTA names the selected person;
+  only that CTA submits the request or administrator assignment.
+- Incoming handover requests reuse the V2.3.0 modal shell but not its change-
+  notice semantics: a pure handover modal is titled 工作交接, uses the handover
+  icon, and contains no 全部知道了 or change-history copy. Identity rows
   (当事人 / 事项 / 时间), a plain-language consequence note, and
-  接受交接 / 拒绝 actions. Esc never decides a handover — the hint states a
-  choice is required; change notices in the same modal keep their Esc-acks
-  semantics.
-- “我的预约” gains a quiet 待处理交接 board above the hero: incoming rows
-  offer 接受/拒绝, outgoing rows show 等待确认 with a 撤回 action. The board
-  appears only when something is pending and refreshes with the poller and
-  after every decision.
+  接受交接 / 不接受 actions remain explicit. Esc and 稍后处理 only defer the
+  prompt to 工作交接 without changing request state; change notices in a mixed
+  modal keep their event acknowledgement semantics.
+- 工作交接 is a first-class rail destination beside 我的预约. Only incoming
+  requests contribute to its numbered rail badge. The page uses the product's
+  open ledger language: an unboxed summary band, then 待我确认 and 我发起的
+  sections with count, party, purpose, relative date, time, room, and explicit
+  actions. 我的预约 remains visually unchanged and contains no handover board.
+- A booking with a pending handover replaces the normal handover action with a
+  disabled 交接处理中 control. The handover-request projection must preserve
+  the actual reservation id; request ids must never leak into reservation ids.
 - After acceptance the calendar, upcoming list, and history all switch to the
   receiver's name snapshot; the event timeline renders 预约已交接 with
-  “预约人由 A 交接给 B” from the event snapshots.
+  “预约者由 A 交接给 B” from the event snapshots. History keeps active /
+  cancelled as the reservation lifecycle status and adds an auxiliary badge:
+  pending request = 交接中, completed ownership transfer = 已交接. 已取消 may
+  coexist with 已交接 and always remains the primary lifecycle fact.
 - The reminder poller now runs regardless of the two notification switches
   (handovers are to-dos, not notices); switch-off still clears change and
   upcoming presentation.

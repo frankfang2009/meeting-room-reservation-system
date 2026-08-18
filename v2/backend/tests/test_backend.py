@@ -2525,11 +2525,18 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertFalse(body["assigned"])
         self.assertEqual(body["request"]["status"], "pending")
         self.assertEqual(body["request"]["toUser"]["id"], self.second["id"])
+        self.assertEqual(body["request"]["reservation"]["id"], booking["id"])
 
         listed = self.employee2.get("/api/v1/handover-requests").get_json()
         self.assertEqual([r["toUser"]["id"] for r in listed["incoming"]], [self.second["id"]])
+        self.assertEqual(listed["incoming"][0]["reservation"]["id"], booking["id"])
         mine = self.employee.get("/api/v1/handover-requests").get_json()
         self.assertEqual([r["fromUser"]["id"] for r in mine["outgoing"]], [self.first["id"]])
+        self.assertEqual(mine["outgoing"][0]["reservation"]["id"], booking["id"])
+        pending_history = self.employee.get(
+            "/api/v1/reservations/history?month=2026-08"
+        ).get_json()["items"]
+        self.assertEqual(pending_history[0]["handoverState"], "pending")
 
         due = self.employee2.get("/api/v1/reminders/due").get_json()["items"]
         handovers = [item for item in due if item["kind"] == "handover"]
@@ -2548,6 +2555,23 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertEqual(reservation["ownerId"], self.second["id"])
         self.assertEqual(reservation["owner"]["name"], self.second["name"])
         self.assertEqual(reservation["revision"], booking["revision"] + 1)
+        completed_history = self.employee2.get(
+            "/api/v1/reservations/history?month=2026-08"
+        ).get_json()["items"]
+        self.assertEqual(completed_history[0]["handoverState"], "completed")
+
+        cancelled = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": reservation["revision"]},
+            client=self.employee2,
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.get_json())
+        cancelled_history = self.employee2.get(
+            "/api/v1/reservations/history?month=2026-08"
+        ).get_json()["items"]
+        self.assertEqual(cancelled_history[0]["status"], "cancelled")
+        self.assertEqual(cancelled_history[0]["handoverState"], "completed")
 
         self.assertEqual(self.employee.get("/api/v1/reservations/upcoming").get_json()["items"], [])
         events = self.client.get(
@@ -2562,6 +2586,24 @@ class HandoverTests(AuthenticatedReservationTestCase):
             query_string={"action": "handover.accepted"},
         ).get_json()
         self.assertEqual(audits["total"], 1)
+
+    def test_cancelled_reservation_does_not_keep_pending_handover_state(self):
+        booking = self.create_own_booking(start="10:00")
+        created = self.request_handover(booking, self.second)
+        self.assertEqual(created.status_code, 200, created.get_json())
+
+        cancelled = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": booking["revision"]},
+            client=self.employee,
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.get_json())
+        history = self.employee.get(
+            "/api/v1/reservations/history?month=2026-08"
+        ).get_json()["items"]
+        self.assertEqual(history[0]["status"], "cancelled")
+        self.assertIsNone(history[0]["handoverState"])
 
     def test_handover_decline_and_withdraw_keep_owner(self):
         booking = self.create_own_booking(start="10:00")

@@ -234,8 +234,8 @@ test("acknowledging change notices is event-scoped and refreshes affected views"
 
 test("upcoming reminders live in the calendar with a counting badge and a one-time arrival toast", () => {
   // 临近提醒是状态而非待办：徽章显示计数，不再有确认动作。
-  assert.match(app, /const upcomingCount = id === "mine" \? dueReminders\.upcoming\.length : 0/);
-  assert.match(app, /\{upcomingCount > 9 \? "9\+" : upcomingCount\}/);
+  assert.match(app, /const badgeCount = id === "mine" \? dueReminders\.upcoming\.length : id === "handovers" \? handoverBoard\.incoming\.length : 0/);
+  assert.match(app, /\{badgeCount > 9 \? "9\+" : badgeCount\}/);
   // 画进日历：预约块上的倒计时角标与紧急态。
   assert.match(app, /const countdown = countdownFor\(booking\)/);
   assert.match(app, /countdown && <span className="booking-countdown"/);
@@ -251,25 +251,37 @@ test("upcoming reminders live in the calendar with a counting badge and a one-ti
   assert.doesNotMatch(app, /openMineAndAcknowledgeReminder/);
 });
 
-test("handover requests ride the action modal, the mine board, and the details drawer", () => {
-  assert.match(app, /dueReminders\.handovers\.length > 0/);
+test("handover requests ride the action modal, the dedicated page, and the details drawer", () => {
+  assert.match(app, /const visibleHandoverReminders = dueReminders\.handovers\.filter/);
+  assert.match(app, /const noticeOnlyHandovers = noticeHasHandovers && dueReminders\.changes\.length === 0/);
   assert.match(app, /decideHandover\(item\.handoverRequestId, "accept"\)/);
   assert.match(app, /decideHandover\(item\.handoverRequestId, "decline"\)/);
-  assert.match(app, /交接请求需选择接受或拒绝/);
-  assert.match(app, /const canHandover = booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /deferVisibleHandovers/);
+  assert.match(app, /稍后处理/);
+  assert.match(app, /const canHandover = !handoverPending && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /drawer\.type === "handover"/);
   assert.match(app, /api\.getUserDirectory\(\)/);
-  assert.match(app, /sendHandover\(booking\.id, user\.id\)/);
-  assert.match(app, /指派立即生效，对方无需确认/);
-  assert.match(app, /className="handover-board" aria-label="待处理交接"/);
+  assert.match(app, /aria-pressed=\{drawer\.selectedUserId === user\.id\}/);
+  assert.match(app, /disabled=\{!selectedUser \|\| handoverActionBusy\}/);
+  assert.match(app, /sendHandover\(booking\.id, selectedUser\.id\)/);
+  assert.doesNotMatch(app, /onClick=\{\(\) => void sendHandover\(booking\.id, user\.id\)\}/);
+  assert.match(app, /确认指派后立即生效，对方无需确认/);
+  assert.match(app, /\{ id: "handovers", label: "工作交接", Icon: ArrowsLeftRight \}/);
+  assert.match(app, /function renderHandovers\(\)/);
+  assert.match(app, /className="main-canvas handover-canvas"/);
+  assert.match(app, /activeView === "handovers" && renderHandovers\(\)/);
+  assert.doesNotMatch(app, /className="handover-board" aria-label="工作交接"/);
+  assert.match(app, /handoverPending/);
   assert.match(app, /withdrawHandoverRequest\(request\.id\)/);
   assert.match(app, /reservationEventLabel/);
   assert.match(productionSource, /handover: "预约已交接"/);
-  assert.match(productionSource, /预约人由 \$\{from\} 交接给 \$\{to\}/);
+  assert.match(productionSource, /预约者由 \$\{from\} 交接给 \$\{to\}/);
+  assert.match(app, /booking\.handoverState === "pending" \? "交接中" : "已交接"/);
+  assert.match(app, /booking\.status === "cancelled" && <span className="history-cancelled-status">已取消<\/span>/);
 });
 
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
-  assert.match(app, /const noticeModalOpen = \(dueReminders\.changes\.length > 0 \|\| dueReminders\.handovers\.length > 0\) && !drawer && !sessionExpired;/);
+  assert.match(app, /const noticeModalOpen = \(dueReminders\.changes\.length > 0 \|\| noticeHasHandovers\) && !drawer && !sessionExpired;/);
   assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,420}mainRef,/);
   assert.match(app, /<\/div>\s*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
   assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);

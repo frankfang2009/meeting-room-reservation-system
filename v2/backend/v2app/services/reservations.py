@@ -216,6 +216,7 @@ def serialize_reservation(row: Any, actor: Optional[dict[str, Any]] = None) -> d
         "updatedAt": item["updated_at"],
         "canEdit": can_edit,
         "canCancel": can_cancel,
+        "handoverState": item.get("handover_state"),
     }
 
 
@@ -654,7 +655,8 @@ def _next_month(month_start: date) -> date:
 
 
 def list_history(args: dict[str, Any]) -> dict[str, Any]:
-    month = str(args.get("month") or local_now().strftime("%Y-%m"))
+    now = local_now().replace(tzinfo=None)
+    month = str(args.get("month") or now.strftime("%Y-%m"))
     if not re.fullmatch(r"\d{4}-\d{2}", month):
         raise ApiError(422, "VALIDATION_ERROR", "月份格式应为 YYYY-MM")
     try:
@@ -722,13 +724,26 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
     params.append(page_size + 1)
     rows = get_db().execute(
         f"""
-        SELECT r.*, u.display_name AS owner_display_name
+        SELECT r.*, u.display_name AS owner_display_name,
+               CASE
+                 WHEN r.status = 'active'
+                   AND (r.booking_date > ? OR (r.booking_date = ? AND r.start_time > ?))
+                   AND EXISTS (
+                   SELECT 1 FROM handover_requests hr
+                   WHERE hr.reservation_id = r.id AND hr.status = 'pending'
+                 ) THEN 'pending'
+                 WHEN EXISTS (
+                   SELECT 1 FROM reservation_events re
+                   WHERE re.reservation_id = r.id AND re.event_type = 'handover'
+                 ) THEN 'completed'
+                 ELSE NULL
+               END AS handover_state
         FROM reservations r JOIN users u ON u.id = r.owner_user_id
         WHERE {' AND '.join(clauses)}
         ORDER BY r.booking_date DESC, r.start_time DESC, r.id DESC
         LIMIT ?
         """,
-        params,
+        [now.date().isoformat(), now.date().isoformat(), now.strftime("%H:%M"), *params],
     ).fetchall()
     has_more = len(rows) > page_size
     page = rows[:page_size]

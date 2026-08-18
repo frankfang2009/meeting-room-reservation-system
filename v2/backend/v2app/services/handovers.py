@@ -61,6 +61,11 @@ def _started(row: Any) -> bool:
 
 
 def serialize_handover_request(row: Any) -> dict[str, Any]:
+    reservation = serialize_reservation(row, None)
+    # Joined handover rows expose both hr.id and r.id as ``id``. sqlite3.Row
+    # keeps the first duplicate column, so the generic reservation serializer
+    # otherwise leaks the handover-request id as the reservation id.
+    reservation["id"] = _reservation_id_of(row)
     return {
         "id": row["id"],
         "status": row["status"],
@@ -69,7 +74,7 @@ def serialize_handover_request(row: Any) -> dict[str, Any]:
         "expectedRevision": row["expected_revision"],
         "fromUser": {"id": row["from_user_id"], "name": row["from_display_name"]},
         "toUser": {"id": row["to_user_id"], "name": row["to_display_name"]},
-        "reservation": serialize_reservation(row, None),
+        "reservation": reservation,
     }
 
 

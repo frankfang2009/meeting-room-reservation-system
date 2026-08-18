@@ -488,25 +488,28 @@
 
 .history-row-end {
   display: grid;
-  grid-template-columns: 12px 28px;
+  grid-template-columns: auto 28px;
   align-items: center;
   justify-content: space-between;
-  gap: 26px;
+  gap: 16px;
 }
 
-.history-row-end > i {
+.history-statuses {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.history-tag-dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--tag-color);
 }
 
-.history-row-end.cancelled {
-  grid-template-columns: auto 28px;
-  gap: 12px;
-}
-
-.history-cancelled-status {
+.history-cancelled-status,
+.history-handover-status {
   min-width: 44px;
   display: inline-flex;
   align-items: center;
@@ -519,6 +522,19 @@
   font-size: 11px;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.history-handover-status {
+  min-width: 50px;
+  color: var(--ink-secondary);
+  border-color: var(--hairline-strong);
+  background: var(--paper-soft);
+}
+
+.history-handover-status.pending {
+  color: var(--terracotta-text);
+  border-color: var(--terracotta-line);
+  background: var(--terracotta-soft);
 }
 
 .history-row-end svg {
