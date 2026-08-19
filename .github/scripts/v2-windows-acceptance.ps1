@@ -344,8 +344,14 @@ try {
     Write-Step "system-registration"
     $mainTask = Get-ScheduledTask -TaskPath "\" -TaskName $Script:MainTaskName
     Assert-True ([string]$mainTask.Principal.UserId -eq "SYSTEM") "main task principal is not SYSTEM"
+    # T2-B9 回归：常驻服务任务必须显式禁用电池策略（笔记本部署电源波动不得停服务）。
+    # 读回对象只有 DisallowStartIfOnBatteries/StopIfGoingOnBatteries（负面语义属性）。
+    Assert-True ([bool]$mainTask.Settings.DisallowStartIfOnBatteries -eq $false) "main task disallows start on batteries"
+    Assert-True ([bool]$mainTask.Settings.StopIfGoingOnBatteries -eq $false) "main task stops on batteries"
     $backupTask = Get-ScheduledTask -TaskPath "\" -TaskName $Script:BackupTaskName
     Assert-True ([string]$backupTask.Principal.UserId -eq "SYSTEM") "backup task principal is not SYSTEM"
+    Assert-True ([bool]$backupTask.Settings.DisallowStartIfOnBatteries -eq $false) "backup task disallows start on batteries"
+    Assert-True ([bool]$backupTask.Settings.StopIfGoingOnBatteries -eq $false) "backup task stops on batteries"
     Assert-True ([bool]$backupTask.Settings.StartWhenAvailable) "backup task does not set StartWhenAvailable"
     $registered = Get-ItemProperty -LiteralPath "HKLM:\Software\MeetingRoomReservationV2"
     Assert-True ([string]$registered.InstallRoot -eq $Script:InstallRoot) "HKLM InstallRoot mismatch"
