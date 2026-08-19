@@ -59,7 +59,10 @@
   event chain keeps the A→B trail); admin assignment is immediate; declined/expired requests fall back
   to the original owner; editing the booking after a request invalidates it (optimistic-lock semantics);
   one pending request per booking. Handover requests ride the reminder poller regardless of notification
-  switches, and Esc never decides a handover.
+  switches, and Esc never decides a handover. Admin assignment is already effective and therefore
+  creates an unrefusable assignment-result notice for the receiver: only 查看预约 / 我知道了 are
+  available, the notice ignores reminder switches, and the same transaction withdraws any older
+  pending request for that reservation.
 - Copying external reminder text is a manual clipboard-only action and must never connect to an
   outbound channel, open WeChat, or claim/record a sent state. Its variable set is fixed to party
   name, date, start, end, and room; case number, purpose, and notes must never enter the template.

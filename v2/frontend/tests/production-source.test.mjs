@@ -224,8 +224,8 @@ test("external reminder copy stays manual, scoped, and recoverable", () => {
   assert.doesNotMatch(app, /已发送|跳转微信|window\.open\([^)]*微信/);
 });
 
-test("acknowledging change notices is event-scoped and refreshes affected views", () => {
-  assert.match(app, /api\.acknowledgeChangeNotice\(item\.eventId\)/);
+test("acknowledging event-backed notices is scoped and refreshes affected views", () => {
+  assert.match(app, /api\.acknowledgeNotice\(item\.eventId\)/);
   assert.match(app, /await refreshDueReminders\(\);/);
   assert.match(app, /Promise\.all\(\[loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)\]\)/);
   assert.doesNotMatch(app, /REMINDER_NOT_DUE/);
@@ -288,7 +288,7 @@ test("handover requests ride the action modal, the dedicated page, and the detai
 
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
   assert.match(app, /const noticeModalOpen = \(dueReminders\.changes\.length > 0 \|\| noticeHasHandovers\) && !drawer && !sessionExpired;/);
-  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,420}mainRef,/);
+  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,900}mainRef,/);
   assert.match(app, /<\/div>\s*\{drawer && \(dueReminders\.changes\.length > 0[\s\S]*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
   assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);
   assert.match(app, /noticeDiffRows\(item\.diffs\)/);
@@ -298,7 +298,7 @@ test("change notices require an explicit centered modal with field diffs and dra
   assert.match(app, />原预约<\/dt><dd>\{identity\.originalSchedule/);
   assert.match(app, /你的预约发生了 <em>\{diffRows\.length\}<\/em> 项变更/);
   assert.match(app, /item\.changeType === "cancelled"/);
-  assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
+  assert.match(app, /if \(!noticeAckBusy\) void acknowledgeNotices\(acknowledgementNotices\)/);
   assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
   // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
   assert.match(app, /\{drawer && \(dueReminders\.changes\.length > 0 \|\| noticeHasHandovers\) && <div className="notice-queue-chip" role="status" aria-live="polite"/);
@@ -314,8 +314,20 @@ test("mixed handover and change notices share one scroll body and keep actions i
   assert.match(app, />\u4ea4\u63a5\u7a0d\u540e\u5904\u7406<\/button>/);
   assert.match(app, /"\u786e\u8ba4\u5168\u90e8\u53d8\u66f4"/);
   assert.match(app, /data-initial-focus disabled=\{noticeAckBusy\} onClick=\{deferVisibleHandovers\}/);
-  assert.match(app, /const noticeQueueLabel = dueReminders\.changes\.length > 0 && noticeHasHandovers/);
-  assert.match(app, /\$\{dueReminders\.changes\.length\} 条预约变更、\$\{visibleHandoverReminders\.length\} 条工作交接待处理/);
+  assert.match(app, /const noticeQueueLabel = \[/);
+  assert.match(app, /handoverNoticeCount \? `\$\{handoverNoticeCount\} 条工作交接`/);
+});
+
+test("administrator assignments notify the receiver without a reject action", () => {
+  assert.match(app, /const assignments = items\.filter\(\(item\) => item\.kind === "assignment"\)/);
+  assert.match(app, /const assignmentNotices = dueReminders\.assignments/);
+  assert.match(app, /function AssignmentNoticeItem/);
+  assert.match(app, /已将这场预约指派给你/);
+  assert.match(app, /预约已经从 \{item\.fromName \|\| "原预约者"\} 转入你名下，无需接受/);
+  assert.match(app, /onClick=\{\(\) => onAcknowledge\(\[item\]\)\}/);
+  const component = app.match(/function AssignmentNoticeItem[\s\S]*?\n\}/)?.[0] || "";
+  assert.doesNotMatch(component, /不接受|declineHandover|handoverRequestId/);
+  assert.match(app, /已生效指派和预约变更只能确认知晓/);
 });
 
 test("the frozen empty-state action consumes a valid default room", () => {

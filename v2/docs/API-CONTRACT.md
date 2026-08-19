@@ -220,19 +220,23 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 超过 20,000 行返回 `422 EXPORT_TOO_LARGE`。响应头提供 `X-Report-Field-Version`、
 `X-Report-Row-Count` 与安全文件名；成功和超限失败都写入不含业务内容的
 `report.csv_exported` 审计。
-- `GET /api/v1/reminders/due` 返回 `kind=upcoming|change|handover` 的全部待处理条目（交接请求不受通知开关约束，携带 `handoverRequestId` 与 `fromName`）（不再只
-  取单条）；临近提醒和他人修改/取消通知各自受个人开关控制。临近提醒是状态而非待办：
+- `GET /api/v1/reminders/due` 返回 `kind=upcoming|change|handover|assignment` 的全部待处理
+  条目（普通交接请求携带 `handoverRequestId/fromName`；管理员指派结果携带
+  `eventId/assignedByName/fromName`，两者都不受通知开关约束）（不再只取单条）；临近
+  提醒和他人修改/取消通知各自受个人开关控制。临近提醒是状态而非待办：
   窗口以请求时的当前 `reminderLeadMinutes` 实时计算并返回窗口内全部条目，没有确认
   动作。变更通知以事件为维度：每项含 `eventId`、`changeType`、`actorName`、
   `occurredAt` 与 `diffs`（由事件快照计算的字段级对比，仅面向用户的字段），超过
   45 天未确认的变更事件过期不再返回。
-- `POST /api/v1/reminders/ack` 提交 `{ "eventId": "…" }` 按变更事件确认（幂等）；
-  仅预约本人可确认，事件必须是他人的修改/取消，否则 `403/422`；开关关闭时返回
-  `409 NOTIFICATION_NOT_DUE`。确认动作顺带清理 90 天前的旧回执。
+- `POST /api/v1/reminders/ack` 提交 `{ "eventId": "…" }` 按事件确认（幂等）；修改/取消
+  通知仅当前预约者可确认且受变更通知开关约束，管理员指派结果仅该 handover 事件快照
+  中的接收人可确认且不受开关约束，否则返回 `403/422/409`。确认动作只写回执、不改变
+  预约归属，并顺带清理 90 天前的旧回执。
 - `POST /api/v1/reservations/{id}/handover` 提交 `{ "toUserId": "…" }`：预约本人发起
   待确认交接请求（同一预约同时仅一个 pending，重复返回 `409 HANDOVER_REQUEST_EXISTS`；
-  目标须为启用用户且非本人）；管理员对他人预约调用则直接指派、立即生效（返回
-  `assigned: true` 与翻转后的预约）。仅未开始的 active 预约可交接。
+  目标须为启用用户且非本人）；管理员对他人预约调用则直接指派、立即生效，并在同一
+  事务撤回该预约旧 pending 请求（返回 `assigned: true` 与翻转后的预约，接收人随后
+  通过 `kind=assignment` 知晓）。仅未开始的 active 预约可交接。
 - `POST /api/v1/handover-requests/{id}/accept|decline` 仅接手人可调用；接受在
   `BEGIN IMMEDIATE` 事务内乐观锁翻转归属（revision+1、owner 姓名快照更新、追加
   `handover` 事件、审计 `handover.accepted`），预约已开始/取消返回

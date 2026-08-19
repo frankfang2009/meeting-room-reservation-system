@@ -2676,10 +2676,88 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertEqual(
             self.employee2.get("/api/v1/handover-requests").get_json()["incoming"], [],
         )
+        due = self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+        assignments = [item for item in due if item["kind"] == "assignment"]
+        self.assertEqual(len(assignments), 1)
+        notice = assignments[0]
+        self.assertEqual(notice["id"], booking["id"])
+        self.assertEqual(notice["assignedByName"], "系统管理员")
+        self.assertEqual(notice["fromName"], "普通员工")
+        self.assertTrue(notice["eventId"])
+        self.assertNotIn("handoverRequestId", notice)
+
+        denied = self.write(
+            "POST", "/api/v1/reminders/ack", {"eventId": notice["eventId"]},
+            client=self.employee,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        acknowledged = self.write(
+            "POST", "/api/v1/reminders/ack", {"eventId": notice["eventId"]},
+            client=self.employee2,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+        self.assertEqual(
+            [item for item in self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+             if item["kind"] == "assignment"],
+            [],
+        )
         audits = self.client.get(
             "/api/v1/admin/audit", query_string={"action": "handover.assigned"},
         ).get_json()
         self.assertEqual(audits["total"], 1)
+
+    def test_admin_assignment_notice_ignores_preferences_and_closes_old_request(self):
+        booking = self.create_own_booking(start="10:00")
+        pending_id = self.request_handover(booking, self.second).get_json()["request"]["id"]
+        preferences = self.write(
+            "PUT",
+            "/api/v1/preferences",
+            {"bookingChangeNotifications": False, "bookingReminder": False},
+            client=self.employee2,
+        )
+        self.assertEqual(preferences.status_code, 200, preferences.get_json())
+
+        assigned = self.request_handover(booking, self.second, client=self.client)
+
+        self.assertEqual(assigned.status_code, 200, assigned.get_json())
+        due = self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([item["kind"] for item in due], ["assignment"])
+        self.assertEqual(
+            self.employee2.get("/api/v1/handover-requests").get_json()["incoming"], [],
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            request = db.execute(
+                "SELECT status, decided_at FROM handover_requests WHERE id = ?",
+                (pending_id,),
+            ).fetchone()
+        self.assertEqual(request[0], "withdrawn")
+        self.assertTrue(request[1])
+
+    def test_only_latest_admin_assignment_is_shown_to_current_owner(self):
+        third = self.add_employee("employee3")
+        employee3 = self.app.test_client()
+        self.login("employee3", "employee-pass-123", employee3)
+        booking = self.create_own_booking(start="10:00")
+
+        first_assignment = self.request_handover(booking, self.second, client=self.client)
+        self.assertEqual(first_assignment.status_code, 200, first_assignment.get_json())
+        second_assignment = self.request_handover(
+            first_assignment.get_json()["reservation"], third, client=self.client,
+        )
+
+        self.assertEqual(second_assignment.status_code, 200, second_assignment.get_json())
+        self.assertEqual(
+            [item for item in self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+             if item["kind"] == "assignment"],
+            [],
+        )
+        current_notices = [
+            item for item in employee3.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "assignment"
+        ]
+        self.assertEqual(len(current_notices), 1)
+        self.assertEqual(current_notices[0]["fromName"], self.second["name"])
+        self.assertEqual(current_notices[0]["id"], booking["id"])
 
     def test_admin_can_force_assign_an_employee_booking_to_self(self):
         booking = self.create_own_booking(start="10:00")
@@ -2692,6 +2770,11 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertTrue(body["assigned"])
         self.assertEqual(body["reservation"]["ownerId"], admin["id"])
         self.assertEqual(body["reservation"]["owner"]["name"], admin["name"])
+        self.assertEqual(
+            [item for item in self.client.get("/api/v1/reminders/due").get_json()["items"]
+             if item["kind"] == "assignment"],
+            [],
+        )
         self.assertEqual(
             self.employee.get("/api/v1/handover-requests").get_json()["outgoing"], [],
         )

@@ -69,6 +69,11 @@ def _change_notice_identity(before_json, after_json) -> dict:
     }
 
 
+def _snapshot_owner(snapshot_json) -> tuple[str, str]:
+    snapshot = _change_snapshot(snapshot_json)
+    return str(snapshot.get("ownerId") or ""), str(snapshot.get("ownerName") or "")
+
+
 @bp.get("/due")
 @login_required
 def due_reminders():
@@ -152,6 +157,58 @@ def due_reminders():
         item["fromName"] = row["from_display_name"]
         items.append(item)
 
+    # 管理员指派已经即时生效，不生成可接受/拒绝的 pending request；接收人仍必须
+    # 知晓所有权变化。复用 handover 事件和 notice_receipts，避免为结果通知升级 schema。
+    # 每场预约只投影最新一次 handover，且只在接收人仍是当前预约者时显示，防止连续
+    # 重指派后旧通知误称“预约已转入你名下”。该通知不受个人提醒开关影响。
+    assignment_cutoff = _utc_minute_key(
+        datetime.now(timezone.utc) - timedelta(days=CHANGE_NOTICE_MAX_AGE_DAYS)
+    )
+    assignment_rows = db.execute(
+        """
+        SELECT r.*, u.display_name AS owner_display_name,
+               e.id AS assignment_event_id,
+               e.occurred_at AS assignment_occurred_at,
+               e.before_json, e.after_json,
+               a.display_name AS assignment_actor_name
+        FROM reservation_events e
+        JOIN reservations r ON r.id = e.reservation_id
+        JOIN users u ON u.id = r.owner_user_id
+        JOIN users a ON a.id = e.actor_user_id
+        WHERE e.event_type = 'handover'
+          AND r.owner_user_id = ?
+          AND e.actor_user_id != ?
+          AND substr(e.occurred_at, 1, 16) >= ?
+          AND NOT EXISTS (
+              SELECT 1 FROM notice_receipts nr
+              WHERE nr.event_id = e.id AND nr.user_id = ?
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM reservation_events later
+              WHERE later.reservation_id = e.reservation_id
+                AND later.event_type = 'handover'
+                AND (
+                    later.occurred_at > e.occurred_at
+                    OR (later.occurred_at = e.occurred_at AND later.rowid > e.rowid)
+                )
+          )
+        ORDER BY e.occurred_at, e.rowid
+        """,
+        (actor["id"], actor["id"], assignment_cutoff, actor["id"]),
+    ).fetchall()
+    for row in assignment_rows:
+        assigned_to_id, _ = _snapshot_owner(row["after_json"])
+        if assigned_to_id != actor["id"]:
+            continue
+        _, from_name = _snapshot_owner(row["before_json"])
+        item = serialize_reservation(row, actor)
+        item["kind"] = "assignment"
+        item["eventId"] = row["assignment_event_id"]
+        item["occurredAt"] = row["assignment_occurred_at"]
+        item["assignedByName"] = row["assignment_actor_name"]
+        item["fromName"] = from_name or "原预约者"
+        items.append(item)
+
     if not preference["booking_reminder"]:
         return jsonify({"items": items})
     limit = _upcoming_window_end(now, preference)
@@ -179,7 +236,7 @@ def due_reminders():
 
 @bp.post("/ack")
 @login_required
-def acknowledge_change_notice():
+def acknowledge_notice():
     payload = parse_json_object()
     event_id = clean_text(
         payload.get("eventId"), field="eventId", label="变更事件", maximum=64
@@ -189,7 +246,7 @@ def acknowledge_change_notice():
         actor = locked_actor(db)
         row = db.execute(
             """
-            SELECT e.event_type, e.actor_user_id, r.owner_user_id
+            SELECT e.event_type, e.actor_user_id, e.after_json, r.owner_user_id
             FROM reservation_events e
             JOIN reservations r ON r.id = e.reservation_id
             WHERE e.id = ?
@@ -198,22 +255,29 @@ def acknowledge_change_notice():
         ).fetchone()
         if row is None:
             raise ApiError(404, "NOT_FOUND", "变更事件不存在")
-        if row["owner_user_id"] != actor["id"]:
-            raise ApiError(403, "FORBIDDEN", "无权确认他人的预约变更通知")
-        if (
-            row["event_type"] not in ("updated", "cancelled")
-            or row["actor_user_id"] == row["owner_user_id"]
-        ):
-            raise ApiError(422, "VALIDATION_ERROR", "该事件不是他人的预约变更")
-        preference = db.execute(
-            """
-            SELECT booking_change_notifications
-            FROM user_preferences WHERE user_id = ?
-            """,
-            (actor["id"],),
-        ).fetchone()
-        if preference is None or not preference["booking_change_notifications"]:
-            raise ApiError(409, "NOTIFICATION_NOT_DUE", "该变更通知当前不可确认")
+        if row["event_type"] == "handover":
+            assigned_to_id, _ = _snapshot_owner(row["after_json"])
+            if assigned_to_id != actor["id"]:
+                raise ApiError(403, "FORBIDDEN", "无权确认他人的管理员指派通知")
+            if row["actor_user_id"] == actor["id"]:
+                raise ApiError(422, "VALIDATION_ERROR", "本人操作不产生指派通知")
+        else:
+            if row["owner_user_id"] != actor["id"]:
+                raise ApiError(403, "FORBIDDEN", "无权确认他人的预约变更通知")
+            if (
+                row["event_type"] not in ("updated", "cancelled")
+                or row["actor_user_id"] == row["owner_user_id"]
+            ):
+                raise ApiError(422, "VALIDATION_ERROR", "该事件不是他人的预约变更")
+            preference = db.execute(
+                """
+                SELECT booking_change_notifications
+                FROM user_preferences WHERE user_id = ?
+                """,
+                (actor["id"],),
+            ).fetchone()
+            if preference is None or not preference["booking_change_notifications"]:
+                raise ApiError(409, "NOTIFICATION_NOT_DUE", "该变更通知当前不可确认")
         db.execute(
             """
             INSERT INTO notice_receipts (event_id, user_id, acknowledged_at)

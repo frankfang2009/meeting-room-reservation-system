@@ -116,6 +116,20 @@ def _apply_handover(
     new_row = db.execute(
         "SELECT * FROM reservations WHERE id = ?", (reservation_id,)
     ).fetchone()
+    withdrawn_pending = 0
+    if action == "assigned":
+        # 管理员指派会立即改变预约归属；此前尚未处理的普通交接请求必须在同一
+        # 事务中收敛，不能继续让旧接手人看到一个已经失效但仍可点击的请求。
+        withdrawn = db.execute(
+            """
+            UPDATE handover_requests
+            SET status = 'withdrawn',
+                decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE reservation_id = ? AND status = 'pending'
+            """,
+            (reservation_id,),
+        )
+        withdrawn_pending = withdrawn.rowcount
     _insert_event(
         db,
         reservation_id=reservation_id,
@@ -136,6 +150,7 @@ def _apply_handover(
             "toUserId": to_user["id"],
             "requestId": request_id,
             "revision": new_row["revision"],
+            "withdrawnPendingRequests": withdrawn_pending,
         },
     )
     return serialize_reservation(new_row, actor)
