@@ -375,7 +375,7 @@ test("handover endpoints hit the agreed URLs with CSRF", async () => {
     await api.declineHandover("req-1");
     await api.withdrawHandover("req-1");
     await api.getHandoverRequests();
-    await api.getUserDirectory();
+    await api.getUserDirectory("res-1");
     assert.equal(requests[0].url, "/api/v1/reservations/res-1/handover");
     assert.deepEqual(JSON.parse(requests[0].options.body), { toUserId: "user-2" });
     assert.equal(requests[1].url, "/api/v1/handover-requests/req-1/accept");
@@ -383,7 +383,7 @@ test("handover endpoints hit the agreed URLs with CSRF", async () => {
     assert.equal(requests[3].url, "/api/v1/handover-requests/req-1");
     assert.equal(requests[3].options.method, "DELETE");
     assert.equal(requests[4].url, "/api/v1/handover-requests");
-    assert.equal(requests[5].url, "/api/v1/users/directory");
+    assert.equal(requests[5].url, "/api/v1/users/directory?reservationId=res-1");
     assert.equal(requests[0].options.headers["X-CSRF-Token"], "csrf-handover");
   } finally {
     globalThis.fetch = previousFetch;

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from ..common import parse_json_object
 from ..db import get_db
@@ -48,6 +48,13 @@ def user_directory():
 
     db = get_db()
     actor = current_user()
+    reservation_id = request.args.get("reservationId", "").strip()
+    excluded_user_id = actor["id"]
+    if reservation_id:
+        reservation = handovers.load_handover_reservation(reservation_id, actor)
+        # 候选人的语义是“新的预约者”：排除当前预约者，而不是排除操作人。
+        # 因此管理员处理他人的预约时，管理员自己是合法候选人。
+        excluded_user_id = reservation["owner_user_id"]
     rows = db.execute(
         """
         SELECT id, display_name, department
@@ -65,7 +72,7 @@ def user_directory():
                     "department": row["department"],
                 }
                 for row in rows
-                if row["id"] != actor["id"]
+                if row["id"] != excluded_user_id
             ]
         }
     )

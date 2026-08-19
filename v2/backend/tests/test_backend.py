@@ -2681,6 +2681,21 @@ class HandoverTests(AuthenticatedReservationTestCase):
         ).get_json()
         self.assertEqual(audits["total"], 1)
 
+    def test_admin_can_force_assign_an_employee_booking_to_self(self):
+        booking = self.create_own_booking(start="10:00")
+        admin = self.bootstrap()["currentUser"]
+
+        assigned = self.request_handover(booking, admin, client=self.client)
+
+        self.assertEqual(assigned.status_code, 200, assigned.get_json())
+        body = assigned.get_json()
+        self.assertTrue(body["assigned"])
+        self.assertEqual(body["reservation"]["ownerId"], admin["id"])
+        self.assertEqual(body["reservation"]["owner"]["name"], admin["name"])
+        self.assertEqual(
+            self.employee.get("/api/v1/handover-requests").get_json()["outgoing"], [],
+        )
+
     def test_only_owner_or_admin_can_request_and_only_target_decides(self):
         booking = self.create_own_booking(start="10:00")
         denied = self.request_handover(booking, self.second, client=self.employee2)
@@ -2718,3 +2733,22 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertNotIn("username", users[0])
         anonymous = self.app.test_client().get("/api/v1/users/directory")
         self.assertEqual(anonymous.status_code, 401)
+
+    def test_contextual_directory_excludes_booking_owner_not_admin_actor(self):
+        booking = self.create_own_booking(start="10:00")
+        admin = self.bootstrap()["currentUser"]
+
+        directory = self.client.get(
+            "/api/v1/users/directory", query_string={"reservationId": booking["id"]},
+        )
+
+        self.assertEqual(directory.status_code, 200, directory.get_json())
+        user_ids = {user["id"] for user in directory.get_json()["users"]}
+        self.assertNotIn(self.first["id"], user_ids)
+        self.assertIn(admin["id"], user_ids)
+        self.assertIn(self.second["id"], user_ids)
+
+        denied = self.employee2.get(
+            "/api/v1/users/directory", query_string={"reservationId": booking["id"]},
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())

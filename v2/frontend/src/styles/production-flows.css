@@ -294,6 +294,7 @@
 }
 
 .notice-modal-head {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 16px;
@@ -330,7 +331,67 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* 只让弹窗内容区滚动，避免多类提示同时出现时互相抢滚动条。 */
+.notice-modal-body {
+  min-height: 0;
   overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.notice-modal.mixed {
+  width: 760px;
+  max-height: min(760px, calc(100vh - 48px));
+}
+
+.notice-modal-section + .notice-modal-section {
+  margin-top: 28px;
+  padding-top: 26px;
+  border-top: 1px solid var(--hairline-strong);
+}
+
+.notice-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 16px;
+}
+
+.notice-section-head h3 {
+  margin: 0;
+  color: var(--ink-secondary);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.notice-section-head span {
+  min-width: 40px;
+  padding: 4px 9px;
+  color: var(--muted);
+  background: var(--paper-soft);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.notice-modal.mixed .notice-handover-item {
+  padding: 18px;
+  background: var(--paper-soft);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+}
+
+.notice-modal.mixed .notice-handover-item + .notice-handover-item {
+  margin-top: 12px;
+}
+
+.notice-modal.mixed .notice-handover-item .notice-item-identity {
+  background: var(--paper-raised);
 }
 
 .notice-modal-item + .notice-modal-item {
@@ -552,6 +613,7 @@
 }
 
 .notice-modal-foot {
+  flex: none;
   display: flex;
   justify-content: flex-end;
   margin-top: 22px;
@@ -579,6 +641,28 @@
 .notice-modal-multi-hint {
   margin-top: 10px;
   text-align: right;
+}
+
+.notice-modal-combined-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.notice-modal-combined-foot .notice-modal-hint {
+  max-width: 330px;
+  line-height: 1.6;
+}
+
+.notice-modal-combined-foot > div {
+  display: flex;
+  flex: none;
+  gap: 10px;
 }
 
 /* 抽屉打开期间排队等待的变更提醒：安静的信息条，关闭抽屉后弹窗立即出现。 */
@@ -658,6 +742,11 @@
     padding: 22px 20px 18px;
   }
 
+  .notice-modal.mixed {
+    width: 100%;
+    max-height: calc(100vh - 24px);
+  }
+
   .notice-item-identity {
     grid-template-columns: 1fr;
   }
@@ -674,6 +763,24 @@
   .notice-modal-single-foot {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .notice-modal-combined-foot {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .notice-modal-combined-foot .notice-modal-hint {
+    max-width: none;
+  }
+
+  .notice-modal-combined-foot > div {
+    width: 100%;
+  }
+
+  .notice-modal-combined-foot button {
+    flex: 1 1 0;
   }
 
   .notice-modal-single-foot .notice-item-actions {

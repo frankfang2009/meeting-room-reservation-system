@@ -1348,10 +1348,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (drawer?.type !== "handover") return undefined;
     let cancelled = false;
     setHandoverDirectoryState("loading");
-    api.getUserDirectory()
+    api.getUserDirectory(drawer.booking.id)
       .then((result) => {
         if (cancelled) return;
-        setHandoverDirectory(result?.users || []);
+        // 服务端按预约上下文过滤；这里再排除一次，避免旧缓存或竞态把当前预约者带回列表。
+        setHandoverDirectory((result?.users || []).filter((user) => user.id !== drawer.booking.ownerId));
         setHandoverDirectoryState("ready");
       })
       .catch((error) => {
@@ -1362,7 +1363,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drawer?.type]);
+  }, [drawer?.type, drawer?.booking?.id, drawer?.booking?.ownerId]);
   useEffect(() => {
     if (activeView !== "rooms" || !permissions.manageRooms) return undefined;
     loadRooms();
@@ -1432,6 +1433,12 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   );
   const noticeHasHandovers = visibleHandoverReminders.length > 0;
   const noticeOnlyHandovers = noticeHasHandovers && dueReminders.changes.length === 0;
+  const noticeMixed = noticeHasHandovers && dueReminders.changes.length > 0;
+  const noticeQueueLabel = dueReminders.changes.length > 0 && noticeHasHandovers
+    ? `${dueReminders.changes.length} 条预约变更、${visibleHandoverReminders.length} 条工作交接待处理`
+    : dueReminders.changes.length > 0
+      ? `${dueReminders.changes.length} 条预约变更待确认`
+      : `${visibleHandoverReminders.length} 条工作交接待处理`;
   const noticeModalOpen = (dueReminders.changes.length > 0 || noticeHasHandovers) && !drawer && !sessionExpired;
   const deferVisibleHandovers = () => {
     setDeferredHandoverIds((current) => new Set([
@@ -1951,7 +1958,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     try {
       const result = await api.createHandover(reservationId, toUserId);
       if (result.assigned) {
-        setToast("已指派，预约已转入对方名下", "success");
+        setToast(
+          toUserId === currentUser.id ? "已指派，预约已转入您名下" : "已指派，预约已转入对方名下",
+          "success",
+        );
       } else {
         setToast("交接请求已发起，等待对方确认", "success");
       }
@@ -2669,21 +2679,31 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       {toast && <div className={`toast visible ${toast.tone}`} role="status" aria-live="polite"><ToastIcon tone={toast.tone} /><span>{toast.message}</span><button aria-label="关闭提示" onClick={() => setToast("")}><X size={16} /></button></div>}
       {arrivalNotice && !drawer && <div className="toast visible reminder-toast arrival-toast" role="status" aria-live="polite"><Clock size={20} /><span>{arrivalNotice.message}</span><button onClick={() => { const booking = arrivalNotice.booking; setArrivalNotice(null); openDetails(booking); }}>查看</button><button onClick={() => setArrivalNotice(null)}>知道了</button></div>}
     </div>
-    {drawer && (dueReminders.changes.length > 0 || dueReminders.handovers.length > 0) && <div className="notice-queue-chip" role="status" aria-live="polite"><span className="notice-queue-chip-icon" aria-hidden="true">{dueReminders.changes.length > 0 ? <ClockCounterClockwise size={16} /> : <ArrowsLeftRight size={16} />}</span><span className="notice-queue-chip-copy"><strong>{dueReminders.changes.length > 0 ? `${dueReminders.changes.length} 条预约变更待确认` : `${dueReminders.handovers.length} 条工作交接待处理`}</strong><small>关闭预约详情后自动打开</small></span></div>}
-    {noticeModalOpen && <div className="notice-modal-layer"><section ref={noticeModalRef} className={`notice-modal ${noticeOnlyHandovers ? "handover-only" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy={noticeAckBusy}>
+    {drawer && (dueReminders.changes.length > 0 || noticeHasHandovers) && <div className="notice-queue-chip" role="status" aria-live="polite"><span className="notice-queue-chip-icon" aria-hidden="true">{dueReminders.changes.length > 0 ? <ClockCounterClockwise size={16} /> : <ArrowsLeftRight size={16} />}</span><span className="notice-queue-chip-copy"><strong>{noticeQueueLabel}</strong><small>关闭预约详情后自动打开</small></span></div>}
+    {noticeModalOpen && <div className="notice-modal-layer"><section ref={noticeModalRef} className={`notice-modal ${noticeOnlyHandovers ? "handover-only" : ""} ${noticeMixed ? "mixed" : ""}`} role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy={noticeAckBusy}>
       <header className="notice-modal-head"><span className="notice-modal-icon" aria-hidden="true">{noticeOnlyHandovers ? <ArrowsLeftRight size={22} /> : <ClockCounterClockwise size={22} />}</span><div><h2 id="notice-modal-heading">{noticeOnlyHandovers ? "工作交接" : noticeHasHandovers ? "待处理事项" : "预约变更通知"}</h2><p>{noticeOnlyHandovers ? `${visibleHandoverReminders.length} 条交接请求等待你处理` : noticeHasHandovers ? `${dueReminders.changes.length} 条预约变更，${visibleHandoverReminders.length} 条工作交接` : dueReminders.changes.length > 1 ? `${dueReminders.changes.length} 条待确认变更` : `${dueReminders.changes[0].actorName || "其他用户"} · ${formatLocalDateTime(dueReminders.changes[0].occurredAt)}`}</p></div></header>
-      {noticeHasHandovers && <ul className="notice-modal-list notice-handover-list">{visibleHandoverReminders.map((item, index) => <li className="notice-modal-item notice-handover-item" key={item.handoverRequestId}>
-        {dueReminders.changes.length > 0 && <p className="notice-item-meta">{item.fromName} · 刚刚发起的交接</p>}
-        <h3>{item.fromName} 希望将这场预约交接给你</h3>
-        <dl className="notice-item-identity" aria-label="交接预约信息"><div><dt>当事人</dt><dd>{item.partyName}</dd></div><div><dt>事项</dt><dd>{item.purpose}</dd></div><div className="notice-identity-schedule"><dt>时间</dt><dd>{item.start}–{item.end} · {item.roomName}</dd></div></dl>
-        <p className="notice-handover-note">接受后预约转入你名下；不接受则仍归 {item.fromName}。请求在预约开始前有效。</p>
-        <div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "decline")}>不接受</button><button type="button" className="notice-item-ack" data-initial-focus={index === 0 && dueReminders.changes.length === 0 || undefined} disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "accept")}>{noticeAckBusy ? "正在处理…" : "接受交接"}</button></div>
-      </li>)}</ul>}
-      {dueReminders.changes.length > 0 && <ul className="notice-modal-list">{dueReminders.changes.map((item, index) => <ChangeNoticeItem item={item} busy={noticeAckBusy} initialFocus={index === 0 && !noticeHasHandovers} showMeta={dueReminders.changes.length > 1} showActions={dueReminders.changes.length > 1} onView={(target) => void viewChangeNotice(target)} onAcknowledge={(targets) => void acknowledgeChangeNotices(targets)} key={item.eventId} />)}</ul>}
+      <div className="notice-modal-body">
+        {noticeHasHandovers && <section className="notice-modal-section" aria-labelledby={noticeMixed ? "notice-handover-section" : undefined}>
+          {noticeMixed && <header className="notice-section-head"><h3 id="notice-handover-section">工作交接</h3><span>{visibleHandoverReminders.length} 条</span></header>}
+          <ul className="notice-modal-list notice-handover-list">{visibleHandoverReminders.map((item, index) => <li className="notice-modal-item notice-handover-item" key={item.handoverRequestId}>
+            {dueReminders.changes.length > 0 && <p className="notice-item-meta">{item.fromName} · 刚刚发起的交接</p>}
+            <h3>{item.fromName} 希望将这场预约交接给你</h3>
+            <dl className="notice-item-identity" aria-label="交接预约信息"><div><dt>当事人</dt><dd>{item.partyName}</dd></div><div><dt>事项</dt><dd>{item.purpose}</dd></div><div className="notice-identity-schedule"><dt>时间</dt><dd>{item.start}–{item.end} · {item.roomName}</dd></div></dl>
+            <p className="notice-handover-note">接受后预约转入你名下；不接受则仍归 {item.fromName}。请求在预约开始前有效。</p>
+            <div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "decline")}>不接受</button><button type="button" className="notice-item-ack" data-initial-focus={index === 0 && dueReminders.changes.length === 0 || undefined} disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "accept")}>{noticeAckBusy ? "正在处理…" : "接受交接"}</button></div>
+          </li>)}</ul>
+        </section>}
+        {dueReminders.changes.length > 0 && <section className="notice-modal-section" aria-labelledby={noticeMixed ? "notice-change-section" : undefined}>
+          {noticeMixed && <header className="notice-section-head"><h3 id="notice-change-section">预约变更</h3><span>{dueReminders.changes.length} 条</span></header>}
+          <ul className="notice-modal-list">{dueReminders.changes.map((item, index) => <ChangeNoticeItem item={item} busy={noticeAckBusy} initialFocus={index === 0 && !noticeHasHandovers} showMeta={dueReminders.changes.length > 1} showActions={dueReminders.changes.length > 1} onView={(target) => void viewChangeNotice(target)} onAcknowledge={(targets) => void acknowledgeChangeNotices(targets)} key={item.eventId} />)}</ul>
+        </section>}
+      </div>
       {noticeOnlyHandovers
         ? <footer className="handover-modal-foot"><p id="notice-modal-hint" className="notice-modal-hint">暂不处理不会改变预约归属，可稍后在「工作交接」中继续。</p><button type="button" className="handover-defer-button" disabled={noticeAckBusy} onClick={deferVisibleHandovers}>稍后处理</button></footer>
+        : noticeMixed
+        ? <footer className="notice-modal-combined-foot"><p id="notice-modal-hint" className="notice-modal-hint">两类事项彼此独立：稍后处理交接，不会确认预约变更。</p><div><button type="button" className="handover-defer-button" data-initial-focus disabled={noticeAckBusy} onClick={deferVisibleHandovers}>交接稍后处理</button><button type="button" className="notice-ack-all" disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "确认全部变更"}</button></div></footer>
         : dueReminders.changes.length === 1
-        ? <footer className="notice-modal-single-foot"><p id="notice-modal-hint" className="notice-modal-hint">{noticeHasHandovers ? "交接请求需明确处理；预约变更仍需确认" : "按 Esc 可确认并关闭"}</p><div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void viewChangeNotice(dueReminders.changes[0])}>查看预约</button><button type="button" className="notice-item-ack" data-initial-focus disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "我知道了"}</button></div></footer>
+        ? <footer className="notice-modal-single-foot"><p id="notice-modal-hint" className="notice-modal-hint">按 Esc 可确认并关闭</p><div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void viewChangeNotice(dueReminders.changes[0])}>查看预约</button><button type="button" className="notice-item-ack" data-initial-focus disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "我知道了"}</button></div></footer>
         : <><footer className="notice-modal-foot"><button type="button" className="notice-ack-all" disabled={noticeAckBusy} onClick={() => void acknowledgeChangeNotices(dueReminders.changes)}>{noticeAckBusy ? "正在确认…" : "全部知道了"}</button></footer><p id="notice-modal-hint" className="notice-modal-hint notice-modal-multi-hint">{noticeHasHandovers ? "按 Esc 会暂后交接请求，不会确认预约变更" : "按 Esc 可确认全部；“查看预约”会先确认该条通知"}</p></>}
     </section></div>}
     <Drawer open={Boolean(drawer) && !sessionExpired && isDrawerAllowed(drawer?.type, permissions)} heading={drawerHeading()} onBack={drawer?.returnTo ? () => setDrawer(drawer.returnTo) : null} onClose={() => setDrawer(null)} className={drawer?.type?.startsWith("user") ? "user-drawer" : drawer?.type === "handover" ? "handover-drawer" : ""} backgroundRef={mainRef}>{!sessionExpired && renderDrawer()}</Drawer>

@@ -60,6 +60,12 @@ def _started(row: Any) -> bool:
     return starts_at <= local_now().replace(tzinfo=None)
 
 
+def load_handover_reservation(reservation_id: str, actor: dict[str, Any]) -> Any:
+    """为人员选择器加载可交接的预约，复用写入路径的权限和状态边界。"""
+
+    return _load_mutable_reservation(get_db(), reservation_id, actor)
+
+
 def serialize_handover_request(row: Any) -> dict[str, Any]:
     reservation = serialize_reservation(row, None)
     # Joined handover rows expose both hr.id and r.id as ``id``. sqlite3.Row
