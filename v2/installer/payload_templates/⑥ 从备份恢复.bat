@@ -53,7 +53,7 @@ if not exist "%MRV2_INFO%" goto :missing
 if not exist "%MRV2_ID_FILE%" goto :missing
 if not exist "%MRV2_BACKUPS%\" goto :missing
 
-"%MRV2_PS%" -NoProfile -ExecutionPolicy Bypass -Command "$lines=Get-Content -LiteralPath $env:MRV2_SCRIPT -Encoding UTF8; $marker=-1; for ($index=0; $index -lt $lines.Length; $index++) { if ($lines[$index] -ceq '# MRV2-POWERSHELL-BEGIN') { $marker=$index; break } }; if ($marker -lt 0 -or $marker -ge ($lines.Length-1)) { [Console]::Error.WriteLine('恢复脚本内容不完整。'); exit 1 }; & ([ScriptBlock]::Create(($lines[($marker+1)..($lines.Length-1)] -join [Environment]::NewLine))"
+"%MRV2_PS%" -NoProfile -ExecutionPolicy Bypass -Command "$lines=Get-Content -LiteralPath $env:MRV2_SCRIPT -Encoding UTF8; $marker=-1; for ($index=0; $index -lt $lines.Length; $index++) { if ($lines[$index] -ceq '# MRV2-POWERSHELL-BEGIN') { $marker=$index; break } }; if ($marker -lt 0 -or $marker -ge ($lines.Length-1)) { [Console]::Error.WriteLine('恢复脚本内容不完整。'); exit 1 }; & ([ScriptBlock]::Create(($lines[($marker+1)..($lines.Length-1)] -join [Environment]::NewLine)))"
 set "RESTORE_EXIT=%errorlevel%"
 if "%RESTORE_EXIT%"=="3" goto :cancelled
 if not "%RESTORE_EXIT%"=="0" goto :failed
