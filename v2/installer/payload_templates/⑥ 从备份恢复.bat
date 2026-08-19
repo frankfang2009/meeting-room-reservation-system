@@ -217,11 +217,12 @@ foreach ($sidecar in $sidecars) {
             [string]$metadata.kind -cne 'meeting-room-v2-backup' -or
             [string]$metadata.installId -cne $installId -or
             [int]$metadata.productGeneration -ne 2 -or
-            # 与 update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS（当前 1..3）保持同步：
-            # 备份 sidecar 的 databaseSchemaVersion 是备份当时的库 schema，历史备份为 1/2，
-            # 当前为 3；真正的可恢复性由 restore.py 恢复后复检兜底。
+            # 与 update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS 保持同步（由跨层契约测试
+            # 钉死一致，漂移即红）：备份 sidecar 的 databaseSchemaVersion 是备份当时的
+            # 库 schema，历史备份为 1/2/3，当前为 4；真正的可恢复性由 restore.py
+            # 恢复后复检兜底。
             [int]$metadata.databaseSchemaVersion -lt 1 -or
-            [int]$metadata.databaseSchemaVersion -gt 3 -or
+            [int]$metadata.databaseSchemaVersion -gt 4 -or
             $metadata.setupComplete -isnot [bool] -or
             $metadata.setupComplete -ne $true
         ) { continue }
