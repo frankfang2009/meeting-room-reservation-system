@@ -390,7 +390,7 @@ test("handover endpoints hit the agreed URLs with CSRF", async () => {
   }
 });
 
-test("acknowledges a change notice by event id", async () => {
+test("acknowledges an event-backed notice by event id", async () => {
   const previousFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (url, options) => {
@@ -402,7 +402,7 @@ test("acknowledges a change notice by event id", async () => {
   };
   try {
     setCsrfToken("csrf-reminder");
-    await api.acknowledgeChangeNotice("event-1");
+    await api.acknowledgeNotice("event-1");
     assert.equal(requests[0].url, "/api/v1/reminders/ack");
     assert.equal(requests[0].options.method, "POST");
     assert.deepEqual(JSON.parse(requests[0].options.body), {

@@ -166,7 +166,7 @@ export const api = {
   updateGlobalTags: (tags) => request("/tags/global", { method: "PUT", body: { tags } }),
 
   getDueReminders: () => request("/reminders/due"),
-  acknowledgeChangeNotice: (eventId) => request("/reminders/ack", {
+  acknowledgeNotice: (eventId) => request("/reminders/ack", {
     method: "POST",
     body: { eventId },
   }),

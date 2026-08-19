@@ -240,6 +240,11 @@ calendar and role boundaries are unchanged.
   接受交接 / 不接受 actions remain explicit. Esc and 稍后处理 only defer the
   prompt to 工作交接 without changing request state; change notices in a mixed
   modal keep their event acknowledgement semantics.
+- Administrator assignment uses the same handover section as a result notice,
+  not as an incoming request. Copy states that ownership already changed and
+  no acceptance is needed; actions are 查看预约 / 我知道了, with no reject
+  control. When assignment results coexist with ordinary requests, only the
+  ordinary requests can be deferred and acknowledgement never changes owner.
 - 工作交接 is a first-class rail destination beside 我的预约. Only incoming
   requests contribute to its numbered rail badge. The page uses the product's
   open ledger language: an unboxed summary band, then 待我确认 and 我发起的
