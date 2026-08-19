@@ -153,7 +153,8 @@ foreach ($scanRoot in @($formal, $installRoot)) {
     $smokeCount = 0
     foreach ($bat in $batEntries) {
         $lineNumber = 0
-        foreach ($line in (Get-Content -LiteralPath $bat.FullName -Encoding UTF8)) {
+        $allLines = @(Get-Content -LiteralPath $bat.FullName -Encoding UTF8)
+        foreach ($line in $allLines) {
             $lineNumber++
             if ($line -notmatch '-Command "') { continue }
             $marker = '-Command "'
@@ -163,6 +164,17 @@ foreach ($scanRoot in @($formal, $installRoot)) {
             }
             catch {
                 throw ("BAT embedded PowerShell parse failed: {0}:{1} : {2}" -f $bat.Name, $lineNumber, $_.Exception.Message)
+            }
+            $smokeCount++
+        }
+        $embedMarker = [array]::IndexOf($allLines, "# MRV2-POWERSHELL-BEGIN")
+        if ($embedMarker -ge 0 -and $embedMarker -lt $allLines.Count - 1) {
+            $embedded = ($allLines[($embedMarker + 1)..($allLines.Count - 1)] -join [Environment]::NewLine)
+            try {
+                $null = [ScriptBlock]::Create($embedded)
+            }
+            catch {
+                throw ("BAT embedded block parse failed: {0} (after # MRV2-POWERSHELL-BEGIN) : {1}" -f $bat.Name, $_.Exception.Message)
             }
             $smokeCount++
         }
