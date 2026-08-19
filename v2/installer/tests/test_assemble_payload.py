@@ -177,6 +177,36 @@ class AssemblePayloadTests(unittest.TestCase):
         self.assertIn("$mainWasEnabled", restore)
         self.assertIn("$backupWasEnabled", restore)
 
+    def test_embedded_powershell_command_lines_have_balanced_parens(self) -> None:
+        # T2-B4 回归：BAT 通过单行 powershell -Command 内联/提取执行 PowerShell，
+        # 任何一个 `-Command "..."` 行的圆括号不平衡都会让该入口在任何环境下
+        # 解析失败（真机表现为 ⑥ 恢复完全不可用）。该检查跨平台、不依赖
+        # PowerShell 可执行文件；BAT 自身多行 if 块的括号在别的行闭合，因此
+        # 只检查含 -Command 的单行。
+        output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-parens")
+        launcher = Path(v2_installer_dir()) / "安装V2.3.0.bat"
+        bat_entries = sorted(output.glob("*.bat")) + [launcher]
+        checked = 0
+        for bat in bat_entries:
+            if not bat.is_file():
+                continue
+            for number, line in enumerate(bat.read_text(encoding="utf-8").splitlines(), start=1):
+                if "-Command " not in line or "(" not in line:
+                    continue
+                checked += 1
+                self.assertEqual(
+                    line.count("("),
+                    line.count(")"),
+                    f"{bat.name}:{number} 括号不平衡：{line[:100]}……",
+                )
+        self.assertGreater(checked, 0, "应当至少检查到一个 -Command 行")
+
+
+def v2_installer_dir() -> str:
+    import v2.installer as installer_package
+
+    return str(Path(installer_package.__file__).resolve().parent)
+
 
 if __name__ == "__main__":
     unittest.main()

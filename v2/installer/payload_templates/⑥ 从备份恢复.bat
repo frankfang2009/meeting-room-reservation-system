@@ -53,7 +53,7 @@ if not exist "%MRV2_INFO%" goto :missing
 if not exist "%MRV2_ID_FILE%" goto :missing
 if not exist "%MRV2_BACKUPS%\" goto :missing
 
-"%MRV2_PS%" -NoProfile -ExecutionPolicy Bypass -Command "$lines=Get-Content -LiteralPath $env:MRV2_SCRIPT -Encoding UTF8; $marker=-1; for ($index=0; $index -lt $lines.Length; $index++) { if ($lines[$index] -ceq '# MRV2-POWERSHELL-BEGIN') { $marker=$index; break } }; if ($marker -lt 0 -or $marker -ge ($lines.Length-1)) { [Console]::Error.WriteLine('恢复脚本内容不完整。'); exit 1 }; & ([ScriptBlock]::Create(($lines[($marker+1)..($lines.Length-1)] -join [Environment]::NewLine))"
+"%MRV2_PS%" -NoProfile -ExecutionPolicy Bypass -Command "$lines=Get-Content -LiteralPath $env:MRV2_SCRIPT -Encoding UTF8; $marker=-1; for ($index=0; $index -lt $lines.Length; $index++) { if ($lines[$index] -ceq '# MRV2-POWERSHELL-BEGIN') { $marker=$index; break } }; if ($marker -lt 0 -or $marker -ge ($lines.Length-1)) { [Console]::Error.WriteLine('恢复脚本内容不完整。'); exit 1 }; & ([ScriptBlock]::Create(($lines[($marker+1)..($lines.Length-1)] -join [Environment]::NewLine)))"
 set "RESTORE_EXIT=%errorlevel%"
 if "%RESTORE_EXIT%"=="3" goto :cancelled
 if not "%RESTORE_EXIT%"=="0" goto :failed
@@ -217,7 +217,11 @@ foreach ($sidecar in $sidecars) {
             [string]$metadata.kind -cne 'meeting-room-v2-backup' -or
             [string]$metadata.installId -cne $installId -or
             [int]$metadata.productGeneration -ne 2 -or
-            [int]$metadata.databaseSchemaVersion -ne 1 -or
+            # 与 update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS（当前 1..3）保持同步：
+            # 备份 sidecar 的 databaseSchemaVersion 是备份当时的库 schema，历史备份为 1/2，
+            # 当前为 3；真正的可恢复性由 restore.py 恢复后复检兜底。
+            [int]$metadata.databaseSchemaVersion -lt 1 -or
+            [int]$metadata.databaseSchemaVersion -gt 3 -or
             $metadata.setupComplete -isnot [bool] -or
             $metadata.setupComplete -ne $true
         ) { continue }
@@ -253,8 +257,17 @@ if ($confirmation -cne 'RESTORE') {
 
 $mainWasEnabled = ([string]$mainTask.State -ne 'Disabled')
 $backupWasEnabled = ([string]$backupTask.State -ne 'Disabled')
-& $env:MRV2_PYTHON $env:MRV2_SERVICE --check *> $null
-$serviceWasRunning = ($LASTEXITCODE -eq 0)
+# 5.1 下原生命令写 stderr 会因 $ErrorActionPreference='Stop' 变成异常：
+# 服务未运行时 --check 必写 stderr，这里必须局部放宽偏好才能拿到退出码。
+$previousPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try {
+    & $env:MRV2_PYTHON $env:MRV2_SERVICE --check *> $null
+    $serviceWasRunning = ($LASTEXITCODE -eq 0)
+}
+finally {
+    $ErrorActionPreference = $previousPreference
+}
 $operationExit = 1
 $operationError = $null
 $stateErrors = @()
@@ -316,23 +329,49 @@ try {
             }
             $healthy = $false
             $startIssued = $false
-            foreach ($attempt in 1..30) {
-                & $env:MRV2_PYTHON $env:MRV2_SERVICE --check *> $null
-                if ($LASTEXITCODE -eq 0) {
-                    $healthy = $true
-                    break
-                }
-                if (-not $startIssued) {
-                    $currentMain = Get-ScheduledTask -TaskPath '\' -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
-                    if ($currentMain.State -ne 'Running') {
-                        Start-ScheduledTask -TaskPath '\' -TaskName $env:MRV2_TASK_NAME
-                        $startIssued = $true
+            # 与验收层 Wait-Until 的 120 秒服务重启窗口对齐：真机冷启动
+            # （冻结 runtime 首启叠加 Defender 实时扫描）可能超过 30 秒。
+            # Windows PowerShell 5.1 下 $ErrorActionPreference='Stop' 会让原生命令
+            # 的 stderr 输出直接变成 NativeCommandError 异常（服务未起时
+            # service.py --check 必写 stderr），必须局部放宽偏好并用 TCP 快探
+            # 端口就绪、就绪后才做一次身份终验，否则等待循环第一次迭代即中断。
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                foreach ($attempt in 1..120) {
+                    $portUp = $false
+                    $probe = New-Object Net.Sockets.TcpClient
+                    try {
+                        $probe.Connect('127.0.0.1', 8080)
+                        $portUp = $probe.Connected
                     }
+                    catch {
+                    }
+                    finally {
+                        $probe.Close()
+                    }
+                    if ($portUp) {
+                        & $env:MRV2_PYTHON $env:MRV2_SERVICE --check *> $null
+                        if ($LASTEXITCODE -eq 0) {
+                            $healthy = $true
+                            break
+                        }
+                    }
+                    if (-not $startIssued) {
+                        $currentMain = Get-ScheduledTask -TaskPath '\' -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
+                        if ($currentMain.State -ne 'Running') {
+                            Start-ScheduledTask -TaskPath '\' -TaskName $env:MRV2_TASK_NAME
+                            $startIssued = $true
+                        }
+                    }
+                    Start-Sleep -Seconds 1
                 }
-                Start-Sleep -Seconds 1
+            }
+            finally {
+                $ErrorActionPreference = $previousPreference
             }
             if (-not $healthy) {
-                throw '原本运行的 V2 服务未能在 30 秒内恢复健康状态。'
+                throw '原本运行的 V2 服务未能在 120 秒内恢复健康状态。'
             }
         } catch {
             $stateErrors += ('恢复服务运行状态失败：' + $_.Exception.Message)
