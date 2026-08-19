@@ -184,7 +184,11 @@ class AssemblePayloadTests(unittest.TestCase):
         # PowerShell 可执行文件；BAT 自身多行 if 块的括号在别的行闭合，因此
         # 只检查含 -Command 的单行。
         output = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-parens")
-        launcher = Path(v2_installer_dir()) / "安装V2.3.0.bat"
+        # launcher 文件名带版本号（安装V{VERSION}.bat），必须按 v2/VERSION 推导：
+        # 硬编码旧版本名会在版本改名后静默跳过、悄悄失去对安装器的覆盖。
+        version = (Path(v2_installer_dir()).parent / "VERSION").read_text(encoding="utf-8").strip()
+        launcher = Path(v2_installer_dir()) / f"安装V{version}.bat"
+        self.assertTrue(launcher.is_file(), f"安装器 launcher 不存在：{launcher.name}")
         bat_entries = sorted(output.glob("*.bat")) + [launcher]
         checked = 0
         for bat in bat_entries:
