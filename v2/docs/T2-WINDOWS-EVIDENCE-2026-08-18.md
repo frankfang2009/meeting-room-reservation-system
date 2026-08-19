@@ -1,0 +1,72 @@
+# T2 Windows 实机测试证据（2026-08-18 ~ 08-19，测试机代理执行）
+
+测试机：DESKTOP-F6CBUIJ · Windows 11 家庭中文版 23H2（build 22631）· 未加域 · Windows Defender · 用户 Frank Fang（Administrators 组，UAC 过滤 token）· C 盘剩 22GB / D 盘剩 28.4GB · 代理 127.0.0.1:7890。
+仓库：`D:\mrv2-t2\repo`，分支 `codex/t2-windows-task`，HEAD `e5c108b4`（任务书 commit，相对 `d4fb9adc` 仅新增任务书文档本身，产品代码零差异）。
+工具：git（已有）+ winget 安装 PowerShell 7.6.5（MSIX）与 GitHub CLI 2.97.0；gh 设备码登录 frankfang2009。
+全部工作文件位于 `D:\mrv2-t2\`（TEMP/TMP 重定向），transcript 位于 `D:\mrv2-t2\transcripts\`，截图位于 `D:\mrv2-t2\evidence\shots\`，B-4 复现实验位于 `D:\mrv2-t2\motw-repro\`。
+
+## 产物清单（SHA-256）
+
+| 产物 | 来源 | SHA-256 |
+|---|---|---|
+| 会议室预约系统-V2.1.0-安装包.zip | run 31999643262（2026-08-24 过期前抢救） | `55a4db9861d682250204ee4b3044216a098de3fea84649b40c8e1fb2423075f5`（与任务书要求一致） |
+| 会议室预约系统-V2.2.3-安装包.zip | run 32089926336 | `9471099623b462e43b3d82f7ac330b8d0a21af4755d9af36c748dc09cd10acd0` |
+| 会议室预约系统-V2.2.3-累计升级包.zip | run 32089926336 | `a12ce79288f97a10954bf9ba963528effb57c7b9eee84faf287deefb35ef8508` |
+| 会议室预约系统-V2.3.0-安装包.zip | run 32143370343（main `d4fb9adc`，触发于本机） | `649f0df5e9c315358ce299a51bab64bb802f82df09daf8081e3e3b2ffe00e68f` |
+| 会议室预约系统-V2.3.0-累计升级包.zip | run 32143370343 | `3f7fffc3706122f61e35b1b3fb29160ddbae9fb84dbfe4cde29ce2f5a8a5bea4` |
+
+## E 条目（从 E64 起编号，E62/E63 已被 V2.2.3 段占用）
+
+| E编号 | 测试事项 | 结果 |
+|---|---|---|
+| E64 | 机器档案与工具准备 | Win11 23H2 家庭中文版未加域、仅 Defender、管理员账户非提权会话；winget 装 pwsh 7.6.5 + gh 2.97.0（C 盘 22GB ≥ 2GB 前提成立）；gh 设备码登录成功 |
+| E65 | T1 全新安装腿真机重放（管理员 pwsh 7 + Start-Transcript） | `v2-windows-acceptance.ps1` 对 V2.3.0 候选 12 步全绿 `MRV2_T1=PASS` rc=0（08-18 21:47–21:51，transcript `t1-fresh-214752.log`）：安装→回环 healthz→首次设置→LAN→预约/409/取消→公开大屏脱敏→手动备份无伴随文件→停止/启动生命周期→SYSTEM 任务+HKLM+LocalSubnet 防火墙→端口冲突拒绝且不杀占用者→损坏 fail-closed（不重开设置、保留损坏库）→DACL 边界 |
+| E66 | T1 升级腿真机重放 | 前置两次尝试失败暴露环境问题（见 T2-B1）；第三次全绿 `MRV2_T1U=PASS` rc=0（08-18 22:00–22:05，transcript `combo3-fullcleanup-upgrade-*.log`）：v2.1.0 基线安装→业务数据→备份补跑→V2.3.0 累计升级→版本三处一致、install_id 不变、回执 complete、无 `.update-*` 残留→预约/会话/房间保留→升级后 DACL 重固化 |
+| E67 | A1 UAC 弹窗（真客户双击安装 BAT，未签名） | 用户实测：弹窗显示**未知发布者**；UAC 同意后进入安装控制台 |
+| E68 | A2 SmartScreen / MotW | 实验：给 zip 添加 Zone.Identifier(ZoneId=3) 后以资源管理器同款 Shell.Application 解压，**292/292 个文件全部被传播 MotW**（含 安装V2.3.0.bat、python.exe、全部 DLL/PYD）；用户双击 BAT 未被 SmartScreen 拦截（BAT 直接触发 UAC）；摩擦记录：1 次 UAC，0 次 SmartScreen（E 类签名后复测） |
+| E69 | A3 DACL 负面测试（非提权会话） | 向 `_程序文件\app` 写文件 Permission denied；列/读 `_程序文件\data` Permission denied；读 app 树（RX）允许；普通用户浏览器访问 8080 返回 200；另实测非提权 `reg delete HKLM` 拒绝访问 |
+| E70 | A4 首启仅回环→向导→切 LAN→防火墙 | 安装后监听 127.0.0.1、LAN IP 192.168.2.114 拒绝（000）、回环 200；浏览器走完 5 步首次设置向导；服务切 LAN：0.0.0.0 监听、LAN IP 200、install_id 前后一致 `26db23e1…`；防火墙弹窗**未出现**（安装器已预建程序+TCP8080+LocalSubnet 精确规则）；规则核验：手动=python.exe、后台=pythonw.exe，均 Inbound/Allow/TCP/8080/LocalSubnet |
+| E71 | B2 DPI 渲染（方法学：IAB 内嵌浏览器不支持系统 DPI 与原生缩放，采用视口等比缩减 1/1.25、1/1.5 模拟 125%/150% 布局效应） | 100%/125%/150% 三档预约日历截图（`shots/b2-calendar-*.png`）目检：无错位、无截断、无乱码；150% 档日历时间轴竖排中文为设计样式 |
+| E72 | D1 备份→破坏→恢复闭环（核心能力） | UI 创建预约（T2-D1-RECOVER-001，2026-08-19 08:30–09:30）；② 立即备份 BAT 成功；停服后破坏 db；**产品恢复核心成功**：`restore.py --backup …-00000002.db --expected-install-id` 返回 `restored:true`（含 pre-restore 快照），db 回 139264 字节，服务健康 install_id 不变，API 复核预约/房间/登录全部恢复；**⑥ BAT 入口被 T2-B4 完全阻断（见 bug 表）** |
+| E73 | 真实客户安装交互（含 T2-B3） | 用户双击带 MotW 的 安装V2.3.0.bat → UAC 同意后**控制台黑屏**（安装确认提示被 BAT 重定向进临时日志，见 T2-B3），按 Enter（空输入≠YES）→ 安装取消 RC_3、无残留（取消路径安全）；被告知后输入 YES → 安装成功（约 100 秒），首启状态符合契约 |
+| E74 | 破坏后 fail-closed 与 ③ 任务重建 | db 损坏态下 ③ 设置开机自动启动.bat 重建两个计划任务成功（主任务进入 Running）；服务保持 fail-closed `status=recovery, recovery_code=DATABASE_UNAVAILABLE, setup_complete=false`（不重开首次设置）；backup.log 记录损坏期 catch-up 备份正确拒绝（`数据库未就绪`）；③ 在管道环境输出中文乱码行（同 T2-B5 族观察） |
+| E75 | B3 真实夜间备份（机器 8/18 18:22 起持续开机挂机，00:15 起 AC 睡眠=从不） | `reservation-v2-backup-00000003.db`（139264 字节）+ sidecar 于 **08-19 03:00:03** 落盘，`backup-status.json` status=succeeded sequence=3；backups/data 无 -wal/-shm/-journal/.part-/.tmp 残留；另捕获恢复后启动的 `backup idempotent no-op mode=catch-up`（补跑幂等设计实证） |
+| E76 | 每日备份任务触发器核验（提权） | StartBoundary=`2026-08-18T02:00:00+08:00`（02:00 契约写入正确，DaysInterval=1）；**LastRunTime=08-19 03:00:00（首次延迟 1 小时，见 T2-O3）**；LastTaskResult=0；NextRunTime=08-20 02:00:00 |
+| E77 | A5 真实重启（08-19 08:40 重启，用户在场） | 重启后：主任务**开机自启**（lastRun 08:40:40，boot 后 10 秒，state=Running，principal=SYSTEM）；备份任务 Ready lastResult=0；`/healthz` ok=true、lan、install_id 不变 `26db23e1…`；LAN IP 200、监听 0.0.0.0；db 139264 字节数据完好；transcript `combo13-post-reboot.log` |
+| E78 | B1 第二设备（手机连同一 WLAN） | 手机浏览器打开 `http://192.168.2.114:8080` 成功，显示登录页（跨设备可达 ✓）；公开大屏脱敏白名单在 T1 已验证（`/api/v1/display/today` 不含 partyName/caseNumber/purpose/notes）；双端并发 409 由 T1 冒烟覆盖（`SLOT_CONFLICT`），未做真实双端对抢（诚实记录） |
+| E79 | ⑥ 真实窗口人工路径 + T2-B4 根因定位 | 用户真实双击 ⑥ → UAC 同意 → 窗口显示 `Missing closing ')' in expression`（与管道路径一字不差，**第 4 次复现**）；后台健康监控证实全程服务零中断——⑥ 失败于解析层、未进入停服步骤，与 `:failed` 文案「服务和计划任务没有被修改」一致（失败前置无副作用）；随后最小复现实验（`motw-repro/`）二分定位：ASCII 版同样失败（排除中文/编码）、缩短至 229 字符仍失败（排除长度）、对照实验证实**提取行 `& ([ScriptBlock]::Create((expr))` 缺 `& (` 层的闭合括号**——补一个 `)` 即恢复正常输出，少一个即精确复现 `MissingEndParenthesisInExpression`；①③④⑤ 无此提取模式不受影响 |
+
+## Bug 与观察清单（最终）
+
+| 编号 | 级别 | 摘要 | 复现与证据 |
+|---|---|---|---|
+| T2-B1 | 测试方法 | 任务书 §6.2 腿间清理的 `Remove-Item -LiteralPath HKLM:\Software\MeetingRoomReservationV2 -Recurse` 在提权 pwsh 7.6.5/Win11 23H2 报 "Requested registry access is not allowed" 且键残留；`reg.exe delete` 正常。建议任务书改用 reg.exe | transcript `combo-cleanup-upgrade-215721.log`；残留注册表导致升级腿基线安装误判失败 |
+| T2-B2 | 设计行为记录 | v2.1.0 基线安装在「HKLM 残留+安装根缺失」异常环境下走升级分支并以 RC_6 失败，按 RC_6 语义保留半成品安装现场；期间出现 `'…' is not recognized` （基线包内调用不存在的升级命令） | transcript `combo-cleanup-upgrade-215721.log` |
+| T2-B3 | **产品 bug（高）** | 安装 BAT 将 install.py 全部 stdout/stderr 重定向到临时日志（`>"%TEMP%\…log" 2>&1`），「确认继续全新安装？请输入 YES：」（install.py:87）在控制台不可见，窗口黑屏；任意按键=空输入→取消安装。真客户几乎无法自行完成安装。CI 管道喂 YES 永不暴露。建议：确认提示写 CON 设备或 BAT 不做整体重定向 | 用户实测（本轮对话）；`安装V2.3.0.bat:16`；`_V2安装工具/app/install.py:87` |
+| T2-B4 | **产品 bug（高，根因已定位）** | `⑥ 从备份恢复.bat:56` 提取内嵌 PS 的命令 `& ([ScriptBlock]::Create((…-join [Environment]::NewLine))` **缺 `& (` 层的闭合 `)`**（3 个开括号仅 2 个闭），Windows PowerShell 解析必然失败 `Missing closing ')' in expression`，恢复流程未进入主体即退出；**管道 3 次 + 用户真实窗口 1 次 = 4/4 复现**；客户侧恢复入口完全阻断（核心 `restore.py` 本身工作正常，E72）。修复：行尾 `))` → `)))`（或改落地临时 .ps1 执行）。CI 未抓到原因：T1 验收不含 ⑥ 执行 | `combo6/7/9` transcripts + 用户实测 + `motw-repro/` 对照实验（vC 229 字符复现、vD 84 字符正常、平衡/不平衡一行对照） |
+| T2-B5 | 观察 | ③（及升级失败路径）BAT 输出在管道环境出现中文乱码 cmd 报错（`'…或防火墙规则。' is not recognized`、`The system cannot find the path specified.`）；核心功能未受影响；与 B-4 无关（独立现象，疑为 UTF-8 BAT 长/中文行经 cmd 解析的稳定性） | transcript `combo9-task-rebuild-restore.log` |
+| T2-O1 | 观察（8/19 更正） | 昨晚疑似「计划任务意外消失」为**误报**：两任务带限制性安全描述符，**非提权会话（pwsh Get-ScheduledTask 与 cmd schtasks /query）均不可见返回空**，提权会话始终可见（count=2）。正面安全设计（普通用户不可见/不可篡改 SYSTEM 任务），同时是运维诊断陷阱；提权 TaskScheduler 事件日志（141/140/375）近 12h 无删除记录 | `combo11-b3-overnight.log`、`combo12-trigger-diag.log`、非提权/提权对照 |
+| T2-O2 | 观察 | 切 LAN 时防火墙弹窗未出现：安装器已预建程序限定+TCP8080+LocalSubnet 规则，服务绑定非回环时直接命中，免摩擦正确设计 | E70 核验输出 |
+| T2-O3 | 观察（8/19） | 每日备份首次真实夜间触发延迟 1 小时：契约 StartBoundary 02:00+08:00 正确，实际 LastRunTime 03:00:00（备份成功落盘），NextRunTime 次日回到 02:00。疑似 Modern Standby 空闲错过定点触发后由 StartWhenAvailable 补跑。CI 一次性虚拟机无法暴露；建议开发复核空闲/待机下的触发时效 | `combo12-trigger-diag.log`、`combo11-b3-overnight.log` |
+
+## 六个 [人工] 动作状态
+
+1. 点 UAC「是」：**已完成**（gh 工具组合、真客户安装、③/⑥ 提权、A5 重启后组合，共 8+ 次）
+2. SmartScreen「仍要运行」：**未出现**（BAT 未被拦截，见 E68；E 类签名后复测）
+3. 重启机器：**已完成**（08-19 08:40，A5 全通过）
+4. 升级中途拔电源：**未执行**（用户选择跳过 C1；升级事务性已由 CI T1 层 windows-upgrade-integration 与真机升级腿覆盖大部分，断电场景留待后续）
+5. 防火墙弹窗「允许」：**未出现**（规则预建，见 T2-O2）
+6. 证书操作：本次无证书，跳过（E 类待签名）
+
+## 环境恢复清单（收尾时已执行）
+
+- AC 睡眠超时已由「从不」恢复为原值 600 秒（powercfg setacvalueindex 0x258 复核）
+- 系统保留状态：V2.3.0 真客户安装 + 已恢复数据（install_id `26db23e1-…`）持续运行——如需完全清理请告知（任务书未要求测后卸载）
+- 其余系统对象（计划任务/防火墙/注册表）均为本次测试合法创建
+
+## 剩余风险
+
+- **T2-B3/T2-B4 均为交付阻断级**：建议 V2.3.0 正式发布前修复（B-4 一字符修复；B-3 需调整 BAT 输出策略）并补「真窗口人工执行 ①/⑥」进 T1 或发布门禁
+- C1 断电演练未执行：升级事务性证据链缺真实断电一环
+- B1 未做真实双端对抢（并发 409 由 T1 API 层覆盖）
+- E 类（signtool verify、SmartScreen 消失、发布者显示）待签名后补测
