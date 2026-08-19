@@ -19,6 +19,13 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
+## V2.4.0 发布与最终真机收口证据（2026-08-19）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E101 | Windows 11 23H2 最终真机验收 PR [#36](https://github.com/frankfang2009/meeting-room-reservation-system/pull/36)（证据 E96–E100）与 `v2.4.0` 标签 run [32259333040](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/32259333040)（标签 `25636dad`） | 最终候选安装包/累计升级包 SHA-256 与真机验收逐字节一致（`8ec0650c…2474` / `fa6d1f1d…f3ef`）；T1 全新安装 13 步、混合 2 条变更 + 2 条交接双分辨率弹窗、管理员候选排除创建者且允许自我指派、指派结果不可拒绝通知、通知偏好关闭场景和清理闭环全部 PASS。标签 run candidate-linux、candidate-windows、candidate-macos 三车道全绿；本机下载标签产物复核 macOS zip `8133d4cd…e385`、DMG `4698df27…d7b1`，zip 摘要与侧车一致 |
+| E102 | GitHub Release [v2.4.0](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.4.0) 与 latest 固定链接验证 | 正式发布（非草稿/非预发）并设为 latest；仅附 macOS DMG、zip、sha256 侧车与 `latest-macos.json` 四项 ASCII 规范命名资产，GitHub 端 digest 与标签 artifact 一致；`releases/latest/download/latest-macos.json` 返回 version/tag `2.4.0`/`v2.4.0`，DMG 经资产重定向返回 200。Windows 双交付物只在发布说明登记 SHA，未上传公开 Release；`formal_external_release_allowed=false` 继续适用于未签名 Windows 资产 |
+
 ## V2.3.0 发布与 T2 实机收口证据（2026-08-19）
 
 | 编号 | 命令或证据 | 实际结果 |
