@@ -125,9 +125,35 @@ def due_reminders():
             )
             items.append(item)
 
+    # 待我处理的交接请求：与变更通知共用同一轮询；按读时条件过滤，
+    # 预约已开始/取消的请求自然消失（状态由写路径收敛）。
+    # 不受两项通知偏好约束——交接是需要处理的请求，不是可关的通知。
+    now = local_now().replace(tzinfo=None)
+    handover_rows = db.execute(
+        """
+        SELECT hr.id AS handover_request_id,
+               f.display_name AS from_display_name,
+               r.*, u.display_name AS owner_display_name
+        FROM handover_requests hr
+        JOIN reservations r ON r.id = hr.reservation_id
+        JOIN users u ON u.id = r.owner_user_id
+        JOIN users f ON f.id = hr.from_user_id
+        WHERE hr.to_user_id = ? AND hr.status = 'pending'
+          AND r.status = 'active'
+          AND r.booking_date || ' ' || r.start_time > ?
+        ORDER BY hr.created_at, hr.rowid
+        """,
+        (actor["id"], now.strftime("%Y-%m-%d %H:%M")),
+    ).fetchall()
+    for row in handover_rows:
+        item = serialize_reservation(row, actor)
+        item["kind"] = "handover"
+        item["handoverRequestId"] = row["handover_request_id"]
+        item["fromName"] = row["from_display_name"]
+        items.append(item)
+
     if not preference["booking_reminder"]:
         return jsonify({"items": items})
-    now = local_now().replace(tzinfo=None)
     limit = _upcoming_window_end(now, preference)
     rows = db.execute(
         """

@@ -26,6 +26,14 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | E83 | `v2.3.0` 标签 run [32207285782](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/32207285782)（标签 `4aa3df3c`，含 PR #28 证据与 PR #29 四项 T2 交付修复） | candidate-linux、candidate-windows、candidate-macos 三车道全绿；本机下载 tag artifact 核对 SHA-256：macOS zip `c0250402…4dbe`、DMG `d291f5e6…7708`、Windows 安装包内部候选 `c6c36f1b…dd80`、累计升级包内部候选 `e163f21a…d43c`，mac zip 摘要与侧车 sha256.txt 一致 |
 | E84 | GitHub Release [v2.3.0](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.3.0) 与 latest 重定向验证（含资产名修正） | 正式发布（非草稿/非预发）并设为 latest：初版资产名被 GitHub 剥离中文成 `-V2.3.0-*`，已删换为规范 ASCII 名 `meeting-room-v2-2.3.0-*`（GitHub 端 digest 前后一致）；`releases/latest/download/latest-macos.json` 返回 version/tag `2.3.0`/`v2.3.0`，latest DMG 经资产重定向 200；Windows 双交付物仅登记 SHA 未上传资产，`formal_external_release_allowed=false` 维持（Authenticode 签名与 E 类补测未完成）；Windows 真机 T2 证据 E64–E82 见 `v2/docs/T2-WINDOWS-EVIDENCE-2026-08-18.md` |
 
+## V2.4.0 工作交接页面与历史状态证据（2026-08-18）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E85 | `V2_PYTHON=… v2/scripts/check.sh`（本机允许回环测试服务器） | Ruff、compileall、`git diff --check` 全绿；backend 128、installer 85、跨层 29、frontend 163 项测试通过；Vite 6.4.3 生产构建成功（CSS 160.88 kB，JS 501.63 kB） |
+| E86 | 隔离真实服务 + 应用内浏览器 1456×890，管理员/双员工合成账号 | 「我的预约」移除突兀交接区块，新增独立「工作交接」主导航、待我确认徽标、待我确认/我发起的两段开放台账；交接弹窗可稍后处理且不改变请求；员工选择先选中再确认；待处理详情禁用重复发起；控制台 0 error/0 warning、文档无横向溢出 |
+| E87 | 真实 pending / completed / cancelled 交接记录与后端回归 | active 历史列表分别显示“交接中 / 已交接”，普通预约仍显示标签色点；取消记录只显示“已取消”，先前交接保留在详情事件时间线。服务端对 cancelled 投影 `handoverState=null`，前端只为 active 渲染辅助状态；事件文案统一为“预约者由 A 交接给 B”，CSV 表头统一“预约者”；同时修复 handover 联表把 request id 投影为 reservation id 的缺陷并以请求/收件/发件三处 ID 断言锁定 |
+
 ## V2.3.0 变更通知身份与视觉修正证据（2026-08-18）
 
 | 编号 | 命令或证据 | 实际结果 |

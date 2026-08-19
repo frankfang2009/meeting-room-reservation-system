@@ -1,6 +1,6 @@
 # V2 React frontend
 
-This directory contains the production React client for the V2.3.0 fresh-install
+This directory contains the production React client for the V2.4.0 fresh-install
 baseline. It keeps the frozen V2 DOM/class vocabulary and `styles.css`, but all
 runtime state comes from the same-origin Flask API under `/api/v1`.
 

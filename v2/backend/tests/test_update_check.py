@@ -102,7 +102,7 @@ class UpdateCheckUnitTests(unittest.TestCase):
                 update_check.parse_manifest(payload)
 
     def test_version_normalization_and_release_url(self) -> None:
-        self.assertEqual(update_check.normalize_version("V2.3.0"), (2, 3, 0))
+        self.assertEqual(update_check.normalize_version("V2.4.0"), (2, 4, 0))
         self.assertEqual(update_check.normalize_version("2.10.0"), (2, 10, 0))
         self.assertIsNone(update_check.normalize_version("2.3"))
         self.assertIsNone(update_check.normalize_version(None))

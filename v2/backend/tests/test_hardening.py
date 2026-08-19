@@ -553,6 +553,43 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
             )
             db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_template")
             db.execute("ALTER TABLE user_preferences DROP COLUMN reminder_sound")
+            db.execute("DROP TABLE IF EXISTS handover_requests")
+            db.execute(
+                """
+                CREATE TABLE reservation_events_new (
+                    id TEXT PRIMARY KEY,
+                    reservation_id TEXT NOT NULL,
+                    actor_user_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL
+                        CHECK (event_type IN ('created', 'updated', 'cancelled')),
+                    revision INTEGER NOT NULL CHECK (revision >= 1),
+                    before_json TEXT,
+                    after_json TEXT,
+                    occurred_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                    FOREIGN KEY (reservation_id) REFERENCES reservations(id),
+                    FOREIGN KEY (actor_user_id) REFERENCES users(id)
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO reservation_events_new (
+                    id, reservation_id, actor_user_id, event_type, revision,
+                    before_json, after_json, occurred_at
+                )
+                SELECT id, reservation_id, actor_user_id, event_type, revision,
+                       before_json, after_json, occurred_at
+                FROM reservation_events
+                """
+            )
+            db.execute("DROP TABLE reservation_events")
+            db.execute(
+                "ALTER TABLE reservation_events_new RENAME TO reservation_events"
+            )
+            db.execute(
+                "CREATE INDEX idx_events_reservation "
+                "ON reservation_events(reservation_id, occurred_at)"
+            )
             db.execute("DROP TABLE notice_receipts")
             db.execute(
                 """
@@ -596,7 +633,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         )
         self.assertEqual(sidecar["databaseSha256"], sha256_file(first_path))
         self.assertEqual(sidecar["sequence"], 1)
-        self.assertEqual(sidecar["databaseSchemaVersion"], 3)
+        self.assertEqual(sidecar["databaseSchemaVersion"], 4)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
         self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
         self.assertFalse(Path(str(first_path) + "-wal").exists())
@@ -908,7 +945,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 db.execute(
                     "SELECT value FROM app_meta WHERE key = 'schema_version'"
                 ).fetchone()[0],
-                "3",
+                "4",
             )
             self.assertIsNone(
                 db.execute(

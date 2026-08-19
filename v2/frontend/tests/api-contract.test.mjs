@@ -358,6 +358,38 @@ test("supports audit filters, JSON diagnostics, and the admin token lifecycle", 
   }
 });
 
+test("handover endpoints hit the agreed URLs with CSRF", async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    setCsrfToken("csrf-handover");
+    await api.createHandover("res-1", "user-2");
+    await api.acceptHandover("req-1");
+    await api.declineHandover("req-1");
+    await api.withdrawHandover("req-1");
+    await api.getHandoverRequests();
+    await api.getUserDirectory();
+    assert.equal(requests[0].url, "/api/v1/reservations/res-1/handover");
+    assert.deepEqual(JSON.parse(requests[0].options.body), { toUserId: "user-2" });
+    assert.equal(requests[1].url, "/api/v1/handover-requests/req-1/accept");
+    assert.equal(requests[2].url, "/api/v1/handover-requests/req-1/decline");
+    assert.equal(requests[3].url, "/api/v1/handover-requests/req-1");
+    assert.equal(requests[3].options.method, "DELETE");
+    assert.equal(requests[4].url, "/api/v1/handover-requests");
+    assert.equal(requests[5].url, "/api/v1/users/directory");
+    assert.equal(requests[0].options.headers["X-CSRF-Token"], "csrf-handover");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("acknowledges a change notice by event id", async () => {
   const previousFetch = globalThis.fetch;
   const requests = [];

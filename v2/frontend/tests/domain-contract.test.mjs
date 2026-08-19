@@ -35,12 +35,20 @@ import {
   validateSetupUsername,
   waitForSetupRestart,
 } from "../src/domain.js";
-import { relativeDayLabel, reservationStatusLabel } from "../src/ui/presentation.js";
+import { relativeDayLabel, reservationEventSummary, reservationStatusLabel } from "../src/ui/presentation.js";
 
 test("reservation statuses are always projected as Chinese UI copy", () => {
   assert.equal(reservationStatusLabel("active"), "已预约");
   assert.equal(reservationStatusLabel("cancelled"), "已取消");
   assert.equal(reservationStatusLabel("unexpected"), "状态未知");
+});
+
+test("handover event copy distinguishes the reservation owner from the party", () => {
+  assert.equal(reservationEventSummary({
+    type: "handover",
+    before: { ownerName: "林晨" },
+    after: { ownerName: "周宁" },
+  }), "预约者由 林晨 交接给 周宁");
 });
 
 test("relative day labels follow the server business date across month and year boundaries", () => {

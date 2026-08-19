@@ -54,6 +54,12 @@
   before→after diffs from the event snapshots. They defer while any drawer is open (quiet dashed
   chip meanwhile) and are acknowledged per event id; notices survive the owner's own later edits,
   expire after 45 days unconfirmed, and receipts are pruned after 90 days.
+- Handover is reservation lifecycle, not a task module: only pre-start active bookings; owner-initiated
+  requests need the target's explicit accept (statistics follow the receiver, name snapshot switches,
+  event chain keeps the A→B trail); admin assignment is immediate; declined/expired requests fall back
+  to the original owner; editing the booking after a request invalidates it (optimistic-lock semantics);
+  one pending request per booking. Handover requests ride the reminder poller regardless of notification
+  switches, and Esc never decides a handover.
 - Copying external reminder text is a manual clipboard-only action and must never connect to an
   outbound channel, open WeChat, or claim/record a sent state. Its variable set is fixed to party
   name, date, start, end, and room; case number, purpose, and notes must never enter the template.

@@ -45,7 +45,7 @@ class UpdatePackageBuilderTests(unittest.TestCase):
         with zipfile.ZipFile(first.artifact_path, "r") as archive:
             archive.extractall(extracted)
         bundle = UpdateBundle.load(extracted / "_V2更新工具")
-        self.assertEqual(bundle.manifest["version"], "2.3.0")
+        self.assertEqual(bundle.manifest["version"], "2.4.0")
         self.assertEqual(bundle.supported_source_versions, frozenset({"2.1.0"}))
         self.assertFalse(bundle.manifest["acceptance"]["formal_external_release_allowed"])
 
@@ -53,7 +53,7 @@ class UpdatePackageBuilderTests(unittest.TestCase):
         result = self._build("outer")
         with zipfile.ZipFile(result.artifact_path, "r") as archive:
             names = archive.namelist()
-            launcher = archive.read("升级到V2.3.0.bat").decode("utf-8")
+            launcher = archive.read("升级到V2.4.0.bat").decode("utf-8")
             manifest = json.loads(
                 archive.read("_V2更新工具/manifest.json").decode("utf-8")
             )

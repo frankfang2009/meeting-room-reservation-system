@@ -18,15 +18,15 @@ def read(relative: str) -> str:
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.3.0")
+        self.assertEqual(read("VERSION").strip(), "2.4.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.3.0")
+        self.assertEqual(package["version"], "2.4.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(package["scripts"]["build"], "vite build")
-        self.assertIn('PRODUCT_VERSION = "V2.3.0"', read("backend/v2app/__init__.py"))
+        self.assertIn('PRODUCT_VERSION = "V2.4.0"', read("backend/v2app/__init__.py"))
         installer = read("installer/installer_core.py")
-        self.assertIn('VERSION = "2.3.0"', installer)
-        self.assertIn('RELEASE = "V2.3.0"', installer)
+        self.assertIn('VERSION = "2.4.0"', installer)
+        self.assertIn('RELEASE = "V2.4.0"', installer)
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -153,11 +153,29 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('data_dir / "reservation.db"', app_factory)
         self.assertIn('"data" / "reservation.db"', updater)
         self.assertRegex(database, r"PRODUCT_GENERATION\s*=\s*2")
-        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*3")
+        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*4")
         self.assertIn(
-            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, SCHEMA_VERSION})", database
+            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, SCHEMA_VERSION})", database
         )
         self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
+
+    def test_restore_entry_backup_schema_range_matches_update_core(self) -> None:
+        # ⑥ 从备份恢复.bat 的备份配对校验以 -lt/-gt 硬编码 schema 上下界；
+        # update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS 是唯一真值。两者漂移会让
+        # ⑥ 拒收当前版本的合法备份（T2-B6 真机缺陷即此形态），这里让漂移直接变红。
+        from v2.installer.update_core import SUPPORTED_DATABASE_SCHEMA_VERSIONS
+
+        restore_entry = read("installer/payload_templates/⑥ 从备份恢复.bat")
+        lower = re.search(r"databaseSchemaVersion\s+-lt\s+(\d+)", restore_entry)
+        upper = re.search(r"databaseSchemaVersion\s+-gt\s+(\d+)", restore_entry)
+        self.assertIsNotNone(lower, "⑥ 恢复入口缺少 schema 下界检查")
+        self.assertIsNotNone(upper, "⑥ 恢复入口缺少 schema 上界检查")
+        accepted = set(range(int(lower.group(1)), int(upper.group(1)) + 1))
+        self.assertEqual(
+            accepted,
+            set(SUPPORTED_DATABASE_SCHEMA_VERSIONS),
+            "⑥ 恢复入口的备份 schema 范围与 update_core 支持集不一致",
+        )
 
     def test_installer_and_backend_share_secret_and_health_contracts(self) -> None:
         installer = read("installer/installer_core.py")
@@ -312,7 +330,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.3.0.bat")
+        launcher = read("installer/安装V2.4.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
@@ -384,7 +402,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         updater = read("installer/update_core.py")
         builder = read("installer/build_update_package.py")
         entry = read("installer/update.py")
-        launcher = read("installer/升级到V2.3.0.bat")
+        launcher = read("installer/升级到V2.4.0.bat")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = True", updater)
         self.assertIn('SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})', updater)

@@ -196,8 +196,10 @@ test("toast tones map success, information, and errors to honest icons", () => {
   assert.match(app, /个人设置已保存", "success"/);
 });
 
-test("change notifications start the same due-reminder poller", () => {
-  assert.match(app, /bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications/);
+test("the due-reminder poller stays on for handover requests regardless of switches", () => {
+  // V2.4.0：交接请求是待办而非通知，两项提醒开关全关也保持轮询。
+  assert.match(app, /\/\/ 交接请求是待办而非通知：即使两项提醒开关全关也保持轮询。/);
+  assert.doesNotMatch(app, /if \(!bootstrap\?\.preferences\?\.bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications\) \{[\s\S]{0,200}return undefined/);
 });
 
 test("reminder lead preference controls both visible copy and editability", () => {
@@ -210,7 +212,7 @@ test("reminder lead preference controls both visible copy and editability", () =
 });
 
 test("external reminder copy stays manual, scoped, and recoverable", () => {
-  assert.match(app, /canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /const canCopyReminder = canManage && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /canCopyReminder && <button className="copy-reminder-button"/);
   assert.match(app, /renderReminderTemplate\(bootstrap\?\.preferences\?\.reminderTemplate/);
   assert.match(app, /提醒信息已复制，可在微信中粘贴发送", "success"/);
@@ -232,8 +234,8 @@ test("acknowledging change notices is event-scoped and refreshes affected views"
 
 test("upcoming reminders live in the calendar with a counting badge and a one-time arrival toast", () => {
   // 临近提醒是状态而非待办：徽章显示计数，不再有确认动作。
-  assert.match(app, /const upcomingCount = id === "mine" \? dueReminders\.upcoming\.length : 0/);
-  assert.match(app, /\{upcomingCount > 9 \? "9\+" : upcomingCount\}/);
+  assert.match(app, /const badgeCount = id === "mine" \? dueReminders\.upcoming\.length : id === "handovers" \? handoverBoard\.incoming\.length : 0/);
+  assert.match(app, /\{badgeCount > 9 \? "9\+" : badgeCount\}/);
   // 画进日历：预约块上的倒计时角标与紧急态。
   assert.match(app, /const countdown = countdownFor\(booking\)/);
   assert.match(app, /countdown && <span className="booking-countdown"/);
@@ -249,10 +251,43 @@ test("upcoming reminders live in the calendar with a counting badge and a one-ti
   assert.doesNotMatch(app, /openMineAndAcknowledgeReminder/);
 });
 
+test("handover requests ride the action modal, the dedicated page, and the details drawer", () => {
+  assert.match(app, /const visibleHandoverReminders = dueReminders\.handovers\.filter/);
+  assert.match(app, /const noticeOnlyHandovers = noticeHasHandovers && dueReminders\.changes\.length === 0/);
+  assert.match(app, /decideHandover\(item\.handoverRequestId, "accept"\)/);
+  assert.match(app, /decideHandover\(item\.handoverRequestId, "decline"\)/);
+  assert.match(app, /deferVisibleHandovers/);
+  assert.match(app, /稍后处理/);
+  assert.match(app, /const canHandover = !handoverPending && booking\.status === "active" && !hasBookingStarted/);
+  assert.match(app, /drawer\.type === "handover"/);
+  assert.match(app, /api\.getUserDirectory\(\)/);
+  assert.match(app, /aria-pressed=\{drawer\.selectedUserId === user\.id\}/);
+  assert.match(app, /disabled=\{!selectedUser \|\| handoverActionBusy\}/);
+  assert.match(app, /sendHandover\(booking\.id, selectedUser\.id\)/);
+  assert.doesNotMatch(app, /onClick=\{\(\) => void sendHandover\(booking\.id, user\.id\)\}/);
+  assert.match(app, /className="handover-picker-summary"/);
+  assert.match(app, /交给谁？/);
+  assert.match(app, /确认后将立即完成指派，无需对方确认/);
+  assert.match(app, /返回预约详情/);
+  assert.match(app, /\{ id: "handovers", label: "工作交接", Icon: ArrowsLeftRight \}/);
+  assert.match(app, /function renderHandovers\(\)/);
+  assert.match(app, /className="main-canvas handover-canvas"/);
+  assert.match(app, /activeView === "handovers" && renderHandovers\(\)/);
+  assert.doesNotMatch(app, /className="handover-board" aria-label="工作交接"/);
+  assert.match(app, /handoverPending/);
+  assert.match(app, /withdrawHandoverRequest\(request\.id\)/);
+  assert.match(app, /reservationEventLabel/);
+  assert.match(productionSource, /handover: "预约已交接"/);
+  assert.match(productionSource, /预约者由 \$\{from\} 交接给 \$\{to\}/);
+  assert.match(app, /booking\.handoverState === "pending" \? "交接中" : "已交接"/);
+  assert.match(app, /booking\.status === "cancelled" && <span className="history-cancelled-status">已取消<\/span>/);
+  assert.match(app, /booking\.status === "active" && booking\.handoverState && <span className=\{`history-handover-status/);
+});
+
 test("change notices require an explicit centered modal with field diffs and drawer deferral", () => {
-  assert.match(app, /const noticeModalOpen = dueReminders\.changes\.length > 0 && !drawer && !sessionExpired;/);
-  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,220}mainRef,/);
-  assert.match(app, /<\/div>\s*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
+  assert.match(app, /const noticeModalOpen = \(dueReminders\.changes\.length > 0 \|\| noticeHasHandovers\) && !drawer && !sessionExpired;/);
+  assert.match(app, /useFocusTrap\([\s\S]{0,100}noticeModalRef,[\s\S]{0,420}mainRef,/);
+  assert.match(app, /<\/div>\s*\{drawer && \(dueReminders\.changes\.length > 0[\s\S]*\{noticeModalOpen && <div className="notice-modal-layer"><section ref=\{noticeModalRef\}/);
   assert.match(app, /role="alertdialog" aria-modal="true" aria-labelledby="notice-modal-heading" aria-describedby="notice-modal-hint" aria-busy=\{noticeAckBusy\}/);
   assert.match(app, /noticeDiffRows\(item\.diffs\)/);
   assert.match(app, /noticeIdentitySummary\(item\)/);
@@ -264,8 +299,8 @@ test("change notices require an explicit centered modal with field diffs and dra
   assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
   assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
   // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
-  assert.match(app, /\{drawer && dueReminders\.changes\.length > 0 && <div className="notice-queue-chip"/);
-  assert.match(app, /将在您关闭当前窗口后出现/);
+  assert.match(app, /\{drawer && \(dueReminders\.changes\.length > 0 \|\| dueReminders\.handovers\.length > 0\) && <div className="notice-queue-chip" role="status" aria-live="polite"/);
+  assert.match(app, /关闭预约详情后自动打开/);
 });
 
 test("the frozen empty-state action consumes a valid default room", () => {
@@ -275,7 +310,7 @@ test("the frozen empty-state action consumes a valid default room", () => {
 });
 
 test("low-frequency UX safeguards remain explicit and testable", () => {
-  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*dueReminders\.changes\.length > 0[\s\S]*<\/div>\s*\{noticeModalOpen/);
+  assert.match(app, /<div ref=\{mainRef\} className="app-main-region">[\s\S]*<\/div>\s*\{drawer && \(dueReminders\.changes\.length > 0[\s\S]*\{noticeModalOpen/);
   assert.match(app, /<Drawer[\s\S]{0,500}backgroundRef=\{mainRef\}/);
   assert.match(app, /historyMonth <= historyMonths\.at\(-1\)\.id/);
   assert.match(app, /nextMonth < earliestMonth \|\| nextMonth > latestMonth/);

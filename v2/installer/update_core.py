@@ -95,10 +95,12 @@ REGISTRY_SUBKEY = r"Software\MeetingRoomReservationV2"
 MIN_UPDATABLE_VERSION = "2.0.0"
 SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})
 # 升级器在替换程序文件并启动新服务后仍会终验数据库：届时服务已把
-# schema 迁移到当前版本（v3，回执表重建为 notice_receipts），因此接受
-# 1/2/3 三种版本，回执表按版本取 reminder_receipts 或 notice_receipts 之一。
-DATABASE_SCHEMA_VERSION = 3
-SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({1, 2, DATABASE_SCHEMA_VERSION})
+# schema 迁移到当前版本（v4，回执表重建为 notice_receipts、新增
+# handover_requests），因此接受 1/2/3/4 四种版本，回执表按版本取
+# reminder_receipts 或 notice_receipts 之一，交接表只对 v4 校验存在性。
+DATABASE_SCHEMA_VERSION = 4
+SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({1, 2, 3, DATABASE_SCHEMA_VERSION})
+HANDOVER_TABLE_MIN_VERSION = 4
 EXPECTED_V2_TABLES = frozenset(
     {
         "app_meta",
@@ -269,7 +271,7 @@ def _database_setup_state(database: Path) -> bool:
         str(version) for version in SUPPORTED_DATABASE_SCHEMA_VERSIONS
     }:
         raise UpdatePolicyError(
-            "V2 数据库 schema_version 不是可迁移的 1、2 或当前 "
+            "V2 数据库 schema_version 不是可迁移的 1、2、3 或当前 "
             f"{DATABASE_SCHEMA_VERSION}"
         )
     missing = EXPECTED_V2_TABLES - tables
@@ -277,6 +279,12 @@ def _database_setup_state(database: Path) -> bool:
         raise UpdatePolicyError("V2 数据库结构不完整：" + ", ".join(sorted(missing)))
     if not (RECEIPTS_TABLES & tables):
         raise UpdatePolicyError("V2 数据库结构不完整：缺少提醒回执表")
+    if (
+        schema_version.isdigit()
+        and int(schema_version) >= HANDOVER_TABLE_MIN_VERSION
+        and "handover_requests" not in tables
+    ):
+        raise UpdatePolicyError("V2 数据库结构不完整：缺少交接请求表")
     if integrity != [("ok",)] or foreign_keys:
         raise UpdatePolicyError("V2 数据库完整性或外键检查失败")
     setup_value = str(metadata.get("setup_complete", "")).strip()

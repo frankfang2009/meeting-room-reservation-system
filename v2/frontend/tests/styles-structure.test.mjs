@@ -39,7 +39,9 @@ const expectedFiles = [
 // 成功确认条轻落入场（runtime-states.css）。
 // V2.3.0 提醒重做：日历倒计时角标与「今天」圆点（calendar.css）、
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
-const frozenSourceSha256 = "8cf9f18f6ad5f9ad8dc912a3b4ff75e316775a9a83b54fb26db16f91f20ecd16";
+// V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
+// 独立工作交接页（dashboard.css）。
+const frozenSourceSha256 = "815d9e93ba1afe3c1f428299dd44eb2da2d62885b9ee1beb1a59a9348c548ab5";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -88,6 +90,7 @@ test("React keeps one global CSS entrypoint", () => {
 });
 
 test("compact production actions retain at least a 44px hit target", () => {
+  const dashboard = fs.readFileSync(path.join(stylesRoot, "dashboard.css"), "utf8");
   const drawer = fs.readFileSync(path.join(stylesRoot, "drawer-shell.css"), "utf8");
   const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
   const system = fs.readFileSync(path.join(stylesRoot, "system.css"), "utf8");
@@ -96,6 +99,11 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(drawer, /\.drawer-back \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
   assert.match(flows, /\.reminder-toast > button \{[\s\S]*?min-height: 44px;/);
   assert.match(flows, /\.notice-item-actions button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.handover-defer-button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.handover-picker-actions button \{[\s\S]*?min-height: 44px;/);
+  assert.match(flows, /\.handover-picker-actions \.primary-button \{[\s\S]*?min-height: 52px;/);
+  assert.match(flows, /\.handover-booking-button \{[\s\S]*?min-height: 52px;/);
+  assert.match(dashboard, /\.handover-ledger-actions button,[\s\S]*?min-height: 44px;/);
   assert.match(system, /\.system-copy-address \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
@@ -121,7 +129,7 @@ test("low-frequency controls keep semantic styles and readable cancelled status"
   assert.match(history, /\.history-filter-popover input\[type="radio"\]/);
   assert.match(flows, /\.booking-events-error button \{[\s\S]*?min-height: 44px;/);
   assert.match(settings, /\.settings-save-button:disabled/);
-  const cancelledColor = history.match(/\.history-cancelled-status \{[\s\S]*?color: (#[0-9a-f]{6});/i)?.[1];
+  const cancelledColor = history.match(/\.history-cancelled-status,\s*\.history-handover-status \{[\s\S]*?color: (#[0-9a-f]{6});/i)?.[1];
   assert.ok(cancelledColor);
   assert.ok(contrastRatio(cancelledColor, "#f5f4ed") >= 4.5);
 });

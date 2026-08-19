@@ -652,5 +652,6 @@ export function reservationEventLabel(type) {
     created: "预约已创建",
     updated: "预约已更新",
     cancelled: "预约已取消",
+    handover: "预约已交接",
   })[type] || "预约有变更";
 }
