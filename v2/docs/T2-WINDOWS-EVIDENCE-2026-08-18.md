@@ -76,6 +76,19 @@
 | E90 | 新发现 T2-B9（产品，高）：服务计划任务默认电池策略导致笔记本自停 | 任务设置实测 `DisallowStartIfOnBatteries=True`、`StopIfGoingOnBatteries=True`（注册时未显式禁用，任务计划程序默认值）；测试机为 DELL 笔记本（AC 在线 100% 时仍发生瞬时电源事件）——复测期间服务三次自停（spot5/6 两轮 STEP D 与 11:57 一次），与 T2-B8 观察合并定性：boot 触发+持续供电下驻留正常，电源波动即被任务计划程序终止。建议：注册任务时设置 `-AllowStartIfOnBatteries`+`-DontStopIfGoingOnBatteries`（服务器角色），并在 T1 验收补断言 |
 | — | T2-B1 升级注记（测试方法） | PS 注册表 provider 在提权 pwsh 会话对 `HKLM\Software\MeetingRoomReservationV2` **间歇性 Test-Path=False 而键实际存在**（spot1 现场：if 守卫被跳过导致清理不净→安装 RC_6）；清理脚本已改为无条件 `reg.exe delete` + `reg.exe query` 循环验证（以 reg.exe 视角为准），复测 PHASE 1 `reg query confirms key gone` |
 
+## V2.4.0 Windows 真机测试（2026-08-19，main `27e963f` 候选）
+
+| E编号 | 测试事项 | 结果 |
+|---|---|---|
+| E91 | V2.4.0 候选构建与 T1 全新安装腿（run 32214468178，workflow_dispatch from main；检出于 main 使 VERSION=2.4.0 匹配产物） | 首次构建失败于 candidate-linux `test_deterministic_across_two_builds`（THIRD-PARTY-NOTICES.txt 两次构建 diff，**flaky**，重跑全绿）；产物 SHA-256：安装包 `1bfc925f…d7a4b`、累计升级包 `ba0e8b09…a66b`；机器复测后已清空，`v2-windows-acceptance.ps1` 对 V2.4.0 候选 **12 步全绿 `MRV2_T1=PASS` rc=0**（transcript `v240-t1-*.log`）；⑥ 恢复在 V2.4.0 产物上 rc=0（`restored:true`，服务停属设计：验收现场 `serviceWasRunning=false`） |
+| E92 | 工作交接 API 全链路（管理员建员工 王五/赵六 → 员工视角） | 发起 `POST /reservations/{id}/handover`（HTTP 200，请求 pending、预约锁定 canEdit/canCancel=false）；重复发起同一预约 → **409 HANDOVER_REQUEST_EXISTS**（一预约一待处理请求）；接受（赵六）→ **owner 王五→赵六**、status active；拒绝（另一单）→ **owner 回退王五**；`GET /handover-requests` 双视角投影正确（赵六 incoming=待确认、王五 outgoing=我发起）；`GET /users/directory` 仅 id/name/department（无用户名，脱敏投影）；错误响应的 `error.requestId` 为追踪 ID 非交接请求 ID（测试脚本曾误用，已按台账定位真实 ID 复测） |
+| E93 | 工作交接 UI（真实浏览器，员工 赵六 登录） | **交接弹窗**（alertdialog「工作交接」）：「王五 希望将这场预约交接给你」+ 当事人/事项/时间 + 归属说明文案，三操作 接受交接/不接受/稍后处理；**主导航徽标**「工作交接 · 1 条交接等待确认」；**台账页**：交接概览（待我确认 1 / 我发起的 0）+「待我确认」「我发起的」两段开放台账；员工导航无管理项（笔录室/用户管理/系统状态不可见）；截图 `shots/v240-handover-dialog.png`、`v240-handover-page.png` |
+| — | T2-B9 状态核验（服务任务电池策略） | **V2.4.0（main `27e963f`）未修**：`installer_core.py:1330` 的 `New-ScheduledTaskSettingsSet` 仍无 `-AllowStartIfOnBatteries`/`-DontStopIfGoingOnBatteries`——笔记本部署电源波动仍会触发服务自停（E90 现场），建议随 V2.4.0 正式发布前修复 |
+
+| E94 | V2.4.0 真机升级腿（v2.1.0 基线 → V2.4.0 累计升级包）与 C1 收口（2026-08-19 用户决定） | **`MRV2_T1U=PASS` rc=0**（transcript `v240-upgrade-*.log`）：基线安装→业务数据→备份补跑→累计升级→版本三处一致、install_id 不变、回执 complete、无 `.update-*` 残留→数据/会话/房间保留→升级后 DACL 重固化。C1 断电演练正式标记跳过（用户放行标准=稳定升级+功能正常，均已满足）；排障记录：安装根一度无法删除，元凶为救援时真窗口残留的 `cmd.exe`（① BAT 的 pause 挂起，工作目录锁住安装根）——杀残留 cmd 后删除成功，属测试操作残留非产品问题 |
+
+| E95 | T2-B9 修复闭环（PR #33 合入 main `5e15b9f`，候选 run 32218052902） | 修复：主任务与每日备份任务注册时显式 `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`；T1 验收 system-registration 步骤新增电池策略断言（读回对象仅 DisallowStartIfOnBatteries/StopIfGoingOnBatteries 负面属性，首版断言属性名错误已在 CI 现行修正）；PR CI 全绿（含带断言的 v2-windows-acceptance）；**真机复验**：B9 修复候选（安装包 `679c551f…5e1`）T1 十二步全绿 PASS，电池断言通过（transcript `v240-b9-verify-*.log`）；排障注记：安装根删除受阻的元凶为真窗口残留 `cmd.exe`（① BAT pause 挂起锁目录），清理脚本已加残留持有者清除 |
+
 ## 六个 [人工] 动作状态
 
 1. 点 UAC「是」：**已完成**（gh 工具组合、真客户安装、③/⑥ 提权、A5 重启后组合，共 8+ 次）
