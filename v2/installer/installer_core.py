@@ -1327,10 +1327,12 @@ foreach ($item in @((Get-Item -LiteralPath $root -Force)) + @(Get-ChildItem -Lit
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument ('"' + $service + '"') -WorkingDirectory $working
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
+# T2-B9: 服务是局域网常驻角色，笔记本部署时电源波动绝不能让任务计划程序
+# 按“使用电池”默认策略停掉或拒绝启动服务（真机自停复现三次）。
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Days 0)
 Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $identity | Out-Null
 Disable-ScheduledTask -TaskPath $taskPath -TaskName $taskName | Out-Null
-$maintenanceSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+$maintenanceSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 $dailyAction = New-ScheduledTaskAction -Execute $pythonw -Argument ('"' + $backup + '" --scheduled --expected-install-id ' + $env:MRV2_INSTALL_ID) -WorkingDirectory $working
 $dailyTrigger = New-ScheduledTaskTrigger -Daily -At '02:00'
 Register-ScheduledTask -TaskPath $taskPath -TaskName $env:MRV2_BACKUP_TASK_NAME -Action $dailyAction -Trigger $dailyTrigger -Principal $principal -Settings $maintenanceSettings -Description $identity | Out-Null
