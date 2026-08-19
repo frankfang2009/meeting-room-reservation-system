@@ -19,6 +19,13 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
+## V2.3.0 发布与 T2 实机收口证据（2026-08-19）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E83 | `v2.3.0` 标签 run [32207285782](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/32207285782)（标签 `4aa3df3c`，含 PR #28 证据与 PR #29 四项 T2 交付修复） | candidate-linux、candidate-windows、candidate-macos 三车道全绿；本机下载 tag artifact 核对 SHA-256：macOS zip `c0250402…4dbe`、DMG `d291f5e6…7708`、Windows 安装包内部候选 `c6c36f1b…dd80`、累计升级包内部候选 `e163f21a…d43c`，mac zip 摘要与侧车 sha256.txt 一致 |
+| E84 | GitHub Release [v2.3.0](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.3.0) 与 latest 重定向验证（含资产名修正） | 正式发布（非草稿/非预发）并设为 latest：初版资产名被 GitHub 剥离中文成 `-V2.3.0-*`，已删换为规范 ASCII 名 `meeting-room-v2-2.3.0-*`（GitHub 端 digest 前后一致）；`releases/latest/download/latest-macos.json` 返回 version/tag `2.3.0`/`v2.3.0`，latest DMG 经资产重定向 200；Windows 双交付物仅登记 SHA 未上传资产，`formal_external_release_allowed=false` 维持（Authenticode 签名与 E 类补测未完成）；Windows 真机 T2 证据 E64–E82 见 `v2/docs/T2-WINDOWS-EVIDENCE-2026-08-18.md` |
+
 ## V2.3.0 变更通知身份与视觉修正证据（2026-08-18）
 
 | 编号 | 命令或证据 | 实际结果 |
