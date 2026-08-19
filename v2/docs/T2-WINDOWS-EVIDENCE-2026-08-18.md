@@ -87,6 +87,8 @@
 
 | E94 | V2.4.0 真机升级腿（v2.1.0 基线 → V2.4.0 累计升级包）与 C1 收口（2026-08-19 用户决定） | **`MRV2_T1U=PASS` rc=0**（transcript `v240-upgrade-*.log`）：基线安装→业务数据→备份补跑→累计升级→版本三处一致、install_id 不变、回执 complete、无 `.update-*` 残留→数据/会话/房间保留→升级后 DACL 重固化。C1 断电演练正式标记跳过（用户放行标准=稳定升级+功能正常，均已满足）；排障记录：安装根一度无法删除，元凶为救援时真窗口残留的 `cmd.exe`（① BAT 的 pause 挂起，工作目录锁住安装根）——杀残留 cmd 后删除成功，属测试操作残留非产品问题 |
 
+| E95 | T2-B9 修复闭环（PR #33 合入 main `5e15b9f`，候选 run 32218052902） | 修复：主任务与每日备份任务注册时显式 `-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries`；T1 验收 system-registration 步骤新增电池策略断言（读回对象仅 DisallowStartIfOnBatteries/StopIfGoingOnBatteries 负面属性，首版断言属性名错误已在 CI 现行修正）；PR CI 全绿（含带断言的 v2-windows-acceptance）；**真机复验**：B9 修复候选（安装包 `679c551f…5e1`）T1 十二步全绿 PASS，电池断言通过（transcript `v240-b9-verify-*.log`）；排障注记：安装根删除受阻的元凶为真窗口残留 `cmd.exe`（① BAT pause 挂起锁目录），清理脚本已加残留持有者清除 |
+
 ## 六个 [人工] 动作状态
 
 1. 点 UAC「是」：**已完成**（gh 工具组合、真客户安装、③/⑥ 提权、A5 重启后组合，共 8+ 次）
