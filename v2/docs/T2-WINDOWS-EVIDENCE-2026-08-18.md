@@ -49,6 +49,22 @@
 | T2-O2 | 观察 | 切 LAN 时防火墙弹窗未出现：安装器已预建程序限定+TCP8080+LocalSubnet 规则，服务绑定非回环时直接命中，免摩擦正确设计 | E70 核验输出 |
 | T2-O3 | 观察（8/19） | 每日备份首次真实夜间触发延迟 1 小时：契约 StartBoundary 02:00+08:00 正确，实际 LastRunTime 03:00:00（备份成功落盘），NextRunTime 次日回到 02:00。疑似 Modern Standby 空闲错过定点触发后由 StartWhenAvailable 补跑。CI 一次性虚拟机无法暴露；建议开发复核空闲/待机下的触发时效 | `combo12-trigger-diag.log`、`combo11-b3-overnight.log` |
 
+## 2026-08-19 修复验证补充（E80–E82，分支 codex/t2-windows-installer-fixes）
+
+| E编号 | 测试事项 | 结果 |
+|---|---|---|
+| E80 | T2-B4/B6/B7 修复实弹：⑥ 恢复全链路（修复版 ⑥ 部署至安装根，管道喂 RESTORE） | 三重修复后 **rc=0 完整通过**：选中最新备份 00000003 → RESTORE 确认 → 安全停服 → `restored:true`（pre-restore 快照）→ 服务恢复 →「V2 已从当前安装的最新有效备份恢复」；修复过程暴露三处独立缺陷（见 B6/B7）均为真机独有（CI 的 pwsh 7 行为差异/T1 从不执行 ⑥） |
+| E81 | T2-B3 修复回归：install.py 交互改造（修复版部署进解压包 + manifest 哈希同步） | EOF（stdin 关闭）→ **干净 RC_3**「安装已取消：没有收到安装确认输入」无 traceback（旧版为 EOFError→RC_1）；YES → **RC_0**，输出含开场横幅/重要说明/新增「校验通过，开始安装（约 1–2 分钟…）」进度提示/完成 URL，服务首启 loopback 就绪（新 install_id 38715769）；「请输入 YES」提示走 CONOUT$ 不进日志为设计行为（真窗口可见，管道静默）；另实证产品防篡改：替换 install.py 未同步 manifest 时被哈希校验拒绝 RC_1 |
+| E82 | 修复配套门禁 | 单测：BAT 全部 `-Command` 单行圆括号平衡断言（红绿验证：缺括号旧版精确报 `⑥:56 10 != 9`）+ install 入口 4 项交互测试；candidate gate：解压包与安装根全部内嵌 PS（-Command 行 + # MRV2-POWERSHELL-BEGIN 整段）真实 ScriptBlock 解析冒烟（本机红绿：修复版 18 行全过、旧版立即失败） |
+
+**修复期间新发现（均已修复或记录）**：
+
+| 编号 | 摘要 | 处置 |
+|---|---|---|
+| T2-B6 | ⑥ 配对校验硬编码 `databaseSchemaVersion -ne 1`，而 V2.3.0 备份 sidecar 为 schema 3 → 修复括号后 ⑥ 仍拒绝全部现有备份（"没有可恢复的配对备份"）；restore.py 本身接受 1..3 | 已修复：对齐 update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS（1..3）范围检查 + 注释同步关系 |
+| T2-B7 | ⑥ 恢复后服务重启等待两层缺陷：a) 30 秒窗口 < 真机冷启动（冻结 runtime+Defender 扫描）；b) **Windows PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 使原生命令 stderr 直接变 NativeCommandError 异常**——服务未起时 `service --check` 必写 stderr，等待循环首次迭代即中断（窗口加长也无效）；CI 用 pwsh 7 无此行为故从未暴露 | 已修复：窗口对齐 120 秒；两处原生调用局部放宽偏好；循环改为 TCP 快探 8080 就绪后才做身份终验 |
+| T2-B8（观察） | ⑥ 恢复成功（rc=0、数据完好）后服务在数分钟内停止一次（service.log 09:21:00 stop 之后无 start 记录），`① 启动系统.bat` 一键救活；未复现/未定位（疑任务 Start 与 Disabled 时序或会话清理连带）；修复版 ⑥ 后续运行未再出现 | 记录待观察；如复现建议查 TaskScheduler 会话作业对象行为 |
+
 ## 六个 [人工] 动作状态
 
 1. 点 UAC「是」：**已完成**（gh 工具组合、真客户安装、③/⑥ 提权、A5 重启后组合，共 8+ 次）
