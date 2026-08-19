@@ -63,6 +63,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _console(text: str) -> None:
+    """把面向用户的输出同步写到控制台设备。
+
+    安装 BAT 会把本进程的 stdout/stderr 整体重定向到临时日志（结束时回显并
+    校验 MRV2_INSTALLER_RESULT 标记），因此只写 stdout 的提示在真实双击安装
+    时不可见（T2 实机测试曾表现为黑屏等输入）。关键提示通过 CONOUT$ 直达
+    屏幕，日志链路与 BAT 契约保持不变；无控制台（无人值守）时静默降级。
+    """
+    try:
+        with open("CONOUT$", "w", encoding="utf-8", errors="replace") as console:
+            console.write(text + "\n")
+    except OSError:
+        pass
+
+
+def _say(text: str) -> None:
+    """双写一行输出：stdout 进安装日志，CONOUT$ 让屏幕上的用户实时可见。"""
+    print(text, flush=True)
+    _console(text)
+
+
 def _choose_target(explicit: Optional[Path], *, test_mode: bool) -> Path:
     if test_mode:
         if explicit is None:
@@ -79,12 +100,17 @@ def _choose_target(explicit: Optional[Path], *, test_mode: bool) -> Path:
 
 
 def _confirm_fresh_install() -> None:
-    print()
-    print("重要说明：")
-    print("- 这是 V2 全新安装，不读取、不迁移也不删除任何 V1 文件夹或数据库；")
-    print("- 目标目录必须不存在或完全为空；")
-    print("- 如需丢弃旧系统，请由您在安装前自行停止并删除旧目录。")
-    answer = input("确认继续全新安装？请输入 YES：").strip()
+    _console("")
+    _say("重要说明：")
+    _say("- 这是 V2 全新安装，不读取、不迁移也不删除任何 V1 文件夹或数据库；")
+    _say("- 目标目录必须不存在或完全为空；")
+    _say("- 如需丢弃旧系统，请由您在安装前自行停止并删除旧目录。")
+    # 提示必须走 CONOUT$：stdout 被安装 BAT 重定向进日志，写在屏幕上才可见。
+    _console("确认继续全新安装？请输入 YES：")
+    try:
+        answer = input().strip()
+    except EOFError:
+        raise InstallCancelled("没有收到安装确认输入（stdin 已关闭）") from None
     if answer != "YES":
         raise InstallCancelled("用户没有确认 V2 全新安装")
 
@@ -98,9 +124,8 @@ def main(
     tool_root = Path(__file__).resolve().parent.parent
     log = EventLog()
     try:
-        print()
-        print(f"会议室预约系统 V{VERSION} 全新安装")
-        print("正在校验完整安装包，请稍候……")
+        _say(f"会议室预约系统 V{VERSION} 全新安装")
+        _say("正在校验完整安装包，请稍候……")
         bundle = Bundle.load(tool_root)
         test_mode = _test_target is not None
 
@@ -135,6 +160,7 @@ def main(
         if not test_mode:
             assert_service_port_available()
         transaction_arguments = {"health_probe": None} if test_mode else {}
+        _say("校验通过，开始安装（约 1–2 分钟，期间请勿关闭本窗口）……")
         result = InstallTransaction(
             bundle,
             target,
@@ -143,9 +169,9 @@ def main(
             **transaction_arguments,
         ).run()
         print()
-        print(f"V{VERSION} 已安装到：{result.install_root}")
-        print("首次设置完成前，服务只允许本机回环地址访问。")
-        print(f"请在本机打开：{result.setup_url}")
+        _say(f"V{VERSION} 已安装到：{result.install_root}")
+        _say("首次设置完成前，服务只允许本机回环地址访问。")
+        _say(f"请在本机打开：{result.setup_url}")
         if os.name == "nt" and not elevated:
             webbrowser.open(result.setup_url)
         return 0

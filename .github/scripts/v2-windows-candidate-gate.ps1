@@ -143,6 +143,45 @@ $stopEntry = Join-Path $installRoot $stopEntryName
 if (-not (Test-Path -LiteralPath $stopEntry -PathType Leaf)) {
     throw "installed service cleanup entry is missing: $stopEntry"
 }
+
+# T2-B4 回归：所有 BAT 通过单行 powershell -Command 内联执行 PowerShell；
+# 任何一行的语法错误都会让该入口在客户机上完全失效（⑥ 恢复即真实案例）。
+# 这里对解压包与已安装根的每个 -Command 行做 ScriptBlock 语法解析冒烟。
+foreach ($scanRoot in @($formal, $installRoot)) {
+    $batEntries = @(Get-ChildItem -LiteralPath $scanRoot -Recurse -Filter "*.bat" -File -ErrorAction SilentlyContinue)
+    if ($batEntries.Count -eq 0) { throw "no bat entries found under $scanRoot" }
+    $smokeCount = 0
+    foreach ($bat in $batEntries) {
+        $lineNumber = 0
+        $allLines = @(Get-Content -LiteralPath $bat.FullName -Encoding UTF8)
+        foreach ($line in $allLines) {
+            $lineNumber++
+            if ($line -notmatch '-Command "') { continue }
+            $marker = '-Command "'
+            $payload = $line.Substring($line.IndexOf($marker) + $marker.Length).TrimEnd('"')
+            try {
+                $null = [ScriptBlock]::Create($payload)
+            }
+            catch {
+                throw ("BAT embedded PowerShell parse failed: {0}:{1} : {2}" -f $bat.Name, $lineNumber, $_.Exception.Message)
+            }
+            $smokeCount++
+        }
+        $embedMarker = [array]::IndexOf($allLines, "# MRV2-POWERSHELL-BEGIN")
+        if ($embedMarker -ge 0 -and $embedMarker -lt $allLines.Count - 1) {
+            $embedded = ($allLines[($embedMarker + 1)..($allLines.Count - 1)] -join [Environment]::NewLine)
+            try {
+                $null = [ScriptBlock]::Create($embedded)
+            }
+            catch {
+                throw ("BAT embedded block parse failed: {0} (after # MRV2-POWERSHELL-BEGIN) : {1}" -f $bat.Name, $_.Exception.Message)
+            }
+            $smokeCount++
+        }
+    }
+    Write-Host ("embedded PowerShell parse smoke => {0} command lines OK under {1}" -f $smokeCount, $scanRoot)
+}
+
 $stopped = Invoke-CandidateBat $installRoot " " $stopEntryName
 if ($stopped.Code -ne 0) {
     $serviceLog = Join-Path $installRoot "_程序文件\logs\service.log"
