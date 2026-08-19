@@ -159,6 +159,24 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         )
         self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 
+    def test_restore_entry_backup_schema_range_matches_update_core(self) -> None:
+        # ⑥ 从备份恢复.bat 的备份配对校验以 -lt/-gt 硬编码 schema 上下界；
+        # update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS 是唯一真值。两者漂移会让
+        # ⑥ 拒收当前版本的合法备份（T2-B6 真机缺陷即此形态），这里让漂移直接变红。
+        from v2.installer.update_core import SUPPORTED_DATABASE_SCHEMA_VERSIONS
+
+        restore_entry = read("installer/payload_templates/⑥ 从备份恢复.bat")
+        lower = re.search(r"databaseSchemaVersion\s+-lt\s+(\d+)", restore_entry)
+        upper = re.search(r"databaseSchemaVersion\s+-gt\s+(\d+)", restore_entry)
+        self.assertIsNotNone(lower, "⑥ 恢复入口缺少 schema 下界检查")
+        self.assertIsNotNone(upper, "⑥ 恢复入口缺少 schema 上界检查")
+        accepted = set(range(int(lower.group(1)), int(upper.group(1)) + 1))
+        self.assertEqual(
+            accepted,
+            set(SUPPORTED_DATABASE_SCHEMA_VERSIONS),
+            "⑥ 恢复入口的备份 schema 范围与 update_core 支持集不一致",
+        )
+
     def test_installer_and_backend_share_secret_and_health_contracts(self) -> None:
         installer = read("installer/installer_core.py")
         identity = read("backend/v2app/runtime/identity.py")
