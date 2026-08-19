@@ -260,10 +260,12 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /稍后处理/);
   assert.match(app, /const canHandover = !handoverPending && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /drawer\.type === "handover"/);
-  assert.match(app, /api\.getUserDirectory\(\)/);
+  assert.match(app, /api\.getUserDirectory\(drawer\.booking\.id\)/);
+  assert.match(app, /filter\(\(user\) => user\.id !== drawer\.booking\.ownerId\)/);
   assert.match(app, /aria-pressed=\{drawer\.selectedUserId === user\.id\}/);
   assert.match(app, /disabled=\{!selectedUser \|\| handoverActionBusy\}/);
   assert.match(app, /sendHandover\(booking\.id, selectedUser\.id\)/);
+  assert.match(app, /toUserId === currentUser\.id \? "已指派，预约已转入您名下"/);
   assert.doesNotMatch(app, /onClick=\{\(\) => void sendHandover\(booking\.id, user\.id\)\}/);
   assert.match(app, /className="handover-picker-summary"/);
   assert.match(app, /交给谁？/);
@@ -299,8 +301,21 @@ test("change notices require an explicit centered modal with field diffs and dra
   assert.match(app, /if \(!noticeAckBusy\) void acknowledgeChangeNotices\(dueReminders\.changes\)/);
   assert.match(app, /disabled=\{noticeAckBusy\}[\s\S]{0,220}>\{noticeAckBusy \? "正在确认…" : "我知道了"\}/);
   // 抽屉打开期间排队，关闭后立即出现；排队期间只有安静的信息条。
-  assert.match(app, /\{drawer && \(dueReminders\.changes\.length > 0 \|\| dueReminders\.handovers\.length > 0\) && <div className="notice-queue-chip" role="status" aria-live="polite"/);
+  assert.match(app, /\{drawer && \(dueReminders\.changes\.length > 0 \|\| noticeHasHandovers\) && <div className="notice-queue-chip" role="status" aria-live="polite"/);
   assert.match(app, /关闭预约详情后自动打开/);
+});
+
+test("mixed handover and change notices share one scroll body and keep actions independent", () => {
+  assert.match(app, /const noticeMixed = noticeHasHandovers && dueReminders\.changes\.length > 0/);
+  assert.match(app, /className="notice-modal-body"/);
+  assert.match(app, /id="notice-handover-section">\u5de5\u4f5c\u4ea4\u63a5/);
+  assert.match(app, /id="notice-change-section">\u9884\u7ea6\u53d8\u66f4/);
+  assert.match(app, /className="notice-modal-combined-foot"/);
+  assert.match(app, />\u4ea4\u63a5\u7a0d\u540e\u5904\u7406<\/button>/);
+  assert.match(app, /"\u786e\u8ba4\u5168\u90e8\u53d8\u66f4"/);
+  assert.match(app, /data-initial-focus disabled=\{noticeAckBusy\} onClick=\{deferVisibleHandovers\}/);
+  assert.match(app, /const noticeQueueLabel = dueReminders\.changes\.length > 0 && noticeHasHandovers/);
+  assert.match(app, /\$\{dueReminders\.changes\.length\} 条预约变更、\$\{visibleHandoverReminders\.length\} 条工作交接待处理/);
 });
 
 test("the frozen empty-state action consumes a valid default room", () => {

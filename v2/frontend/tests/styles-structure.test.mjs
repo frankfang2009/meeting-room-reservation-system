@@ -41,7 +41,7 @@ const expectedFiles = [
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
 // V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
 // 独立工作交接页（dashboard.css）。
-const frozenSourceSha256 = "815d9e93ba1afe3c1f428299dd44eb2da2d62885b9ee1beb1a59a9348c548ab5";
+const frozenSourceSha256 = "dacc01bd68ecf36f0239274a20139b3746b224b8861861237551a8351d9a4768";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -108,6 +108,15 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("stacked notices use one bounded scroll body and a responsive combined footer", () => {
+  const flows = fs.readFileSync(path.join(stylesRoot, "production-flows.css"), "utf8");
+  assert.match(flows, /\.notice-modal-body \{[\s\S]*?overflow-y: auto;[\s\S]*?scrollbar-gutter: stable;/);
+  assert.doesNotMatch(flows, /\.notice-modal-list \{[^}]*overflow-y: auto;/);
+  assert.match(flows, /\.notice-modal\.mixed \{[\s\S]*?width: 760px;/);
+  assert.match(flows, /\.notice-modal-combined-foot \{[\s\S]*?justify-content: space-between;/);
+  assert.match(flows, /@media \(max-width: 680px\)[\s\S]*?\.notice-modal-combined-foot \{[\s\S]*?flex-direction: column;/);
 });
 
 test("rail reminder count sits outside the reservation icon", () => {

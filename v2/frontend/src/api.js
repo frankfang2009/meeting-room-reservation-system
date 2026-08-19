@@ -187,7 +187,7 @@ export const api = {
     method: "DELETE",
   }),
   getHandoverRequests: () => request("/handover-requests"),
-  getUserDirectory: () => request("/users/directory"),
+  getUserDirectory: (reservationId) => request(query("/users/directory", { reservationId })),
 
   getSystem: () => request("/admin/system"),
   checkForUpdate: () => request("/admin/system/update-check", { method: "POST" }),
