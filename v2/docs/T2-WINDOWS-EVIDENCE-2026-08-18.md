@@ -65,6 +65,26 @@
 | T2-B7 | ⑥ 恢复后服务重启等待两层缺陷：a) 30 秒窗口 < 真机冷启动（冻结 runtime+Defender 扫描）；b) **Windows PowerShell 5.1 下 `$ErrorActionPreference='Stop'` 使原生命令 stderr 直接变 NativeCommandError 异常**——服务未起时 `service --check` 必写 stderr，等待循环首次迭代即中断（窗口加长也无效）；CI 用 pwsh 7 无此行为故从未暴露 | 已修复：窗口对齐 120 秒；两处原生调用局部放宽偏好；循环改为 TCP 快探 8080 就绪后才做身份终验 |
 | T2-B8（观察） | ⑥ 恢复成功（rc=0、数据完好）后服务在数分钟内停止一次（service.log 09:21:00 stop 之后无 start 记录），`① 启动系统.bat` 一键救活；未复现/未定位（疑任务 Start 与 Disabled 时序或会话清理连带）；修复版 ⑥ 后续运行未再出现 | 记录待观察；如复现建议查 TaskScheduler 会话作业对象行为 |
 
+## v2.3.0 标签产物定点复测（2026-08-19，任务书 `v2/docs/T2-V230-SPOT-TASK.md`@`codex/t2-v230-spot`）
+
+编号说明：任务书写「E85 起编号」，但其后 RELEASE-CHECKLIST 已占用 E83–E87（发布与 V2.4.0 开发证据），本段顺延从 E88 起。
+
+| E编号 | 测试事项 | 结果 |
+|---|---|---|
+| E88 | 标签产物核验与 T1 全新安装腿（tag run 32207285782 产物，检出于 `v2.3.0` 标签 `4aa3df3c`） | 安装包/累计升级包 SHA-256 与任务书要求逐字节一致（`c6c36f1b…dd80` / `e163f21a…d43c`）；机器四件套清理全净（见 T2-B1 升级注记）；`v2-windows-acceptance.ps1` 对标签安装包 **12 步全绿 `MRV2_T1=PASS` rc=0**（transcript `spot2-t1-*.log`） |
+| E89 | ⑥ 恢复闭环（B4/B6/B7 在最终标签产物上的回归） | 两次实弹：a) 验收留下的损坏 db 现场，⑥ rc=0 `restored:true` 恢复至最新备份（服务未自动重启属设计——`serviceWasRunning=false` 时保持原停机状态，transcript `spot3/spot4`）；b) 完整闭环：UI 创建预约 V230-SPOT-001（2026-08-20 09:00 验收笔录室一）→ ② 备份 rc=0（backups 3→4）→ ④ 停服+破坏 db → ⑥ 喂 RESTORE **rc=0**（选中最新备份 00000004、pre-restore 快照）→ 四项验证全过：成功文案、`/healthz` ok、预约回归（API 复核）、install_id 前后一致 `469e0458…`（transcript `spot6-diag-rescue-loop-*.log`、`spot7-verify.log`） |
+| E90 | 新发现 T2-B9（产品，高）：服务计划任务默认电池策略导致笔记本自停 | 任务设置实测 `DisallowStartIfOnBatteries=True`、`StopIfGoingOnBatteries=True`（注册时未显式禁用，任务计划程序默认值）；测试机为 DELL 笔记本（AC 在线 100% 时仍发生瞬时电源事件）——复测期间服务三次自停（spot5/6 两轮 STEP D 与 11:57 一次），与 T2-B8 观察合并定性：boot 触发+持续供电下驻留正常，电源波动即被任务计划程序终止。建议：注册任务时设置 `-AllowStartIfOnBatteries`+`-DontStopIfGoingOnBatteries`（服务器角色），并在 T1 验收补断言 |
+| — | T2-B1 升级注记（测试方法） | PS 注册表 provider 在提权 pwsh 会话对 `HKLM\Software\MeetingRoomReservationV2` **间歇性 Test-Path=False 而键实际存在**（spot1 现场：if 守卫被跳过导致清理不净→安装 RC_6）；清理脚本已改为无条件 `reg.exe delete` + `reg.exe query` 循环验证（以 reg.exe 视角为准），复测 PHASE 1 `reg query confirms key gone` |
+
+## V2.4.0 Windows 真机测试（2026-08-19，main `27e963f` 候选）
+
+| E编号 | 测试事项 | 结果 |
+|---|---|---|
+| E91 | V2.4.0 候选构建与 T1 全新安装腿（run 32214468178，workflow_dispatch from main；检出于 main 使 VERSION=2.4.0 匹配产物） | 首次构建失败于 candidate-linux `test_deterministic_across_two_builds`（THIRD-PARTY-NOTICES.txt 两次构建 diff，**flaky**，重跑全绿）；产物 SHA-256：安装包 `1bfc925f…d7a4b`、累计升级包 `ba0e8b09…a66b`；机器复测后已清空，`v2-windows-acceptance.ps1` 对 V2.4.0 候选 **12 步全绿 `MRV2_T1=PASS` rc=0**（transcript `v240-t1-*.log`）；⑥ 恢复在 V2.4.0 产物上 rc=0（`restored:true`，服务停属设计：验收现场 `serviceWasRunning=false`） |
+| E92 | 工作交接 API 全链路（管理员建员工 王五/赵六 → 员工视角） | 发起 `POST /reservations/{id}/handover`（HTTP 200，请求 pending、预约锁定 canEdit/canCancel=false）；重复发起同一预约 → **409 HANDOVER_REQUEST_EXISTS**（一预约一待处理请求）；接受（赵六）→ **owner 王五→赵六**、status active；拒绝（另一单）→ **owner 回退王五**；`GET /handover-requests` 双视角投影正确（赵六 incoming=待确认、王五 outgoing=我发起）；`GET /users/directory` 仅 id/name/department（无用户名，脱敏投影）；错误响应的 `error.requestId` 为追踪 ID 非交接请求 ID（测试脚本曾误用，已按台账定位真实 ID 复测） |
+| E93 | 工作交接 UI（真实浏览器，员工 赵六 登录） | **交接弹窗**（alertdialog「工作交接」）：「王五 希望将这场预约交接给你」+ 当事人/事项/时间 + 归属说明文案，三操作 接受交接/不接受/稍后处理；**主导航徽标**「工作交接 · 1 条交接等待确认」；**台账页**：交接概览（待我确认 1 / 我发起的 0）+「待我确认」「我发起的」两段开放台账；员工导航无管理项（笔录室/用户管理/系统状态不可见）；截图 `shots/v240-handover-dialog.png`、`v240-handover-page.png` |
+| — | T2-B9 状态核验（服务任务电池策略） | **V2.4.0（main `27e963f`）未修**：`installer_core.py:1330` 的 `New-ScheduledTaskSettingsSet` 仍无 `-AllowStartIfOnBatteries`/`-DontStopIfGoingOnBatteries`——笔记本部署电源波动仍会触发服务自停（E90 现场），建议随 V2.4.0 正式发布前修复 |
+
 ## 六个 [人工] 动作状态
 
 1. 点 UAC「是」：**已完成**（gh 工具组合、真客户安装、③/⑥ 提权、A5 重启后组合，共 8+ 次）
