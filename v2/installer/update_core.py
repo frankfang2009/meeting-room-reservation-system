@@ -49,6 +49,7 @@ try:
         canonical_uuid4,
         is_reparse_or_link,
         json_bytes,
+        production_install_root,
         records_for_tree,
         safe_relative_path,
         sha256_bytes,
@@ -81,6 +82,7 @@ except ImportError:
         canonical_uuid4,
         is_reparse_or_link,
         json_bytes,
+        production_install_root,
         records_for_tree,
         safe_relative_path,
         sha256_bytes,
@@ -186,9 +188,6 @@ def resolve_install_root(explicit: Optional[Path] = None) -> Path:
 
     if explicit is not None:
         return Path(explicit)
-    environment = os.environ.get("MEETING_ROOM_V2_INSTALL_ROOT")
-    if environment:
-        return Path(environment)
     if os.name == "nt":
         try:
             import winreg
@@ -197,13 +196,25 @@ def resolve_install_root(explicit: Optional[Path] = None) -> Path:
                 value, kind = winreg.QueryValueEx(key, "InstallRoot")
             if kind != winreg.REG_SZ or not isinstance(value, str) or not value:
                 raise UpdatePolicyError("V2 安装根注册表记录无效")
-            return Path(value)
         except FileNotFoundError as error:
             raise UpdatePolicyError(
                 "没有 V2 安装根登记；必须由用户明确提供目录，更新器不会扫描磁盘"
             ) from error
         except OSError as error:
             raise UpdatePolicyError("无法读取 V2 安装根登记") from error
+        registered = Path(value).expanduser()
+        if not registered.is_absolute():
+            raise UpdatePolicyError("V2 安装根注册表记录无效")
+        try:
+            resolved = registered.resolve(strict=True)
+            expected = production_install_root().resolve(strict=True)
+        except OSError as error:
+            raise UpdatePolicyError("V2 安装根注册表记录无效") from error
+        if os.path.normcase(os.path.abspath(str(resolved))) != os.path.normcase(
+            os.path.abspath(str(expected))
+        ):
+            raise UpdatePolicyError("V2 安装根登记与固定生产目录不一致")
+        return resolved
     raise UpdatePolicyError("必须明确提供 V2 安装目录；更新器不会扫描磁盘")
 
 
@@ -691,6 +702,11 @@ class UpdateSystemController:
     def capture_and_stop(self, identity: V2InstallIdentity) -> Mapping[str, Any]:
         raise NotImplementedError
 
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
+        raise NotImplementedError
+
     def start_for_health(self, identity: V2InstallIdentity) -> None:
         raise NotImplementedError
 
@@ -729,6 +745,11 @@ class PassiveUpdateSystemController(UpdateSystemController):
         self.backup_running = False
         return state
 
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
+        return self.capture_and_stop(identity)
+
     def start_for_health(self, identity: V2InstallIdentity) -> None:
         del identity
         self.running = True
@@ -758,6 +779,16 @@ class WindowsUpdateSystemController(UpdateSystemController):
         self.base = WindowsSystemController()
 
     def capture_and_stop(self, identity: V2InstallIdentity) -> Mapping[str, Any]:
+        return self._capture_and_stop(identity, restore_on_error=True)
+
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
+        return self._capture_and_stop(identity, restore_on_error=False)
+
+    def _capture_and_stop(
+        self, identity: V2InstallIdentity, *, restore_on_error: bool
+    ) -> Mapping[str, Any]:
         script = r"""
 $ErrorActionPreference='Stop'
 $identity='MeetingRoomReservationV2:'+$env:MRV2_INSTALL_ID
@@ -770,6 +801,9 @@ $manual=Get-NetFirewallRule -DisplayName $env:MRV2_FW_MANUAL -ErrorAction Stop
 $background=Get-NetFirewallRule -DisplayName $env:MRV2_FW_BACKGROUND -ErrorAction Stop
 foreach ($rule in @($manual,$background)) { if ([string]$rule.Description -ne $identity) { throw 'V2 防火墙身份不一致。' } }
 $state=[ordered]@{service_running=([string]$main.State -eq 'Running');service_task_enabled=([string]$main.State -ne 'Disabled');backup_task_enabled=([string]$backup.State -ne 'Disabled');backup_task_running=([string]$backup.State -eq 'Running');manual_firewall_enabled=([string]$manual.Enabled -eq 'True');background_firewall_enabled=([string]$background.Enabled -eq 'True')}
+"""
+        if restore_on_error:
+            script += r"""
 try {
   foreach ($task in @($main,$backup)) { Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue; Disable-ScheduledTask -InputObject $task | Out-Null }
   foreach ($rule in @($manual,$background)) { Disable-NetFirewallRule -InputObject $rule }
@@ -782,6 +816,17 @@ try {
   if ($state.backup_task_running) { Start-ScheduledTask -InputObject $backup }
   throw
 }
+"""
+        else:
+            script += r"""
+foreach ($task in @($main,$backup)) { Stop-ScheduledTask -InputObject $task -ErrorAction Stop }
+foreach ($task in @($main,$backup)) { Disable-ScheduledTask -InputObject $task -ErrorAction Stop | Out-Null }
+foreach ($rule in @($manual,$background)) { Disable-NetFirewallRule -InputObject $rule -ErrorAction Stop }
+$stoppedMain=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
+$stoppedBackup=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_BACKUP_TASK_NAME -ErrorAction Stop
+if ([string]$stoppedMain.State -eq 'Running' -or [string]$stoppedBackup.State -eq 'Running') { throw 'V2 任务停止状态无法验证。' }
+"""
+        script += r"""
 $state | ConvertTo-Json -Compress
 """
         output = self.base._run_powershell(
@@ -1387,7 +1432,9 @@ class V2UpdateTransaction:
         # 版本文件是提交点。若三份身份已经全部指向目标版本，
         # 中断只可恢复原运行状态、补写回执和清理，不得回滚可能已产生的新数据。
         if identity.version == VERSION:
+            self.controller.verify(identity)
             self.controller.capture_and_stop(identity)
+            self.controller.verify(identity)
             self.controller.restore(identity, run_state)
             self._cleanup_displaced_dirs(identity.root)
             self._finalize_receipt(identity, dict(state), state_path)
@@ -1399,7 +1446,9 @@ class V2UpdateTransaction:
             raise UpdatePolicyError("未完成更新事务的源版本已变化")
         stage = str(state["stage"])
         if stage == "service_stopped_pre_snapshot":
+            self.controller.verify(identity)
             self.controller.capture_and_stop(identity)
+            self.controller.verify(identity)
             self.controller.restore(identity, run_state)
         else:
             snapshot_manifest = _read_json(
@@ -1410,7 +1459,7 @@ class V2UpdateTransaction:
                 "tree_sha256"
             ):
                 raise UpdatePolicyError("未完成更新事务的数据快照摘要不一致")
-            self.controller.capture_and_stop(identity)
+            self.controller.capture_and_stop_fail_closed(identity)
             self._restore(
                 identity,
                 rollback,
@@ -1485,6 +1534,7 @@ class V2UpdateTransaction:
         )
         with ExclusiveLock(lock_path):
             try:
+                self.controller.verify(identity)
                 if self.online_backup is not None:
                     self.online_backup(identity)
                 rollback.mkdir(parents=True)
@@ -1523,6 +1573,7 @@ class V2UpdateTransaction:
                 final_identity = load_v2_identity(identity.root)
                 if final_identity.install_id != identity.install_id or final_identity.version != VERSION:
                     raise UpdateRollbackError("V2 更新提交后安装身份不一致")
+                self.controller.verify(final_identity)
                 self.controller.restore(final_identity, run_state)
                 self._stage(state, "run_state_restored", state_path)
                 receipt = self._finalize_receipt(final_identity, state, state_path)
@@ -1558,6 +1609,7 @@ class V2UpdateTransaction:
                             rollback_errors.append(str(rollback_error))
                 elif resources_stopped:
                     try:
+                        self.controller.verify(identity)
                         self.controller.restore(identity, run_state)
                     except BaseException as rollback_error:
                         rollback_errors.append(str(rollback_error))
