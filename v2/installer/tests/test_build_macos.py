@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import gzip
 import tarfile
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from v2.installer.build_macos_dmg import staging_from_zip
 from v2.installer.build_macos_package import (
@@ -47,7 +49,9 @@ class MacOSRuntimeBuilderTests(unittest.TestCase):
 
     def _tarball(self) -> Path:
         tarball = self.root / "cpython.tar.gz"
-        with tarfile.open(tarball, "w:gz") as archive:
+        with tarball.open("wb") as raw, gzip.GzipFile(
+            filename="", mode="wb", fileobj=raw, mtime=0
+        ) as compressed, tarfile.open(fileobj=compressed, mode="w") as archive:
             def add(name: str, data: bytes, *, mode: int = 0o644) -> None:
                 info = tarfile.TarInfo(f"python/{name}")
                 info.size = len(data)
@@ -83,6 +87,13 @@ class MacOSRuntimeBuilderTests(unittest.TestCase):
             encoding="utf-8",
         )
         return tarball, self.root / "wheelhouse", lock
+
+    def test_synthetic_cpython_tarball_is_independent_of_wall_clock(self) -> None:
+        with mock.patch.object(gzip.time, "time", return_value=1_000):
+            first = self._tarball().read_bytes()
+        with mock.patch.object(gzip.time, "time", return_value=2_000):
+            second = self._tarball().read_bytes()
+        self.assertEqual(first, second)
 
     def test_builds_slimmed_runtime_with_materialized_bin_links(self) -> None:
         tarball, wheelhouse, lock = self._inputs()

@@ -20,6 +20,7 @@ const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.
 const settingsStyles = fs.readFileSync(path.join(root, "src/styles/settings.css"), "utf8");
 const systemStyles = fs.readFileSync(path.join(root, "src/styles/system.css"), "utf8");
 const systemExtensionStyles = fs.readFileSync(path.join(root, "src/styles/system-extensions.css"), "utf8");
+const productionFlowsStyles = fs.readFileSync(path.join(root, "src/styles/production-flows.css"), "utf8");
 const designContract = fs.readFileSync(path.join(root, "DESIGN-CONTRACT.md"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
@@ -258,6 +259,7 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /decideHandover\(item\.handoverRequestId, "decline"\)/);
   assert.match(app, /deferVisibleHandovers/);
   assert.match(app, /稍后处理/);
+  assert.match(app, /const deferVisibleHandovers = \(\) => \{[\s\S]{0,500}void refreshHandoverBoard\(\);/);
   assert.match(app, /const canHandover = !handoverPending && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /drawer\.type === "handover"/);
   assert.match(app, /api\.getUserDirectory\(drawer\.booking\.id\)/);
@@ -318,6 +320,47 @@ test("mixed handover and change notices share one scroll body and keep actions i
   assert.match(app, /handoverNoticeCount \? `\$\{handoverNoticeCount\} 条工作交接`/);
 });
 
+test("admin and token submissions expose independent repeat-submit guards", () => {
+  for (const state of ["roomSaving", "userSaving", "passwordResetting", "tokenCreating"]) {
+    assert.match(app, new RegExp(`const \\[${state}, set${state[0].toUpperCase()}${state.slice(1)}\\] = useState\\(false\\)`));
+  }
+  assert.match(app, /if \(roomSaving\) return;[\s\S]{0,220}setRoomSaving\(true\)[\s\S]{0,700}finally \{\s*setRoomSaving\(false\)/);
+  assert.match(app, /if \(userSaving\) return;[\s\S]{0,220}setUserSaving\(true\)[\s\S]{0,850}finally \{\s*setUserSaving\(false\)/);
+  assert.match(app, /if \(passwordResetting\) return;[\s\S]{0,220}setPasswordResetting\(true\)[\s\S]{0,850}finally \{\s*setPasswordResetting\(false\)/);
+  assert.match(app, /if \(tokenCreating\) return;[\s\S]{0,220}setTokenCreating\(true\)[\s\S]{0,700}finally \{\s*setTokenCreating\(false\)/);
+  assert.match(app, /<RoomAdminForm[\s\S]{0,260}busy=\{roomSaving\}/);
+  assert.match(app, /<UserAdminForm[\s\S]{0,260}busy=\{userSaving\}/);
+  assert.match(adminForms, /disabled=\{busy\}[\s\S]{0,120}\{busy \? "正在保存…"/);
+  assert.match(app, /system-token-form[\s\S]{0,1200}disabled=\{tokenCreating\}/);
+});
+
+test("handover focus and duplicate-name labels favor safe neutral actions", () => {
+  assert.match(app, /noticeOnlyHandoverRequests[\s\S]{0,450}handover-defer-button" data-initial-focus/);
+  assert.doesNotMatch(app, /notice-item-ack" data-initial-focus=\{index === 0 && acknowledgementNotices\.length === 0/);
+  assert.match(app, /function disambiguateDirectoryUsers\(users\)/);
+  assert.match(app, /sameNameAndDepartment[\s\S]{0,500}disambiguator: `同名人员 \$\{index \+ 1\}`/);
+  assert.match(app, /user\.disambiguator \? <small>\{user\.disambiguator\}<\/small>/);
+  const handoverDirectoryMarkup = app.match(/directory\.length \? <ul className="handover-picker-list"[\s\S]*?<\/ul>/)?.[0] || "";
+  assert.doesNotMatch(handoverDirectoryMarkup, /user\.username/);
+  assert.match(productionSource, /临近提醒与到达提醒到达时播放一声温和的轻提示/);
+  assert.doesNotMatch(productionSource, /临近提醒与变更通知到达时播放一声温和的轻提示/);
+});
+
+test("reminder and history races are bounded before applying asynchronous results", () => {
+  assert.match(app, /const dueRemindersRequestRef = useRef\(0\)/);
+  assert.match(app, /const requestNumber = dueRemindersRequestRef\.current \+ 1;[\s\S]{0,120}dueRemindersRequestRef\.current = requestNumber/);
+  assert.match(app, /api\.getDueReminders\(\)[\s\S]{0,500}if \(dueRemindersRequestRef\.current !== requestNumber\) return false;[\s\S]{0,500}setDueReminders/);
+  assert.match(app, /const previousMonth = monthKey\(new Date\(year, month - 2, 1\)\);[\s\S]{0,220}if \(previousMonth < earliestMonth\) return/);
+  assert.match(app, /previousHistoryMonth\.id >= historyMonths\.at\(-1\)\.id[\s\S]{0,120}<button className="more-bookings-button history-more"/);
+});
+
+test("arrival reminders wait for drawers and modal layering stays authoritative", () => {
+  assert.match(app, /if \(!arrivalNotice \|\| drawer\) return undefined/);
+  assert.match(app, /dueReminders\.upcoming\.some\(\(item\) => item\.id === arrivalNotice\.booking\.id\)/);
+  assert.match(app, /\[arrivalNotice, drawer, dueReminders\.upcoming\]/);
+  assert.match(productionFlowsStyles, /\.notice-modal-layer \{[\s\S]{0,100}z-index: 110;/);
+});
+
 test("administrator assignments notify the receiver without a reject action", () => {
   assert.match(app, /const assignments = items\.filter\(\(item\) => item\.kind === "assignment"\)/);
   assert.match(app, /const assignmentNotices = dueReminders\.assignments/);
@@ -374,7 +417,7 @@ test("reservation and history views consume opaque cursor pages", () => {
 
 test("history appends older months in place with the same filters and dividers", () => {
   assert.match(app, /api\.getHistory\(\{ month, ownerId:[\s\S]{0,260}roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery\.trim\(\), pageSize: 50, cursor \}\)/);
-  assert.match(app, /loadHistory\(\{ append: true, month: monthKey\(new Date\(year, month - 2, 1\)\) \}\)/);
+  assert.match(app, /const previousMonth = monthKey\(new Date\(year, month - 2, 1\)\)[\s\S]{0,260}if \(previousMonth < earliestMonth\) return;[\s\S]{0,120}loadHistory\(\{ append: true, month: previousMonth \}\)/);
   assert.match(app, /className="history-month-divider" role="separator">\{section\.label\}/);
   assert.match(app, /historySections\.map\(\(section, sectionIndex\)/);
   assert.match(app, /onClick=\{loadPreviousHistoryMonth\}/);

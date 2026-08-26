@@ -133,6 +133,19 @@ const EMPTY_BOOKING = {
   tagId: "",
 };
 
+function disambiguateDirectoryUsers(users) {
+  return users.map((user) => {
+    const sameNameAndDepartment = users
+      .filter((candidate) => String(candidate.name || "").trim() === String(user.name || "").trim()
+        && String(candidate.department || "").trim() === String(user.department || "").trim())
+      .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+    const index = sameNameAndDepartment.findIndex((candidate) => candidate.id === user.id);
+    return sameNameAndDepartment.length > 1
+      ? { ...user, disambiguator: `同名人员 ${index + 1}` }
+      : user;
+  });
+}
+
 function ToastIcon({ tone }) {
   const Icon = tone === "success" ? CheckCircle : tone === "error" ? WarningCircle : Info;
   return <Icon size={20} weight="fill" aria-hidden="true" />;
@@ -1030,6 +1043,10 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [auditUnreadCount, setAuditUnreadCount] = useState(0);
   const [tokens, setTokens] = useState([]);
   const [tokenRevokingId, setTokenRevokingId] = useState("");
+  const [tokenCreating, setTokenCreating] = useState(false);
+  const [roomSaving, setRoomSaving] = useState(false);
+  const [userSaving, setUserSaving] = useState(false);
+  const [passwordResetting, setPasswordResetting] = useState(false);
   const [roomDeleteBusy, setRoomDeleteBusy] = useState(false);
   const [bookingEvents, setBookingEvents] = useState([]);
   const [bookingEventsState, setBookingEventsState] = useState("idle");
@@ -1059,6 +1076,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const calendarAbortRef = useRef(null);
   const calendarDataDateRef = useRef("");
   const historyRequestRef = useRef(0);
+  const dueRemindersRequestRef = useRef(0);
   const historyUserSelectRef = useRef(null);
   const auditRequestRef = useRef(0);
   const auditHiddenRef = useRef(false);
@@ -1343,8 +1361,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     if (historyLoadingMore) return;
     const oldestMonth = historySections.at(-1)?.id || historyMonth;
     const [year, month] = oldestMonth.split("-").map(Number);
-    loadHistory({ append: true, month: monthKey(new Date(year, month - 2, 1)) });
-  }, [historyLoadingMore, historyMonth, historySections, loadHistory]);
+    const previousMonth = monthKey(new Date(year, month - 2, 1));
+    const earliestMonth = monthKey(new Date(businessDate.getFullYear(), businessDate.getMonth() - 11, 1));
+    if (previousMonth < earliestMonth) return;
+    loadHistory({ append: true, month: previousMonth });
+  }, [businessDate, historyLoadingMore, historyMonth, historySections, loadHistory]);
 
   useEffect(() => { if (!initialBootstrap) loadBootstrap(); }, [initialBootstrap, loadBootstrap]);
   useEffect(() => { if (bootstrap) loadCalendar(); }, [bootstrap, loadCalendar]);
@@ -1362,7 +1383,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       .then((result) => {
         if (cancelled) return;
         // 服务端按预约上下文过滤；这里再排除一次，避免旧缓存或竞态把当前预约者带回列表。
-        setHandoverDirectory((result?.users || []).filter((user) => user.id !== drawer.booking.ownerId));
+        setHandoverDirectory(disambiguateDirectoryUsers(
+          (result?.users || []).filter((user) => user.id !== drawer.booking.ownerId),
+        ));
         setHandoverDirectoryState("ready");
       })
       .catch((error) => {
@@ -1381,8 +1404,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     return () => window.clearInterval(timer);
   }, [activeView, loadRooms, permissions.manageRooms]);
   const refreshDueReminders = useCallback(async () => {
+    const requestNumber = dueRemindersRequestRef.current + 1;
+    dueRemindersRequestRef.current = requestNumber;
     try {
       const items = unwrapItems(await api.getDueReminders());
+      if (dueRemindersRequestRef.current !== requestNumber) return false;
       const changes = items.filter((item) => item.kind === "change");
       const upcoming = items.filter((item) => item.kind === "upcoming");
       const handovers = items.filter((item) => item.kind === "handover");
@@ -1401,6 +1427,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       }
       return true;
     } catch (error) {
+      if (dueRemindersRequestRef.current !== requestNumber) return false;
       // 连续失败只提示一次，成功后复位；避免每 60 秒的错误弹窗刷屏。
       if (!reminderPollFailedRef.current) {
         reminderPollFailedRef.current = true;
@@ -1433,10 +1460,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     return () => window.clearTimeout(timer);
   }, [toast]);
   useEffect(() => {
-    if (!arrivalNotice) return undefined;
+    if (!arrivalNotice || drawer) return undefined;
+    const stillDue = dueReminders.upcoming.some((item) => item.id === arrivalNotice.booking.id);
+    if (!stillDue) {
+      setArrivalNotice(null);
+      return undefined;
+    }
     const timer = window.setTimeout(() => setArrivalNotice(null), 5200);
     return () => window.clearTimeout(timer);
-  }, [arrivalNotice]);
+  }, [arrivalNotice, drawer, dueReminders.upcoming]);
   // 需处理弹窗：变更通知、普通交接请求和管理员指派结果共用同一焦点陷阱。
   // 普通请求可以暂后处理且绝不会因 Esc 被接受/拒绝；管理员指派已经生效，
   // 接收人只能确认知晓，不能拒绝。
@@ -1475,6 +1507,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       ...current,
       ...visibleHandoverReminders.map((item) => item.handoverRequestId),
     ]));
+    void refreshHandoverBoard();
     setToast("交接请求已保留在「工作交接」，可稍后处理", "info");
   };
   useFocusTrap(
@@ -2216,7 +2249,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     </div>}</div></div></header>
       <div className="history-layout"><div className="history-month-nav" aria-label="历史月份"><button className="history-month-step" aria-label="上一个月" disabled={historyMonth <= historyMonths.at(-1).id} onClick={() => stepMonth(-1)}><CaretLeft size={21} /></button><button className="history-month-step" aria-label="下一个月" disabled={historyMonth >= historyMonths[0].id} onClick={() => stepMonth(1)}><CaretRight size={21} /></button><div className="history-month-select"><button ref={historyMonthPopover.triggerRef} className="history-month-button" aria-label={`选择月份，当前${selectedMonthLabel}`} aria-expanded={historyMonthOpen} aria-haspopup="true" onClick={() => setHistoryMonthOpen((open) => !open)}><span>{selectedMonthLabel}</span><CaretDown size={17} /></button>{historyMonthOpen && <div ref={historyMonthPopover.popoverRef} className="history-month-menu" role="group" aria-label="可选月份">{historyMonths.map((month) => <button className={month.id === historyMonth ? "selected" : ""} aria-pressed={month.id === historyMonth} key={month.id} onClick={() => { setHistoryMonth(month.id); historyMonthPopover.closeAndRestoreFocus(); }}>{month.label}</button>)}</div>}</div><span className="history-count">{historyPage.total} 场</span></div>
         <section className="history-list">{loading.history ? <div className="history-skeleton" role="status" aria-label="正在读取预约记录">{[0, 1, 2, 3, 4].map((row) => <div className="history-skeleton-row" aria-hidden="true" key={row}><span className="day" /><span className="body"><i className="line" /><i className="case" /></span></div>)}</div> : history.length ? <>{historySections.map((section, sectionIndex) => <div className="history-month-section" key={section.id}>{sectionIndex > 0 && <div className="history-month-divider" role="separator">{section.label}</div>}{section.items.map((booking) => <button className={`history-row ${booking.status === "cancelled" ? "cancelled" : ""}`} key={booking.id} onClick={() => openDetails(booking, true)}><span className="history-date-anchor"><strong>{String(parseDate(booking.date).getDate()).padStart(2, "0")}</strong><small>{relativeDayLabel(booking.date, businessClock.date) || dateLabel(booking.date).split("· ")[1]}</small></span><span className="history-booking-summary"><strong><span className="history-time">{booking.start}–{booking.end}</span><i aria-hidden="true">·</i><span className="history-room">{booking.roomName}</span></strong><small>{booking.caseNumber}</small></span><span className={`history-row-end ${booking.status === "cancelled" ? "cancelled" : ""}`} style={tagStyle(tagFor(booking))}><span className="history-statuses">{booking.status === "cancelled" && <span className="history-cancelled-status">已取消</span>}{booking.status === "active" && booking.handoverState && <span className={`history-handover-status ${booking.handoverState}`}>{booking.handoverState === "pending" ? "交接中" : "已交接"}</span>}{booking.status !== "cancelled" && !booking.handoverState && <i className="history-tag-dot" aria-hidden="true" />}</span><CaretRight size={23} /></span></button>)}{section.nextCursor && <button className="history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={() => loadMoreHistory(section)}>{historyLoadingMore === section.id ? <><CircleNotch className="spin" size={17} />正在加载</> : `加载更多 · 已显示 ${section.items.length} / ${section.total}`}</button>}</div>)}</> : <div className="history-empty history-zero-state"><ClockCounterClockwise size={42} weight="thin" /><h2>这个月还没有预约记录</h2><p>切换月份，或调整搜索和筛选条件。</p></div>}</section>
-        {!loading.history && <button className="more-bookings-button history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={loadPreviousHistoryMonth}>{historyLoadingMore === previousHistoryMonth.id ? <><CircleNotch className="spin" size={17} /><span>正在加载{previousHistoryMonth.label}</span></> : <><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></>}</button>}
+        {!loading.history && previousHistoryMonth.id >= historyMonths.at(-1).id && <button className="more-bookings-button history-more" type="button" disabled={Boolean(historyLoadingMore)} onClick={loadPreviousHistoryMonth}>{historyLoadingMore === previousHistoryMonth.id ? <><CircleNotch className="spin" size={17} /><span>正在加载{previousHistoryMonth.label}</span></> : <><span>加载{previousHistoryMonth.label}的记录</span><CaretRight size={18} /></>}</button>}
       </div>
     </main>;
   }
@@ -2241,11 +2274,13 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function saveRoom(event) {
     event.preventDefault();
+    if (roomSaving) return;
     const errors = validateRoomAdminForm(drawer.form);
     if (Object.keys(errors).length) {
       showDrawerErrors(errors);
       return;
     }
+    setRoomSaving(true);
     try {
       if (drawer.type === "room-edit") await api.updateRoom(drawer.room.id, drawer.form);
       else await api.createRoom(drawer.form);
@@ -2254,6 +2289,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
       else handleError(error, "保存笔录室失败");
+    } finally {
+      setRoomSaving(false);
     }
   }
 
@@ -2329,11 +2366,13 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function saveUser(event) {
     event.preventDefault();
+    if (userSaving) return;
     const errors = validateUserAdminForm(drawer.form, { creating: drawer.type === "user-create" });
     if (Object.keys(errors).length) {
       showDrawerErrors(errors);
       return;
     }
+    setUserSaving(true);
     try {
       if (drawer.type === "user-edit") await api.updateUser(drawer.user.id, { name: drawer.form.name.trim(), department: drawer.form.department.trim(), role: drawer.form.role, enabled: drawer.form.enabled });
       else await api.createUser({ ...drawer.form, name: drawer.form.name.trim(), username: drawer.form.username.trim(), department: drawer.form.department.trim() });
@@ -2342,16 +2381,20 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       const fields = adminApiFieldErrors(error);
       if (fields) showDrawerErrors(fields);
       else handleError(error, error.code === "LAST_ADMIN_REQUIRED" ? "必须保留至少一名启用管理员" : "保存用户失败");
+    } finally {
+      setUserSaving(false);
     }
   }
 
   async function resetPassword(event) {
     event.preventDefault();
+    if (passwordResetting) return;
     const errors = validatePasswordReset(drawer.form.password);
     if (Object.keys(errors).length) {
       showDrawerErrors(errors);
       return;
     }
+    setPasswordResetting(true);
     try {
       const result = await api.resetUserPassword(drawer.user.id, drawer.form.password);
       setDrawer(null);
@@ -2365,6 +2408,8 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
     catch (error) {
       if (error.fields) showDrawerErrors(error.fields);
       else handleError(error, "重置密码失败");
+    } finally {
+      setPasswordResetting(false);
     }
   }
 
@@ -2506,12 +2551,15 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
 
   async function createIntegrationToken(event) {
     event.preventDefault();
+    if (tokenCreating) return;
     if (!drawer.form.name.trim() || !drawer.form.scopes.length) return;
+    setTokenCreating(true);
     try {
       const created = await api.createToken({ name: drawer.form.name.trim(), scopes: drawer.form.scopes, expiresAt: drawer.form.expiresAt ? toApiTimestamp(drawer.form.expiresAt) : null });
       setDrawer({ type: "token-created", token: created });
       await Promise.all([loadTokens(true), loadAudit({ silent: true })]);
     } catch (error) { handleError(error, "创建接口令牌失败"); }
+    finally { setTokenCreating(false); }
   }
 
   async function revokeIntegrationToken() {
@@ -2655,7 +2703,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
           <div className="handover-picker-summary"><div><strong>{booking.start}–{booking.end}</strong><span>{relativeDayLabel(booking.date, businessClock.date) || dateLabel(booking.date).split(" · ")[0]} · {booking.roomName}</span></div><span className="handover-party-chip">{booking.partyName}</span></div>
           <div className={`handover-picker-copy ${adminForce ? "admin" : ""}`}><h3>{adminForce ? "指派给谁？" : "交给谁？"}</h3><p>{adminForce ? `确认后即时更换预约者；当前预约者为 ${booking.owner?.name || booking.ownerName || "未知用户"}。` : "对方确认后将成为新的预约者。"}</p></div>
           {handoverDirectoryState === "loading" ? <p className="handover-picker-note" role="status">正在读取人员…</p> :
-            directory.length ? <ul className="handover-picker-list" aria-label="选择接手人">{directory.map((user, index) => <li key={user.id}><button type="button" data-initial-focus={index === 0 || undefined} className={drawer.selectedUserId === user.id ? "selected" : ""} aria-label={`${user.name}${user.department ? `，${user.department}` : ""}`} aria-pressed={drawer.selectedUserId === user.id} onClick={() => setDrawer((current) => ({ ...current, selectedUserId: user.id }))}><span className="handover-person-avatar" aria-hidden="true">{user.name?.trim().slice(0, 1) || "人"}</span><span className="handover-person-copy"><strong>{user.name}</strong>{user.department ? <small>{user.department}</small> : null}</span><CheckCircle size={21} weight={drawer.selectedUserId === user.id ? "fill" : "regular"} aria-hidden="true" /></button></li>)}</ul> :
+            directory.length ? <ul className="handover-picker-list" aria-label="选择接手人">{directory.map((user, index) => <li key={user.id}><button type="button" data-initial-focus={index === 0 || undefined} className={drawer.selectedUserId === user.id ? "selected" : ""} aria-label={`${user.name}${user.department ? `，${user.department}` : ""}${user.disambiguator ? `，${user.disambiguator}` : ""}`} aria-pressed={drawer.selectedUserId === user.id} onClick={() => setDrawer((current) => ({ ...current, selectedUserId: user.id }))}><span className="handover-person-avatar" aria-hidden="true">{user.name?.trim().slice(0, 1) || "人"}</span><span className="handover-person-copy"><strong>{user.name}</strong>{user.department ? <small>{user.department}</small> : null}{user.disambiguator ? <small>{user.disambiguator}</small> : null}</span><CheckCircle size={21} weight={drawer.selectedUserId === user.id ? "fill" : "regular"} aria-hidden="true" /></button></li>)}</ul> :
             <p className="handover-picker-note">当前没有可指派的其他人员。</p>}
           <div className="handover-picker-rule"><ArrowsLeftRight size={19} aria-hidden="true" /><p>{adminForce ? "确认后将立即完成指派，无需对方确认。" : "提交后可在「工作交接」查看进度；对方接受前预约仍归你。"}</p></div>
         </div>
@@ -2663,14 +2711,14 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       </div>;
     }
     if (drawer.type === "cancel") return <div className="booking-cancel-confirmation"><div className="selection-summary"><h2>{drawer.booking.start}–{drawer.booking.end}</h2><p>{drawer.booking.roomName} · {withRelativeDay(drawer.booking.date)}</p></div><div className="cancel-confirmation-copy"><h3>确定取消这场预约吗？</h3><p>取消后，该时段会立即重新开放。</p></div><div className="cancel-confirmation-actions"><button className="confirm-cancel-button" disabled={saveState === "saving"} onClick={cancelBooking}>{saveState === "saving" ? "正在取消…" : "确认取消预约"}</button><button className="secondary-button" onClick={() => openDetails(drawer.booking, false, drawer.returnTo)}>返回</button></div></div>;
-    if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;
+    if (drawer.type === "room-create" || drawer.type === "room-edit") return <RoomAdminForm drawer={drawer} busy={roomSaving} deleteBusy={roomDeleteBusy} onSubmit={saveRoom} onFieldChange={updateDrawerField} onCancel={() => setDrawer(null)} onDelete={requestRoomDeletion} />;
     if (drawer.type === "room-delete-confirm") return <RoomDeleteConfirmation room={drawer.room} busy={roomDeleteBusy} onConfirm={confirmRoomDeletion} onBack={() => openRoom(drawer.room)} />;
     if (drawer.type === "room-delete-blocked") return <RoomDeleteBlocked room={drawer.room} bookings={drawer.bookings} total={drawer.total} onOpenBooking={(booking) => { const returnTo = { ...drawer }; return booking.canEdit ? openEdit(booking, returnTo) : openDetails(booking, false, returnTo); }} onBack={() => openRoom(drawer.room)} />;
-    if (drawer.type === "user-create" || drawer.type === "user-edit") return <UserAdminForm drawer={drawer} lastAdminProtected={lastAdminProtected} onSubmit={saveUser} onFieldChange={updateDrawerField} onReset={() => setDrawer({ type: "user-reset", user: drawer.user, errors: {}, form: { password: "" } })} />;
-    if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword} noValidate><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "reset-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="reset-password-error" role="alert">{drawer.errors.password}</small>}</label><div className="password-reset-actions"><button className="submit-button" type="submit">确认重置</button><button className="secondary-button" type="button" onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
+    if (drawer.type === "user-create" || drawer.type === "user-edit") return <UserAdminForm drawer={drawer} busy={userSaving} lastAdminProtected={lastAdminProtected} onSubmit={saveUser} onFieldChange={updateDrawerField} onReset={() => setDrawer({ type: "user-reset", user: drawer.user, errors: {}, form: { password: "" } })} />;
+    if (drawer.type === "user-reset") return <form className="password-reset-form" onSubmit={resetPassword} noValidate><div className="password-reset-copy"><span className="password-reset-icon"><Key size={24} /></span><h2>为 {drawer.user.name} 设置新密码</h2><p>保存后旧密码立即失效。</p></div><label className="field"><span>新密码</span><input data-initial-focus type="password" autoComplete="new-password" disabled={passwordResetting} value={drawer.form.password} aria-invalid={Boolean(drawer.errors?.password)} aria-describedby={drawer.errors?.password ? "reset-password-error" : undefined} onChange={(event) => updateDrawerField("password", event.target.value)} />{drawer.errors?.password && <small id="reset-password-error" role="alert">{drawer.errors.password}</small>}</label><div className="password-reset-actions"><button className="submit-button" type="submit" disabled={passwordResetting}>{passwordResetting ? "正在重置…" : "确认重置"}</button><button className="secondary-button" type="button" disabled={passwordResetting} onClick={() => openUser(drawer.user)}>返回编辑</button></div></form>;
     if (drawer.type === "system-settings") return <form className="system-settings-form" onSubmit={saveSystemSettings} noValidate><div className="system-settings-copy"><Clock size={27} /><div><h2>调整可预约工作时间</h2><p>仅影响以后的可用时段；已有预约的日期和时间保持不变。</p></div></div><div className="system-settings-fields"><label><span>开始时间</span><input data-initial-focus type="time" step="1800" value={drawer.form.workStart} aria-invalid={Boolean(drawer.errors?.workStart)} aria-describedby={drawer.errors?.workStart ? "system-work-start-error" : undefined} onChange={(event) => updateDrawerField("workStart", event.target.value)} />{drawer.errors?.workStart && <small id="system-work-start-error" role="alert">{drawer.errors.workStart}</small>}</label><label><span>结束时间</span><input type="time" step="1800" value={drawer.form.workEnd} aria-invalid={Boolean(drawer.errors?.workEnd)} aria-describedby={drawer.errors?.workEnd ? "system-work-end-error" : undefined} onChange={(event) => updateDrawerField("workEnd", event.target.value)} />{drawer.errors?.workEnd && <small id="system-work-end-error" role="alert">{drawer.errors.workEnd}</small>}</label></div><div className="drawer-fixed-footer"><button className="primary-button" type="submit" disabled={systemSettingsSaving}>{systemSettingsSaving ? "正在保存…" : "保存工作时间"}</button></div></form>;
     if (drawer.type === "backup") return <div className="system-backup-details"><div className="system-backup-summary"><Database size={30} /><div><h2>{system?.backupCaughtUp ? "备份已追平" : "需要创建新备份"}</h2><p>{system?.lastBackupAt ? formatLocalDateTime(system.lastBackupAt) : "尚未创建备份"}</p></div></div><dl><div><dt>数据序号</dt><dd>{system?.dataSequence ?? "—"}</dd></div><div><dt>备份序号</dt><dd>{system?.backupSequence ?? "—"}</dd></div><div><dt>追平状态</dt><dd>{system?.backupCaughtUp ? "已追平" : "待备份"}</dd></div></dl><div className="system-backup-privacy"><LockSimple size={18} /><p>备份保留在服务器电脑；诊断导出不包含预约内容或凭据。</p></div><button className="primary-button system-backup-close" onClick={createBackup}>立即备份</button></div>;
-    if (drawer.type === "token-create") return <form className="system-token-form" onSubmit={createIntegrationToken}><label><span>令牌名称</span><input data-initial-focus value={drawer.form.name} placeholder="例如 只读数据看板" onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><fieldset><legend>只读权限</legend>{[["rooms:read", "笔录室"], ["availability:read", "可用时段"], ["health:read", "服务健康"]].map(([scope, label]) => <label key={scope}><input type="checkbox" checked={drawer.form.scopes.includes(scope)} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, scopes: event.target.checked ? [...current.form.scopes, scope] : current.form.scopes.filter((item) => item !== scope) } }))} />{label}</label>)}</fieldset><label><span>到期时间（可选）</span><input type="datetime-local" value={drawer.form.expiresAt} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, expiresAt: event.target.value } }))} /></label><p>接口令牌仅开放所选读取接口，不可写入预约数据。</p><div className="drawer-fixed-footer"><button className="primary-button" type="submit">创建令牌</button></div></form>;
+    if (drawer.type === "token-create") return <form className="system-token-form" onSubmit={createIntegrationToken}><label><span>令牌名称</span><input data-initial-focus disabled={tokenCreating} value={drawer.form.name} placeholder="例如 只读数据看板" onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, name: event.target.value } }))} /></label><fieldset disabled={tokenCreating}><legend>只读权限</legend>{[["rooms:read", "笔录室"], ["availability:read", "可用时段"], ["health:read", "服务健康"]].map(([scope, label]) => <label key={scope}><input type="checkbox" checked={drawer.form.scopes.includes(scope)} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, scopes: event.target.checked ? [...current.form.scopes, scope] : current.form.scopes.filter((item) => item !== scope) } }))} />{label}</label>)}</fieldset><label><span>到期时间（可选）</span><input type="datetime-local" disabled={tokenCreating} value={drawer.form.expiresAt} onChange={(event) => setDrawer((current) => ({ ...current, form: { ...current.form, expiresAt: event.target.value } }))} /></label><p>接口令牌仅开放所选读取接口，不可写入预约数据。</p><div className="drawer-fixed-footer"><button className="primary-button" type="submit" disabled={tokenCreating}>{tokenCreating ? "正在创建…" : "创建令牌"}</button></div></form>;
     if (drawer.type === "token-created") return <div className="system-token-created"><CheckCircle size={32} /><h2>请立即保存令牌</h2><p>关闭此侧栏后，系统不会再次显示明文。</p><code>{drawer.token.token}</code><button className="primary-button" onClick={async () => { try { await copyText(drawer.token.token); setToast("令牌已复制", "success"); } catch { setToast("无法自动复制，请手动选择令牌", "error"); } }}>复制令牌</button><dl><div><dt>名称</dt><dd>{drawer.token.name}</dd></div><div><dt>权限</dt><dd>{drawer.token.scopes.join("、")}</dd></div><div><dt>到期</dt><dd>{drawer.token.expiresAt ? formatLocalDateTime(drawer.token.expiresAt) : "长期有效"}</dd></div></dl></div>;
     if (drawer.type === "token-revoke") return <div className="system-token-revoke"><WarningCircle size={32} /><h2>撤销 {drawer.token.name}？</h2><p>服务器确认撤销前，令牌仍会保留在列表中。撤销后依赖它的只读集成会立即失效。</p><button className="cancel-booking-button" disabled={tokenRevokingId === drawer.token.id} onClick={revokeIntegrationToken}>{tokenRevokingId === drawer.token.id ? "正在等待服务器确认…" : "确认撤销令牌"}</button><button className="secondary-button" disabled={tokenRevokingId === drawer.token.id} onClick={() => setDrawer(null)}>返回</button></div>;
     return null;
@@ -2716,12 +2764,12 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
       <div className="notice-modal-body">
         {noticeHasHandovers && <section className="notice-modal-section" aria-labelledby={noticeMixed ? "notice-handover-section" : undefined}>
           {noticeMixed && <header className="notice-section-head"><h3 id="notice-handover-section">工作交接</h3><span>{handoverNoticeCount} 条</span></header>}
-          <ul className="notice-modal-list notice-handover-list">{visibleHandoverReminders.map((item, index) => <li className="notice-modal-item notice-handover-item" key={item.handoverRequestId}>
+          <ul className="notice-modal-list notice-handover-list">{visibleHandoverReminders.map((item) => <li className="notice-modal-item notice-handover-item" key={item.handoverRequestId}>
             {(noticeMixed || handoverNoticeCount > 1) && <p className="notice-item-meta">{item.fromName} · 发起交接</p>}
             <h3>{item.fromName} 希望将这场预约交接给你</h3>
             <dl className="notice-item-identity" aria-label="交接预约信息"><div><dt>当事人</dt><dd>{item.partyName}</dd></div><div><dt>事项</dt><dd>{item.purpose}</dd></div><div className="notice-identity-schedule"><dt>时间</dt><dd>{item.start}–{item.end} · {item.roomName}</dd></div></dl>
             <p className="notice-handover-note">接受后预约转入你名下；不接受则仍归 {item.fromName}。请求在预约开始前有效。</p>
-            <div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "decline")}>不接受</button><button type="button" className="notice-item-ack" data-initial-focus={index === 0 && acknowledgementNotices.length === 0 || undefined} disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "accept")}>{noticeAckBusy ? "正在处理…" : "接受交接"}</button></div>
+                <div className="notice-item-actions"><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "decline")}>不接受</button><button type="button" className="notice-item-ack" disabled={noticeAckBusy} onClick={() => void decideHandover(item.handoverRequestId, "accept")}>{noticeAckBusy ? "正在处理…" : "接受交接"}</button></div>
           </li>)}{assignmentNotices.map((item, index) => <AssignmentNoticeItem item={item} busy={noticeAckBusy} initialFocus={!noticeHasHandoverRequests && index === 0} showMeta={noticeMixed || handoverNoticeCount > 1} showActions={acknowledgementNotices.length > 1 || noticeHasHandoverRequests} onView={(target) => void viewNotice(target)} onAcknowledge={(targets) => void acknowledgeNotices(targets)} key={item.eventId} />)}</ul>
         </section>}
         {dueReminders.changes.length > 0 && <section className="notice-modal-section" aria-labelledby={noticeMixed ? "notice-change-section" : undefined}>
@@ -2730,7 +2778,7 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
         </section>}
       </div>
       {noticeOnlyHandoverRequests
-        ? <footer className="handover-modal-foot"><p id="notice-modal-hint" className="notice-modal-hint">暂不处理不会改变预约归属，可稍后在「工作交接」中继续。</p><button type="button" className="handover-defer-button" disabled={noticeAckBusy} onClick={deferVisibleHandovers}>稍后处理</button></footer>
+            ? <footer className="handover-modal-foot"><p id="notice-modal-hint" className="notice-modal-hint">暂不处理不会改变预约归属，可稍后在「工作交接」中继续。</p><button type="button" className="handover-defer-button" data-initial-focus disabled={noticeAckBusy} onClick={deferVisibleHandovers}>稍后处理</button></footer>
         : noticeHasHandoverRequests
         ? <footer className="notice-modal-combined-foot"><p id="notice-modal-hint" className="notice-modal-hint">交接请求可稍后处理；已生效指派和预约变更只能确认知晓。</p><div><button type="button" className="handover-defer-button" data-initial-focus disabled={noticeAckBusy} onClick={deferVisibleHandovers}>交接稍后处理</button><button type="button" className="notice-ack-all" disabled={noticeAckBusy} onClick={() => void acknowledgeNotices(acknowledgementNotices)}>{noticeAckBusy ? "正在确认…" : acknowledgeAllLabel}</button></div></footer>
         : acknowledgementNotices.length === 1

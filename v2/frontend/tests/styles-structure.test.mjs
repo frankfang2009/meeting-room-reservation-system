@@ -41,7 +41,8 @@ const expectedFiles = [
 // 变更通知居中弹窗与排队提示条（production-flows.css）。
 // V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
 // 独立工作交接页（dashboard.css）。
-const frozenSourceSha256 = "dacc01bd68ecf36f0239274a20139b3746b224b8861861237551a8351d9a4768";
+// V2.4.1：通知弹窗层级高于普通到达提醒（production-flows.css）。
+const frozenSourceSha256 = "d905776904b8405bccc0008d34d9b735b7d805c715235fdfa8169993fab5ea3c";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

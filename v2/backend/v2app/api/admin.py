@@ -456,6 +456,17 @@ def update_user(user_id: str):
                 """,
                 (username, display_name, department, role, int(enabled), int(revoke), user_id),
             )
+            if target["is_active"] and not enabled:
+                db.execute(
+                    """
+                    UPDATE handover_requests
+                    SET status = 'expired',
+                        decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    WHERE (from_user_id = ? OR to_user_id = ?)
+                      AND status = 'pending'
+                    """,
+                    (user_id, user_id),
+                )
             write_security_audit(
                 db,
                 actor_user_id=actor["id"],

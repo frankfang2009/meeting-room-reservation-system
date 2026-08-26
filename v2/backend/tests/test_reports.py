@@ -208,6 +208,21 @@ class ReportApiTests(BackendTestCase):
             self.employee_client,
         ).get_json()
         self.assertEqual(literal_percent["summary"]["activeCount"], 0)
+        room = self.report(
+            "scope=self&dateFrom=2026-08-10&dateTo=2026-08-10&query=%E7%AC%94%E5%BD%95%E5%AE%A4%201",
+            self.employee_client,
+        ).get_json()
+        self.assertEqual(room["summary"]["activeCount"], 2)
+        tag = self.report(
+            "scope=self&dateFrom=2026-08-10&dateTo=2026-08-10&query=%E6%A0%87%E7%AD%BE%201",
+            self.employee_client,
+        ).get_json()
+        self.assertEqual(tag["summary"]["activeCount"], 1)
+        literal_underscore = self.report(
+            "scope=self&dateFrom=2026-08-10&dateTo=2026-08-10&query=_",
+            self.employee_client,
+        ).get_json()
+        self.assertEqual(literal_underscore["summary"]["activeCount"], 0)
 
     def test_employee_csv_is_bom_crlf_formula_safe_and_self_only(self):
         response = self.export(

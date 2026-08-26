@@ -13,6 +13,7 @@ from urllib.parse import quote
 try:
     from .installer_core import (
         InstallerError,
+        VERSION,
         assert_plain_file,
         json_bytes,
         sha256_bytes,
@@ -21,6 +22,7 @@ try:
 except ImportError:
     from installer_core import (  # type: ignore
         InstallerError,
+        VERSION,
         assert_plain_file,
         json_bytes,
         sha256_bytes,
@@ -172,7 +174,7 @@ def make_artifact_sbom(
                 "component": {
                     "type": "application",
                     "name": "会议室预约系统 V2",
-                    "version": "2.2.0",
+                    "version": VERSION,
                 },
                 "properties": [
                     {"name": "meeting-room-v2:frontend-package-lock-sha256", "value": frontend["packageLock"]["sha256"]},

@@ -549,6 +549,54 @@ class GenerationAndSetupTests(BackendTestCase):
         # 幂等：重复迁移返回 False
         self.assertFalse(db_module.migrate_schema_v3_to_v4(self.database))
 
+    def test_schema_v3_to_v4_preserves_acknowledged_notice_receipts(self):
+        self.setup_system()
+        self.login()
+        bootstrap = self.bootstrap()
+        room_id = bootstrap["rooms"][0]["id"]
+        employee_record = self.add_employee()
+        employee = self.app.test_client()
+        self.login("employee", "employee-pass-123", employee)
+        booking = self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(room_id, start="09:00"),
+            client=employee,
+        ).get_json()
+        self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                room_id, start="10:00", expectedRevision=booking["revision"]
+            ),
+        )
+        notice = employee.get("/api/v1/reminders/due").get_json()["items"][0]
+        acknowledged = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": notice["eventId"]},
+            client=employee,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+
+        self.downgrade_schema_to_v3(self.database)
+        self.assertTrue(db_module.migrate_schema_v3_to_v4(self.database))
+
+        with closing(sqlite3.connect(self.database)) as db:
+            receipt = db.execute(
+                "SELECT event_id, user_id FROM notice_receipts"
+            ).fetchone()
+            self.assertEqual(
+                receipt,
+                (notice["eventId"], employee_record["id"]),
+            )
+        remaining_changes = [
+            item
+            for item in employee.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        self.assertEqual(remaining_changes, [])
+
     def test_schema_v3_to_v4_failure_rolls_back_rebuild_and_version(self):
         self.downgrade_schema_to_v3(self.database)
         with mock.patch.object(
@@ -1133,6 +1181,54 @@ class AuthenticationAndAdministrationTests(BackendTestCase):
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.get_json()["error"]["code"], "LAST_ADMIN_REQUIRED")
 
+    def test_password_role_and_enabled_changes_revoke_existing_sessions(self):
+        first = self.add_employee("employee")
+        first_client = self.app.test_client()
+        self.login("employee", "employee-pass-123", first_client)
+        reset_other = self.write(
+            "POST",
+            f"/api/v1/users/{first['id']}/reset-password",
+            {"password": "employee-new-pass-123"},
+        )
+        self.assertEqual(reset_other.status_code, 200, reset_other.get_json())
+        self.assertEqual(first_client.get("/api/v1/bootstrap").status_code, 401)
+
+        promoted = self.write(
+            "PATCH",
+            f"/api/v1/users/{first['id']}",
+            {"role": "admin", "enabled": True},
+        )
+        self.assertEqual(promoted.status_code, 200, promoted.get_json())
+        promoted_client = self.app.test_client()
+        self.login("employee", "employee-new-pass-123", promoted_client)
+        demoted = self.write(
+            "PATCH",
+            f"/api/v1/users/{first['id']}",
+            {"role": "employee", "enabled": True},
+        )
+        self.assertEqual(demoted.status_code, 200, demoted.get_json())
+        self.assertEqual(promoted_client.get("/api/v1/bootstrap").status_code, 401)
+
+        second = self.add_employee("employee2")
+        second_client = self.app.test_client()
+        self.login("employee2", "employee-pass-123", second_client)
+        disabled = self.write(
+            "PATCH",
+            f"/api/v1/users/{second['id']}",
+            {"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.get_json())
+        self.assertEqual(second_client.get("/api/v1/bootstrap").status_code, 401)
+
+        self_reset = self.write(
+            "POST",
+            f"/api/v1/users/{self.bootstrap()['currentUser']['id']}/reset-password",
+            {"password": "admin-new-pass-123"},
+        )
+        self.assertEqual(self_reset.status_code, 200, self_reset.get_json())
+        self.assertTrue(self_reset.get_json()["reauthenticate"])
+        self.assertEqual(self.client.get("/api/v1/bootstrap").status_code, 401)
+
     def test_employee_cannot_read_management_endpoints(self):
         self.add_employee()
         employee = self.app.test_client()
@@ -1502,6 +1598,7 @@ class ServiceEntrypointTests(BackendTestCase):
             nonlocal captured_app
             captured_app = app
             self.assertEqual(kwargs["host"], "127.0.0.1")
+            self.assertEqual(kwargs["port"], 18099)
             return fake_server
 
         def complete_setup():
@@ -1513,7 +1610,7 @@ class ServiceEntrypointTests(BackendTestCase):
         signal.start()
         with mock.patch.object(server_entrypoint, "create_server", create_fake_server):
             restart = server_entrypoint.run_server_once(
-                8080,
+                18099,
                 app_config={
                     "TESTING": True,
                     "DATA_DIR": str(self.data_dir),
@@ -1526,6 +1623,7 @@ class ServiceEntrypointTests(BackendTestCase):
         self.assertTrue(restart)
         self.assertEqual(fake_server.close_calls, 1)
         self.assertEqual(fake_server.close_thread_id, fake_server.run_thread_id)
+        self.assertEqual(captured_app.config["SERVICE_PORT"], 18099)
         with captured_app.test_client() as client:
             health = client.get("/healthz").get_json()
         self.assertEqual(health["bind_mode"], "loopback")
@@ -2006,6 +2104,59 @@ class ReservationTests(AuthenticatedReservationTestCase):
             ).get_json()["items"],
             [],
         )
+
+    def test_history_searches_six_fields_and_treats_like_tokens_literally(self):
+        special = self.create_booking(
+            start="09:00",
+            partyName="六域姓名",
+            caseNumber="CASE-SIX",
+            purpose="六域事项%_\\",
+            notes="六域备注",
+            tagId="tag-1",
+        )
+        other = self.create_booking(
+            start="10:00",
+            partyName="普通姓名",
+            caseNumber="CASE-PLAIN",
+            purpose="普通事项",
+            notes="普通备注",
+            tagId="tag-2",
+        )
+        for query in (
+            "六域姓名",
+            "CASE-SIX",
+            "六域事项",
+            "六域备注",
+            "笔录室 1",
+            "标签 1",
+        ):
+            with self.subTest(query=query):
+                items = self.client.get(
+                    "/api/v1/reservations/history",
+                    query_string={"month": "2026-08", "query": query},
+                ).get_json()["items"]
+                self.assertIn(special["id"], [item["id"] for item in items])
+        for literal in ("%", "_", "\\"):
+            with self.subTest(literal=literal):
+                items = self.client.get(
+                    "/api/v1/reservations/history",
+                    query_string={"month": "2026-08", "query": literal},
+                ).get_json()["items"]
+                self.assertEqual([item["id"] for item in items], [special["id"]])
+                self.assertNotIn(other["id"], [item["id"] for item in items])
+
+    def test_calendar_date_range_is_at_most_366_inclusive_days(self):
+        accepted = self.client.get(
+            "/api/v1/reservations",
+            query_string={"dateFrom": "2024-01-01", "dateTo": "2024-12-31"},
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.get_json())
+        rejected = self.client.get(
+            "/api/v1/reservations",
+            query_string={"dateFrom": "2024-01-01", "dateTo": "2025-01-01"},
+        )
+        self.assertEqual(rejected.status_code, 422, rejected.get_json())
+        self.assertEqual(rejected.get_json()["error"]["code"], "VALIDATION_ERROR")
 
 
 class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
@@ -2587,6 +2738,184 @@ class HandoverTests(AuthenticatedReservationTestCase):
         ).get_json()
         self.assertEqual(audits["total"], 1)
 
+    def test_change_notices_follow_owner_snapshots_across_handover(self):
+        booking = self.create_own_booking(start="10:00")
+        changed_before_handover = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:00",
+                notes="交接前由管理员修改",
+                expectedRevision=booking["revision"],
+            ),
+        )
+        self.assertEqual(
+            changed_before_handover.status_code,
+            200,
+            changed_before_handover.get_json(),
+        )
+
+        request = self.request_handover(changed_before_handover.get_json(), self.second)
+        accepted = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request.get_json()['request']['id']}/accept",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.get_json())
+        changed_after_handover = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:00",
+                notes="交接后由管理员修改",
+                expectedRevision=accepted.get_json()["reservation"]["revision"],
+            ),
+        )
+        self.assertEqual(
+            changed_after_handover.status_code,
+            200,
+            changed_after_handover.get_json(),
+        )
+
+        original_owner_notices = [
+            item
+            for item in self.employee.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        new_owner_notices = [
+            item
+            for item in self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        self.assertEqual(len(original_owner_notices), 1)
+        self.assertEqual(
+            original_owner_notices[0]["noticeIdentity"]["partyName"],
+            booking["partyName"],
+        )
+        original_diffs = {
+            diff["field"]: diff for diff in original_owner_notices[0]["diffs"]
+        }
+        self.assertEqual(
+            original_diffs["notes"],
+            {
+                "field": "notes",
+                "from": "合成测试备注",
+                "to": "交接前由管理员修改",
+            },
+        )
+        self.assertEqual(len(new_owner_notices), 1)
+        self.assertEqual(
+            new_owner_notices[0]["noticeIdentity"]["partyName"],
+            booking["partyName"],
+        )
+        new_owner_diffs = {
+            diff["field"]: diff for diff in new_owner_notices[0]["diffs"]
+        }
+        self.assertEqual(
+            new_owner_diffs["notes"],
+            {
+                "field": "notes",
+                "from": "交接前由管理员修改",
+                "to": "交接后由管理员修改",
+            },
+        )
+        self.assertNotEqual(
+            original_owner_notices[0]["eventId"], new_owner_notices[0]["eventId"]
+        )
+
+        denied = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": original_owner_notices[0]["eventId"]},
+            client=self.employee2,
+        )
+        self.assertEqual(denied.status_code, 403, denied.get_json())
+        acknowledged = self.write(
+            "POST",
+            "/api/v1/reminders/ack",
+            {"eventId": original_owner_notices[0]["eventId"]},
+            client=self.employee,
+        )
+        self.assertEqual(acknowledged.status_code, 200, acknowledged.get_json())
+
+    def test_former_owner_change_notice_never_projects_unauthorized_current_details(self):
+        booking = self.create_own_booking(start="10:00")
+        event_change = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:00",
+                partyName="事件时当事人",
+                caseNumber="EVENT-2026-001",
+                purpose="事件时用途",
+                notes="事件时备注",
+                expectedRevision=booking["revision"],
+            ),
+        )
+        self.assertEqual(event_change.status_code, 200, event_change.get_json())
+
+        request = self.request_handover(event_change.get_json(), self.second)
+        accepted = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request.get_json()['request']['id']}/accept",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.get_json())
+        current_change = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:30",
+                partyName="新预约者私密当事人",
+                caseNumber="PRIVATE-2026-999",
+                purpose="新预约者私密用途",
+                notes="新预约者私密备注",
+                expectedRevision=accepted.get_json()["reservation"]["revision"],
+            ),
+            client=self.employee2,
+        )
+        self.assertEqual(current_change.status_code, 200, current_change.get_json())
+        cancelled = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": current_change.get_json()["revision"]},
+            client=self.employee2,
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.get_json())
+
+        direct = self.employee.get(f"/api/v1/reservations/{booking['id']}")
+        self.assertEqual(direct.status_code, 403, direct.get_json())
+        notices = [
+            item
+            for item in self.employee.get("/api/v1/reminders/due").get_json()["items"]
+            if item["kind"] == "change"
+        ]
+        self.assertEqual(len(notices), 1)
+        notice = notices[0]
+        self.assertEqual(notice["partyName"], "事件时当事人")
+        self.assertEqual(notice["caseNumber"], "EVENT-2026-001")
+        self.assertEqual(notice["purpose"], "事件时用途")
+        self.assertEqual(notice["notes"], "事件时备注")
+        self.assertEqual(notice["status"], "active")
+        self.assertEqual(notice["revision"], 2)
+        self.assertEqual(notice["ownerId"], self.first["id"])
+        self.assertFalse(notice["canEdit"])
+        self.assertFalse(notice["canCancel"])
+        serialized_notice = json.dumps(notice, ensure_ascii=False)
+        for private_value in (
+            "新预约者私密当事人",
+            "PRIVATE-2026-999",
+            "新预约者私密用途",
+            "新预约者私密备注",
+        ):
+            self.assertNotIn(private_value, serialized_notice)
+
     def test_cancelled_reservation_does_not_keep_pending_handover_state(self):
         booking = self.create_own_booking(start="10:00")
         created = self.request_handover(booking, self.second)
@@ -2652,6 +2981,196 @@ class HandoverTests(AuthenticatedReservationTestCase):
         self.assertEqual(
             self.employee2.get("/api/v1/handover-requests").get_json()["incoming"], [],
         )
+
+    def test_cancelled_booking_accept_reports_expired_before_revision_conflict(self):
+        booking = self.create_own_booking(start="10:00")
+        request_id = self.request_handover(
+            booking, self.second
+        ).get_json()["request"]["id"]
+        cancelled = self.write(
+            "POST",
+            f"/api/v1/reservations/{booking['id']}/cancel",
+            {"expectedRevision": booking["revision"]},
+            client=self.employee,
+        )
+        self.assertEqual(cancelled.status_code, 200, cancelled.get_json())
+        accepted = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request_id}/accept",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(accepted.status_code, 409, accepted.get_json())
+        self.assertEqual(accepted.get_json()["error"]["code"], "HANDOVER_EXPIRED")
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM handover_requests WHERE id = ?",
+                    (request_id,),
+                ).fetchone()[0],
+                "expired",
+            )
+
+    def test_declining_revision_stale_request_expires_it(self):
+        booking = self.create_own_booking(start="10:00")
+        request_id = self.request_handover(
+            booking, self.second
+        ).get_json()["request"]["id"]
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute(
+                "UPDATE reservations SET revision = revision + 1 WHERE id = ?",
+                (booking["id"],),
+            )
+        declined = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request_id}/decline",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(declined.status_code, 409, declined.get_json())
+        self.assertEqual(declined.get_json()["error"]["code"], "REVISION_CONFLICT")
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM handover_requests WHERE id = ?",
+                    (request_id,),
+                ).fetchone()[0],
+                "expired",
+            )
+
+    def test_disabling_originator_expires_outgoing_pending_request(self):
+        booking = self.create_own_booking(start="10:00")
+        request_id = self.request_handover(
+            booking, self.second
+        ).get_json()["request"]["id"]
+        disabled = self.write(
+            "PATCH",
+            f"/api/v1/users/{self.first['id']}",
+            {"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.get_json())
+        accepted = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request_id}/accept",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(accepted.status_code, 409, accepted.get_json())
+        self.assertEqual(
+            accepted.get_json()["error"]["code"], "HANDOVER_REQUEST_CLOSED"
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM handover_requests WHERE id = ?",
+                    (request_id,),
+                ).fetchone()[0],
+                "expired",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM reservations WHERE id = ?",
+                    (booking["id"],),
+                ).fetchone()[0],
+                "active",
+            )
+
+    def test_disabling_recipient_expires_request_without_changing_booking_owner(self):
+        third = self.add_employee("employee3")
+        booking = self.create_own_booking(start="10:00")
+        stale_request_id = self.request_handover(
+            booking, self.second
+        ).get_json()["request"]["id"]
+
+        disabled = self.write(
+            "PATCH",
+            f"/api/v1/users/{self.second['id']}",
+            {"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.get_json())
+
+        replacement = self.request_handover(booking, third)
+        self.assertEqual(replacement.status_code, 200, replacement.get_json())
+        self.assertEqual(
+            replacement.get_json()["request"]["toUser"]["id"],
+            third["id"],
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            stale_request = db.execute(
+                "SELECT status FROM handover_requests WHERE id = ?",
+                (stale_request_id,),
+            ).fetchone()
+            owner_id = db.execute(
+                "SELECT owner_user_id FROM reservations WHERE id = ?",
+                (booking["id"],),
+            ).fetchone()[0]
+        self.assertEqual(stale_request[0], "expired")
+        self.assertEqual(owner_id, self.first["id"])
+
+        reenabled = self.write(
+            "PATCH",
+            f"/api/v1/users/{self.second['id']}",
+            {"enabled": True},
+        )
+        self.assertEqual(reenabled.status_code, 200, reenabled.get_json())
+        reenabled_client = self.app.test_client()
+        self.login("employee2", "employee-pass-123", reenabled_client)
+        self.assertEqual(
+            reenabled_client.get("/api/v1/handover-requests").get_json()["incoming"],
+            [],
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT status FROM handover_requests WHERE id = ?",
+                    (stale_request_id,),
+                ).fetchone()[0],
+                "expired",
+            )
+
+    def test_edited_booking_hides_stale_request_and_allows_reinitiation(self):
+        booking = self.create_own_booking(start="10:00")
+        stale_request_id = self.request_handover(
+            booking, self.second
+        ).get_json()["request"]["id"]
+        edited = self.write(
+            "PATCH",
+            f"/api/v1/reservations/{booking['id']}",
+            self.booking_payload(
+                self.room_id,
+                start="10:30",
+                expectedRevision=booking["revision"],
+            ),
+            client=self.employee,
+        )
+        self.assertEqual(edited.status_code, 200, edited.get_json())
+
+        self.assertEqual(
+            self.employee2.get("/api/v1/handover-requests").get_json()["incoming"],
+            [],
+        )
+        self.assertEqual(
+            self.employee.get("/api/v1/handover-requests").get_json()["outgoing"],
+            [],
+        )
+        due = self.employee2.get("/api/v1/reminders/due").get_json()["items"]
+        self.assertEqual([item for item in due if item["kind"] == "handover"], [])
+        history = self.employee.get(
+            "/api/v1/reservations/history?month=2026-08"
+        ).get_json()["items"]
+        self.assertIsNone(history[0]["handoverState"])
+
+        replacement = self.request_handover(edited.get_json(), self.second)
+        self.assertEqual(replacement.status_code, 200, replacement.get_json())
+        replacement_id = replacement.get_json()["request"]["id"]
+        self.assertNotEqual(replacement_id, stale_request_id)
+        with closing(sqlite3.connect(self.database)) as db:
+            stale = db.execute(
+                "SELECT status, decided_at FROM handover_requests WHERE id = ?",
+                (stale_request_id,),
+            ).fetchone()
+        self.assertEqual(stale[0], "expired")
+        self.assertTrue(stale[1])
 
     def test_started_booking_expires_request(self):
         booking = self.create_own_booking(start="09:00")

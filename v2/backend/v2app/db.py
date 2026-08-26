@@ -621,6 +621,10 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
     """
 
     db = _connect(path)
+    # 重建 reservation_events 时，DROP TABLE 会触发 notice_receipts 的
+    # ON DELETE CASCADE。该专用迁移连接在事务前临时关闭外键动作，并在
+    # 提交前显式检查完整性，以保留引用同一事件 id 的既有回执。
+    db.execute("PRAGMA foreign_keys = OFF")
     try:
         db.execute("BEGIN IMMEDIATE")
         try:
@@ -698,6 +702,8 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
                 raise DatabaseGenerationError(
                     "数据库迁移后仍缺少结构：" + ", ".join(missing)
                 )
+            if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise DatabaseGenerationError("数据库迁移后存在外键引用错误")
             db.execute("COMMIT")
             return True
         except Exception:
@@ -705,7 +711,10 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
                 db.execute("ROLLBACK")
             raise
     finally:
-        db.close()
+        try:
+            db.execute("PRAGMA foreign_keys = ON")
+        finally:
+            db.close()
 
 
 def _initialize_database(path: Path) -> None:

@@ -40,6 +40,22 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def escape_like(value: str) -> str:
+    """Escape SQLite LIKE metacharacters for a literal substring search."""
+
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def validate_inclusive_date_range(start: date, end: date) -> None:
+    if end < start or (end - start).days > 365:
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "日期范围无效或超过 366 天",
+            fields={"dateTo": "结束日期应不早于开始日期，且跨度不超过 366 天"},
+        )
+
+
 def parse_json_object() -> dict[str, Any]:
     if not request.is_json:
         raise ApiError(400, "JSON_REQUIRED", "请求必须使用 JSON")

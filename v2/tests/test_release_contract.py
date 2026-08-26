@@ -159,6 +159,16 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         )
         self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 
+    def test_backend_and_updater_accept_the_same_database_schemas(self) -> None:
+        from v2.backend.v2app.db import SUPPORTED_SCHEMA_VERSIONS
+        from v2.installer.update_core import SUPPORTED_DATABASE_SCHEMA_VERSIONS
+
+        self.assertEqual(
+            set(SUPPORTED_SCHEMA_VERSIONS),
+            set(SUPPORTED_DATABASE_SCHEMA_VERSIONS),
+            "后端与累计升级器支持的数据库 schema 集不一致",
+        )
+
     def test_restore_entry_backup_schema_range_matches_update_core(self) -> None:
         # ⑥ 从备份恢复.bat 的备份配对校验以 -lt/-gt 硬编码 schema 上下界；
         # update_core.SUPPORTED_DATABASE_SCHEMA_VERSIONS 是唯一真值。两者漂移会让
@@ -309,6 +319,11 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('parser.add_argument("--frontend-lock"', assembler)
         self.assertIn("make_artifact_sbom", package_builder)
         self.assertIn("--frontend-lock v2/frontend/package-lock.json", reproducible)
+
+    def test_shipped_windows_guide_uses_current_product_version(self) -> None:
+        guide = read("installer/payload_templates/使用说明.txt")
+        self.assertTrue(guide.startswith("会议室预约系统 V2.4.0 使用说明"))
+        self.assertNotIn("V2.2.0", guide)
 
     def test_public_frontend_contract_rejects_extra_fields(self) -> None:
         contract = read("frontend/src/public-contract.js")

@@ -12,7 +12,7 @@ from v2.installer.build_package import (
     PackageBuildError,
     build_package as production_build_package,
 )
-from v2.installer.installer_core import Bundle, InstallerError, safe_relative_path
+from v2.installer.installer_core import Bundle, InstallerError, VERSION, safe_relative_path
 
 from v2.installer.tests.helpers import create_inputs, extract_tool, refresh_runtime_mapping
 
@@ -73,6 +73,10 @@ class PackageBuilderTests(unittest.TestCase):
         artifact_sbom = result.sbom_path.read_bytes()
         artifact_notices = result.notices_path.read_bytes()
         self.assertNotEqual(artifact_sbom, runtime_sbom)
+        self.assertEqual(
+            json.loads(artifact_sbom)["metadata"]["component"]["version"],
+            VERSION,
+        )
         self.assertTrue(artifact_notices.startswith(runtime_notices.rstrip()))
         component_names = {
             item["name"] for item in json.loads(artifact_sbom)["components"]
