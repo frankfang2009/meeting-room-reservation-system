@@ -453,6 +453,87 @@ class InstallerCoreTests(unittest.TestCase):
         self.assertIn("$healthAfterAcl.product_generation -eq 2", acceptance)
         self.assertNotIn("icacls.exe", acceptance[acceptance.index('Write-Step "dacl-boundaries"') :])
 
+    def test_windows_upgrade_acceptance_probes_preexisting_rollback_canaries_and_cleans_up(self) -> None:
+        acceptance = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "scripts"
+            / "v2-windows-upgrade-acceptance.ps1"
+        ).read_text(encoding="utf-8")
+        rollback_start = acceptance.index('Write-Step "health-failure-rollback"')
+        rollback_end = acceptance.index('Write-Step "run-cumulative-update"')
+        rollback = acceptance[rollback_start:rollback_end]
+
+        for required in (
+            "New-StandardUserPrivateAccessProbeCanaries",
+            "$failedUpgrade = Invoke-CandidateBat",
+            "Assert-StandardUserPrivateAccessProbeCanariesPresent",
+            "Invoke-StandardUserPrivateAccessProbe",
+            "$cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)",
+            "Assert-True ($cleanupFailures.Count -eq 0)",
+        ):
+            self.assertIn(required, rollback)
+        self.assertIn(
+            "function Remove-StandardUserPrivateAccessProbeArtifacts", acceptance
+        )
+        sanitized_on = rollback.index("$Script:SanitizedDiagnosticsOnly = $true")
+        create_canaries = rollback.index("New-StandardUserPrivateAccessProbeCanaries")
+        faulted_update = rollback.index("$failedUpgrade = Invoke-CandidateBat")
+        rollback_restored = rollback.index(
+            "maintenance lock still held after health-failure rollback"
+        )
+        canaries_restored = rollback.index(
+            "Assert-StandardUserPrivateAccessProbeCanariesPresent"
+        )
+        probe = rollback.index("Invoke-StandardUserPrivateAccessProbe")
+        cleanup = rollback.index(
+            "$cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)"
+        )
+        cleanup_verified = rollback.index(
+            "Assert-True ($cleanupFailures.Count -eq 0)"
+        )
+        sanitized_off = rollback.index("$Script:SanitizedDiagnosticsOnly = $false")
+        self.assertLess(sanitized_on, create_canaries)
+        self.assertLess(create_canaries, faulted_update)
+        self.assertLess(faulted_update, rollback_restored)
+        self.assertLess(rollback_restored, canaries_restored)
+        self.assertLess(canaries_restored, probe)
+        self.assertLess(probe, cleanup)
+        self.assertLess(cleanup, cleanup_verified)
+        self.assertLess(cleanup_verified, sanitized_off)
+        self.assertRegex(
+            rollback,
+            r"finally\s*\{\s*\$cleanupFailures = @\(Remove-StandardUserPrivateAccessProbeArtifacts\)",
+        )
+
+        cleanup_start = acceptance.index(
+            "function Remove-StandardUserPrivateAccessProbeArtifacts"
+        )
+        cleanup_end = acceptance.index("function Dump-Diagnostics")
+        cleanup_source = acceptance[cleanup_start:cleanup_end]
+        self.assertIn("[IO.Directory]::GetFileSystemEntries", acceptance)
+        self.assertIn("[IO.File]::ReadAllText", acceptance)
+        self.assertIn("-Credential", acceptance)
+        self.assertIn("Add-LocalGroupMember", acceptance)
+        self.assertNotIn("-LoadUserProfile", acceptance)
+        self.assertIn("Remove-LocalUser", cleanup_source)
+        self.assertIn("Get-LocalUser -ErrorAction Stop", cleanup_source)
+        self.assertIn("Remove-Item -LiteralPath $canaryPath", cleanup_source)
+        self.assertIn(
+            "Test-Path -LiteralPath $canaryPath -ErrorAction Stop", cleanup_source
+        )
+        self.assertIn(
+            "Remove-Item -LiteralPath $Script:StandardUserProbeRoot -Recurse -Force",
+            cleanup_source,
+        )
+        self.assertIn(
+            "Test-Path -LiteralPath $Script:StandardUserProbeRoot -ErrorAction Stop",
+            cleanup_source,
+        )
+        self.assertIn("$failures +=", cleanup_source)
+        self.assertIn("MRV2_T1U=STANDARD_USER_ACL:", acceptance)
+        self.assertIn("MRV2_T1U=DIAGNOSTICS_REDACTED", acceptance)
+
     def test_windows_tasks_use_one_daily_backup_bound_to_install_id(self) -> None:
         configure = inspect.getsource(WindowsSystemController.configure_disabled)
         verify = inspect.getsource(WindowsSystemController.verify_security)

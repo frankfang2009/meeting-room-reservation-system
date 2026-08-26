@@ -35,6 +35,10 @@ $Script:ProgramDir = Join-Path $Script:InstallRoot "_程序文件"
 $Script:VersionFile = Join-Path $Script:ProgramDir "版本.txt"
 $Script:DataDir = Join-Path $Script:ProgramDir "data"
 $Script:BackupDir = Join-Path $Script:ProgramDir "backups"
+$Script:SanitizedDiagnosticsOnly = $false
+$Script:StandardUserProbeCanaries = @()
+$Script:StandardUserProbeRoot = $null
+$Script:StandardUserProbeName = $null
 
 function Write-Step([string]$Name) {
     Write-Host ""
@@ -238,8 +242,204 @@ print("health-probe-failure-injected")
     }
 }
 
+function New-StandardUserPrivateAccessProbeCanaries {
+    foreach ($private in @('data', 'backups', 'logs')) {
+        $canaryPath = Join-Path (Join-Path $Script:ProgramDir $private) "standard-user-read-probe.txt"
+        Assert-True (-not (Test-Path -LiteralPath $canaryPath)) "standard-user ACL probe canary already exists"
+        $Script:StandardUserProbeCanaries += $canaryPath
+        Set-Content -LiteralPath $canaryPath -Value "synthetic ACL probe" -Encoding ASCII
+        Assert-True (Test-Path -LiteralPath $canaryPath -PathType Leaf) "standard-user ACL probe canary was not created"
+    }
+}
+
+function Assert-StandardUserPrivateAccessProbeCanariesPresent {
+    Assert-True ($Script:StandardUserProbeCanaries.Count -eq 3) "standard-user ACL probe canary set is incomplete"
+    foreach ($canaryPath in @($Script:StandardUserProbeCanaries)) {
+        Assert-True (Test-Path -LiteralPath $canaryPath -PathType Leaf -ErrorAction Stop) "standard-user ACL probe canary did not survive rollback"
+    }
+}
+
+function Invoke-StandardUserPrivateAccessProbe {
+    $usersSid = "S-1-5-32-545"
+    $adminSid = "S-1-5-32-544"
+    $probeRoot = Join-Path $WorkRoot "standard-user-rollback-acl-probe"
+    $Script:StandardUserProbeRoot = $probeRoot
+    New-Item -ItemType Directory -Path $probeRoot | Out-Null
+    $probeAcl = Get-Acl -LiteralPath $probeRoot
+    $probeAcl.SetAccessRuleProtection($true, $false)
+    $probeAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        [System.Security.Principal.SecurityIdentifier]::new($usersSid),
+        [System.Security.AccessControl.FileSystemRights]::Modify,
+        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    ))
+    Set-Acl -LiteralPath $probeRoot -AclObject $probeAcl
+
+    $probeScript = Join-Path $probeRoot "probe.ps1"
+    $probeOutput = Join-Path $probeRoot "result.txt"
+    @'
+param([string]$ProgramDir, [string]$OutputPath)
+$ErrorActionPreference = 'Stop'
+$results = @()
+$failed = $false
+foreach ($name in @('data', 'backups', 'logs')) {
+    $root = Join-Path $ProgramDir $name
+    $listDenied = $false
+    try {
+        [void][IO.Directory]::GetFileSystemEntries($root)
+    }
+    catch [System.UnauthorizedAccessException] {
+        $listDenied = $true
+    }
+    catch {
+        $failed = $true
+    }
+    $readDenied = $false
+    try {
+        [void][IO.File]::ReadAllText((Join-Path $root 'standard-user-read-probe.txt'))
+    }
+    catch [System.UnauthorizedAccessException] {
+        $readDenied = $true
+    }
+    catch {
+        $failed = $true
+    }
+    $listResult = $(if ($listDenied) { 'PASS' } else { 'FAIL' })
+    $readResult = $(if ($readDenied) { 'PASS' } else { 'FAIL' })
+    $results += "$name`:list=$listResult;read=$readResult"
+    if (-not $listDenied -or -not $readDenied) {
+        $failed = $true
+    }
+}
+[IO.File]::WriteAllLines($OutputPath, $results, [Text.Encoding]::ASCII)
+if ($failed) { exit 1 }
+exit 0
+'@ | Set-Content -LiteralPath $probeScript -Encoding UTF8
+
+    $probeUser = "MRV2Acl" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
+    $probePasswordText = "Mrv2!" + [Guid]::NewGuid().ToString("N") + "aA1"
+    $probePassword = ConvertTo-SecureString $probePasswordText -AsPlainText -Force
+    try {
+        $probeAccount = New-LocalUser -Name $probeUser -Password $probePassword -AccountNeverExpires -PasswordNeverExpires
+        $Script:StandardUserProbeName = $probeUser
+        $usersGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new($usersSid))
+        $isUsersMember = @(
+            Get-LocalGroupMember -Group $usersGroup | Where-Object {
+                $_.SID.Value -eq $probeAccount.SID.Value
+            }
+        ).Count -eq 1
+        if (-not $isUsersMember) {
+            Add-LocalGroupMember -Group $usersGroup -Member $probeAccount
+        }
+        Assert-True (@(Get-LocalGroupMember -Group $usersGroup | Where-Object { $_.SID.Value -eq $probeAccount.SID.Value }).Count -eq 1) "standard ACL probe account is not a Users member"
+        $administratorsGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new($adminSid))
+        Assert-True (@(Get-LocalGroupMember -Group $administratorsGroup | Where-Object { $_.SID.Value -eq $probeAccount.SID.Value }).Count -eq 0) "standard ACL probe account unexpectedly has administrator membership"
+        $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$probeUser", $probePassword)
+        $escapedScript = $probeScript.Replace("'", "''")
+        $escapedProgram = $Script:ProgramDir.Replace("'", "''")
+        $escapedOutput = $probeOutput.Replace("'", "''")
+        $command = "& '$escapedScript' -ProgramDir '$escapedProgram' -OutputPath '$escapedOutput'"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $probePowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        Assert-True (Test-Path -LiteralPath $probePowerShell -PathType Leaf) "Windows PowerShell standard-user probe host is missing"
+        $probeStdout = Join-Path $probeRoot "stdout.txt"
+        $probeStderr = Join-Path $probeRoot "stderr.txt"
+        $probeProcess = Start-Process -FilePath $probePowerShell -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $encoded" -Credential $credential -RedirectStandardOutput $probeStdout -RedirectStandardError $probeStderr -Wait -PassThru
+        Assert-True (Test-Path -LiteralPath $probeOutput -PathType Leaf) "standard-user ACL probe did not return results"
+        $probeResults = @(Get-Content -LiteralPath $probeOutput -Encoding ASCII)
+        $probeResults | ForEach-Object { Write-Host "MRV2_T1U=STANDARD_USER_ACL:$_" }
+        Assert-True ($probeProcess.ExitCode -eq 0) "standard user could access a private root after rollback"
+        Assert-True ($probeResults.Count -eq 3) "standard-user ACL probe returned incomplete results"
+        foreach ($private in @('data', 'backups', 'logs')) {
+            Assert-True ($probeResults -contains "$private`:list=PASS;read=PASS") "standard-user ACL probe returned an invalid result"
+        }
+    }
+    finally {
+        $probePasswordText = $null
+        $probePassword = $null
+        $credential = $null
+    }
+}
+
+function Remove-StandardUserPrivateAccessProbeArtifacts {
+    $failures = @()
+    if (-not [string]::IsNullOrEmpty($Script:StandardUserProbeName)) {
+        try {
+            $probeUsers = @(
+                Get-LocalUser -ErrorAction Stop | Where-Object {
+                    $_.Name -ceq $Script:StandardUserProbeName
+                }
+            )
+            if ($probeUsers.Count -gt 0) {
+                Remove-LocalUser -Name $Script:StandardUserProbeName -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "local-user-remove"
+        }
+        try {
+            $probeUsers = @(
+                Get-LocalUser -ErrorAction Stop | Where-Object {
+                    $_.Name -ceq $Script:StandardUserProbeName
+                }
+            )
+            if ($probeUsers.Count -ne 0) {
+                $failures += "local-user-residue"
+            }
+        }
+        catch {
+            $failures += "local-user-verify"
+        }
+    }
+
+    foreach ($canaryPath in @($Script:StandardUserProbeCanaries)) {
+        try {
+            if (Test-Path -LiteralPath $canaryPath -ErrorAction Stop) {
+                Remove-Item -LiteralPath $canaryPath -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "canary-remove"
+        }
+        try {
+            if (Test-Path -LiteralPath $canaryPath -ErrorAction Stop) {
+                $failures += "canary-residue"
+            }
+        }
+        catch {
+            $failures += "canary-verify"
+        }
+    }
+
+    if (-not [string]::IsNullOrEmpty($Script:StandardUserProbeRoot)) {
+        try {
+            if (Test-Path -LiteralPath $Script:StandardUserProbeRoot -ErrorAction Stop) {
+                Remove-Item -LiteralPath $Script:StandardUserProbeRoot -Recurse -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "probe-root-remove"
+        }
+        try {
+            if (Test-Path -LiteralPath $Script:StandardUserProbeRoot -ErrorAction Stop) {
+                $failures += "probe-root-residue"
+            }
+        }
+        catch {
+            $failures += "probe-root-verify"
+        }
+    }
+    return $failures
+}
+
 function Dump-Diagnostics {
     Write-Host "MRV2_T1U=DIAGNOSTICS_BEGIN"
+    if ($Script:SanitizedDiagnosticsOnly) {
+        Write-Host "MRV2_T1U=DIAGNOSTICS_REDACTED"
+        Write-Host "MRV2_T1U=DIAGNOSTICS_END"
+        return
+    }
     $updateLog = Get-ChildItem -LiteralPath (Join-Path $Script:ProgramDir "logs") -Filter "update-*.log" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime | Select-Object -Last 1
     if ($updateLog) {
@@ -362,23 +562,43 @@ try {
     Expand-Archive -LiteralPath $UpdateZip -DestinationPath $updateFormal
 
     Write-Step "health-failure-rollback"
-    $faultedUpdate = Join-Path $WorkRoot "update-health-failure"
-    New-HealthFailureUpdateFixture -SourceRoot $updateFormal -DestinationRoot $faultedUpdate
-    $failedUpgrade = Invoke-CandidateBat $faultedUpdate "升级到V$Script:TargetVersion.bat" "YES"
-    Assert-True ($failedUpgrade.Code -eq 1) "health-failure update returned $($failedUpgrade.Code) instead of 1"
-    Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=1")) "health-failure update missed updater result marker"
-    Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATE_GATE=PRODUCT_RC_1")) "health-failure update missed product rollback marker"
-    $stagingAfterFailure = @(Get-ChildItem -LiteralPath $Script:ProgramDir -Force -Directory -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -like ".update-staging-*" })
-    Assert-True ($stagingAfterFailure.Count -eq 0) ("staging residue remained: " + (($stagingAfterFailure | ForEach-Object Name) -join "; "))
-    Assert-True ((Get-Content -LiteralPath $Script:VersionFile -Raw -Encoding UTF8).Trim() -ceq $Script:BaselineVersion) "version did not roll back"
-    Wait-Until {
-        $h = Get-HealthJson
-        ($null -ne $h) -and ($h.ok -eq $true) -and ([string]$h.install_id -ceq $installId)
-    } 120 "original service state was not restored"
-    $restoredHealth = Get-HealthJson
-    Assert-True ($null -ne $restoredHealth) "original service state was not restored"
-    Wait-Until { -not (Test-Path -LiteralPath $lockPath -PathType Leaf) } 60 "maintenance lock still held after health-failure rollback"
+    $Script:SanitizedDiagnosticsOnly = $true
+    $cleanupFailures = @()
+    $rollbackFailure = $null
+    try {
+        $faultedUpdate = Join-Path $WorkRoot "update-health-failure"
+        New-HealthFailureUpdateFixture -SourceRoot $updateFormal -DestinationRoot $faultedUpdate
+        New-StandardUserPrivateAccessProbeCanaries
+        $failedUpgrade = Invoke-CandidateBat $faultedUpdate "升级到V$Script:TargetVersion.bat" "YES"
+        Assert-True ($failedUpgrade.Code -eq 1) "health-failure update returned $($failedUpgrade.Code) instead of 1"
+        Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=1")) "health-failure update missed updater result marker"
+        Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATE_GATE=PRODUCT_RC_1")) "health-failure update missed product rollback marker"
+        $stagingAfterFailure = @(Get-ChildItem -LiteralPath $Script:ProgramDir -Force -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like ".update-staging-*" })
+        Assert-True ($stagingAfterFailure.Count -eq 0) ("staging residue remained: " + (($stagingAfterFailure | ForEach-Object Name) -join "; "))
+        Assert-True ((Get-Content -LiteralPath $Script:VersionFile -Raw -Encoding UTF8).Trim() -ceq $Script:BaselineVersion) "version did not roll back"
+        Wait-Until {
+            $h = Get-HealthJson
+            ($null -ne $h) -and ($h.ok -eq $true) -and ([string]$h.install_id -ceq $installId)
+        } 120 "original service state was not restored"
+        $restoredHealth = Get-HealthJson
+        Assert-True ($null -ne $restoredHealth) "original service state was not restored"
+        Wait-Until { -not (Test-Path -LiteralPath $lockPath -PathType Leaf) } 60 "maintenance lock still held after health-failure rollback"
+        Assert-StandardUserPrivateAccessProbeCanariesPresent
+        Write-Step "standard-user-private-roots-after-rollback"
+        Invoke-StandardUserPrivateAccessProbe
+    }
+    catch {
+        $rollbackFailure = $_
+    }
+    finally {
+        $cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)
+        Assert-True ($cleanupFailures.Count -eq 0) "rollback standard-user probe cleanup left residue"
+    }
+    if ($null -ne $rollbackFailure) {
+        throw "MRV2_T1U=ASSERT_FAILED: health-failure rollback acceptance failed"
+    }
+    $Script:SanitizedDiagnosticsOnly = $false
     Write-Host "health-probe failure rolled back to the running baseline"
 
     Write-Step "run-cumulative-update"
