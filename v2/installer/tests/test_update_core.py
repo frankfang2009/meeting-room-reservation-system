@@ -408,6 +408,115 @@ class UpdateCoreTests(unittest.TestCase):
         self.assertTrue(controller.running)
         self.assertEqual(load_v2_identity(self.install_root).version, "2.1.0")
 
+    def test_health_probe_failure_stops_new_runtime_before_restore(self) -> None:
+        events: list[str] = []
+
+        class RecordingController(PassiveUpdateSystemController):
+            def __init__(self) -> None:
+                super().__init__(running=True)
+                self.stop_calls = 0
+                self.restored_state: dict[str, object] | None = None
+
+            def capture_and_stop(self, identity):
+                self.stop_calls += 1
+                events.append(
+                    "stop-initial"
+                    if self.stop_calls == 1
+                    else "stop-current-runtime"
+                )
+                captured = dict(super().capture_and_stop(identity))
+                if self.stop_calls == 2:
+                    # The health runtime is transient. Its state must not replace
+                    # the original pre-update state restored after rollback.
+                    captured["service_running"] = False
+                return captured
+
+            def start_for_health(self, identity):
+                events.append("start-health")
+                return super().start_for_health(identity)
+
+            def restore(self, identity, state):
+                self.restored_state = dict(state)
+                events.append("restore-state")
+                return super().restore(identity, state)
+
+        controller = RecordingController()
+
+        def fail_probe(identity):
+            del identity
+            events.append("probe-failed")
+            raise RuntimeError("probe failed")
+
+        transaction = V2UpdateTransaction(
+            self._update_bundle(),
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=fail_probe,
+        )
+        original_restore = transaction._restore
+
+        def record_restore(*args, **kwargs):
+            events.append("restore-files")
+            return original_restore(*args, **kwargs)
+
+        transaction._restore = record_restore
+
+        with self.assertRaisesRegex(RuntimeError, "probe failed"):
+            transaction.run()
+
+        self.assertEqual(
+            events,
+            [
+                "stop-initial",
+                "start-health",
+                "probe-failed",
+                "stop-current-runtime",
+                "restore-files",
+                "restore-state",
+            ],
+        )
+        self.assertLess(
+            events.index("stop-current-runtime"), events.index("restore-files")
+        )
+        self.assertIsNotNone(controller.restored_state)
+        self.assertTrue(controller.restored_state["service_running"])
+        self.assertFalse(
+            list((self.install_root / "_程序文件").glob(".update-staging-*"))
+        )
+
+    def test_health_failure_does_not_restore_files_when_second_stop_fails(self) -> None:
+        class SecondStopFails(PassiveUpdateSystemController):
+            def __init__(self) -> None:
+                super().__init__(running=True)
+                self.stop_calls = 0
+
+            def capture_and_stop(self, identity):
+                self.stop_calls += 1
+                if self.stop_calls == 2:
+                    raise OSError("stop failed")
+                return super().capture_and_stop(identity)
+
+        controller = SecondStopFails()
+        transaction = V2UpdateTransaction(
+            self._update_bundle(),
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=lambda identity: (_ for _ in ()).throw(
+                RuntimeError("probe failed")
+            ),
+        )
+        with mock.patch.object(transaction, "_restore") as restore:
+            with self.assertRaisesRegex(UpdateRollbackError, "自动回滚未能验证"):
+                transaction.run()
+
+        restore.assert_not_called()
+        self.assertEqual(
+            (self.install_root / "_程序文件/app/service.py").read_bytes(),
+            b"# V2.4.0 updated service\n",
+        )
+
     def test_same_package_rerun_recovers_an_interrupted_precommit_transaction(self) -> None:
         bundle = self._update_bundle()
         controller = PassiveUpdateSystemController(running=True)

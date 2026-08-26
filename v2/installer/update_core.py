@@ -1410,6 +1410,7 @@ class V2UpdateTransaction:
         }
         prepared = False
         resources_stopped = False
+        health_runtime_started = False
         committed = False
         self.log.add_path(
             identity.root / "_程序文件" / "logs" /
@@ -1444,9 +1445,11 @@ class V2UpdateTransaction:
                 self.controller.verify(identity)
                 self._stage(state, "security_verified", state_path)
                 self.controller.start_for_health(identity)
+                health_runtime_started = True
                 if self.health_probe is not None:
                     self.health_probe(identity)
                 self.controller.capture_and_stop(identity)
+                health_runtime_started = False
                 self._stage(state, "healthcheck_passed_and_stopped", state_path)
                 self._commit_identity(identity, state, state_path)
                 committed = True
@@ -1468,15 +1471,24 @@ class V2UpdateTransaction:
                     ) from error
                 rollback_errors: list[str] = []
                 if prepared:
-                    try:
-                        self._restore(
-                            identity,
-                            rollback,
-                            run_state,
-                            restore_controller=resources_stopped,
-                        )
-                    except BaseException as rollback_error:
-                        rollback_errors.append(str(rollback_error))
+                    if health_runtime_started:
+                        try:
+                            # This snapshot belongs only to the transient health
+                            # runtime. Preserve the original pre-update run_state.
+                            self.controller.capture_and_stop(identity)
+                            health_runtime_started = False
+                        except BaseException as rollback_error:
+                            rollback_errors.append(str(rollback_error))
+                    if not rollback_errors:
+                        try:
+                            self._restore(
+                                identity,
+                                rollback,
+                                run_state,
+                                restore_controller=resources_stopped,
+                            )
+                        except BaseException as rollback_error:
+                            rollback_errors.append(str(rollback_error))
                 elif resources_stopped:
                     try:
                         self.controller.restore(identity, run_state)
