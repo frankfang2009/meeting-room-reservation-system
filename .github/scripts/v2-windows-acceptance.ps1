@@ -41,6 +41,7 @@ $Script:BackupBat = "② 立即备份.bat"
 $Script:StopBat = "④ 停止本次后台系统.bat"
 $Script:MainTaskName = "会议室预约系统 V2"
 $Script:BackupTaskName = "会议室预约系统 V2 每日备份"
+$Script:SanitizedDiagnosticsOnly = $false
 
 function Write-Step([string]$Name) {
     Write-Host ""
@@ -156,6 +157,11 @@ function Dump-Diagnostics {
         catch {
             Write-Host "task '$taskName' not found"
         }
+    }
+    if ($Script:SanitizedDiagnosticsOnly) {
+        Write-Host "MRV2_T1=DIAGNOSTICS_REDACTED"
+        Write-Host "MRV2_T1=DIAGNOSTICS_END"
+        return
     }
     if (Test-Path -LiteralPath $Script:ServiceLog -PathType Leaf) {
         Write-Host "--- service.log (tail 80) ---"
@@ -409,6 +415,173 @@ try {
     } 120 "service did not come back after port conflict test"
     Write-Host "port conflict refusal and recovery passed"
 
+    Write-Step "dacl-boundaries"
+    $Script:SanitizedDiagnosticsOnly = $true
+    $systemSid = "S-1-5-18"
+    $adminSid = "S-1-5-32-544"
+    $usersSid = "S-1-5-32-545"
+    $fullControl = [int64][System.Security.AccessControl.FileSystemRights]::FullControl
+    $readExecute = [int64][System.Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $synchronize = [int64][System.Security.AccessControl.FileSystemRights]::Synchronize
+
+    function Get-RootAclSummary([string]$Name, [string]$Path, [bool]$AllowUsers) {
+        $acl = Get-Acl -LiteralPath $Path
+        $ownerSid = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        $rights = @{}
+        foreach ($rule in $acl.Access) {
+            if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
+                continue
+            }
+            $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+            if (-not $rights.ContainsKey($sid)) {
+                $rights[$sid] = 0
+            }
+            $rights[$sid] = [int64]$rights[$sid] -bor [int64]$rule.FileSystemRights
+        }
+        Assert-True ([bool]$acl.AreAccessRulesProtected) "$Name ACL inherits from its parent"
+        Assert-True ($ownerSid -eq $adminSid) "$Name ACL owner SID is not Administrators"
+        foreach ($sid in @($systemSid, $adminSid)) {
+            Assert-True ($rights.ContainsKey($sid) -and (($rights[$sid] -band $fullControl) -eq $fullControl)) "$Name ACL lacks required full-control SID"
+        }
+        if ($AllowUsers) {
+            $allowed = $readExecute -bor $synchronize
+            Assert-True ($rights.ContainsKey($usersSid)) "$Name ACL lacks Users read-and-execute"
+            Assert-True (($rights[$usersSid] -band $readExecute) -eq $readExecute) "$Name Users rights omit read-and-execute"
+            Assert-True (($rights[$usersSid] -band (-bnot $allowed)) -eq 0) "$Name Users rights exceed read-and-execute"
+        }
+        else {
+            Assert-True (-not $rights.ContainsKey($usersSid)) "$Name ACL grants Users access"
+        }
+        return [PSCustomObject]@{
+            root      = $Name
+            protected = [bool]$acl.AreAccessRulesProtected
+            ownerSid  = $ownerSid
+            users     = $(if ($AllowUsers) { "RX" } else { "NONE" })
+        }
+    }
+
+    $aclSummaries = @()
+    foreach ($public in @('app', 'runtime')) {
+        $aclSummaries += Get-RootAclSummary $public (Join-Path $Script:ProgramDir $public) $true
+    }
+    foreach ($private in @('data', 'backups', 'logs')) {
+        $aclSummaries += Get-RootAclSummary $private (Join-Path $Script:ProgramDir $private) $false
+    }
+    Write-Host ("MRV2_T1=ACL_SUMMARY:" + ($aclSummaries | ConvertTo-Json -Compress))
+
+    $probeRoot = Join-Path $WorkRoot "standard-user-acl-probe"
+    New-Item -ItemType Directory -Path $probeRoot | Out-Null
+    $probeAcl = Get-Acl -LiteralPath $probeRoot
+    $probeAcl.SetAccessRuleProtection($true, $false)
+    $probeAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+        [System.Security.Principal.SecurityIdentifier]::new($usersSid),
+        [System.Security.AccessControl.FileSystemRights]::Modify,
+        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+        [System.Security.AccessControl.PropagationFlags]::None,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    ))
+    Set-Acl -LiteralPath $probeRoot -AclObject $probeAcl
+
+    $probeFiles = @{}
+    foreach ($private in @('data', 'backups', 'logs')) {
+        $probeFile = Join-Path (Join-Path $Script:ProgramDir $private) "standard-user-read-probe.txt"
+        Set-Content -LiteralPath $probeFile -Value "synthetic ACL probe" -Encoding ASCII
+        $probeFiles[$private] = $probeFile
+    }
+    $probeScript = Join-Path $probeRoot "probe.ps1"
+    $probeOutput = Join-Path $probeRoot "result.txt"
+    @'
+param([string]$ProgramDir, [string]$OutputPath)
+$ErrorActionPreference = 'Stop'
+$results = @()
+$failed = $false
+foreach ($name in @('data', 'backups', 'logs')) {
+    $root = Join-Path $ProgramDir $name
+    $directoryDenied = $false
+    try {
+        [void][IO.Directory]::GetFileSystemEntries($root)
+    }
+    catch [System.UnauthorizedAccessException] {
+        $directoryDenied = $true
+    }
+    $fileDenied = $false
+    try {
+        [void][IO.File]::ReadAllText((Join-Path $root 'standard-user-read-probe.txt'))
+    }
+    catch [System.UnauthorizedAccessException] {
+        $fileDenied = $true
+    }
+    $directoryResult = $(if ($directoryDenied) { 'PASS' } else { 'FAIL' })
+    $fileResult = $(if ($fileDenied) { 'PASS' } else { 'FAIL' })
+    $results += "$name`:directory=$directoryResult;file=$fileResult"
+    if (-not $directoryDenied -or -not $fileDenied) {
+        $failed = $true
+    }
+}
+[IO.File]::WriteAllLines($OutputPath, $results, [Text.Encoding]::ASCII)
+if ($failed) { exit 1 }
+exit 0
+'@ | Set-Content -LiteralPath $probeScript -Encoding UTF8
+
+    $probeUser = "MRV2AclProbe"
+    $probePasswordText = "Mrv2!" + [Guid]::NewGuid().ToString("N") + "aA1"
+    $probePassword = ConvertTo-SecureString $probePasswordText -AsPlainText -Force
+    Assert-True ($null -eq (Get-LocalUser -Name $probeUser -ErrorAction SilentlyContinue)) "standard ACL probe account already exists"
+    try {
+        $probeAccount = New-LocalUser -Name $probeUser -Password $probePassword -AccountNeverExpires -PasswordNeverExpires
+        $usersGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new($usersSid))
+        $isUsersMember = @(
+            Get-LocalGroupMember -Group $usersGroup | Where-Object {
+                $_.SID.Value -eq $probeAccount.SID.Value
+            }
+        ).Count -eq 1
+        if (-not $isUsersMember) {
+            Add-LocalGroupMember -Group $usersGroup -Member $probeAccount
+        }
+        Assert-True (@(Get-LocalGroupMember -Group $usersGroup | Where-Object { $_.SID.Value -eq $probeAccount.SID.Value }).Count -eq 1) "standard ACL probe account is not a Users member"
+        $administratorsGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new($adminSid))
+        Assert-True (@(Get-LocalGroupMember -Group $administratorsGroup | Where-Object { $_.SID.Value -eq $probeAccount.SID.Value }).Count -eq 0) "standard ACL probe account unexpectedly has administrator membership"
+        $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$probeUser", $probePassword)
+        $escapedScript = $probeScript.Replace("'", "''")
+        $escapedProgram = $Script:ProgramDir.Replace("'", "''")
+        $escapedOutput = $probeOutput.Replace("'", "''")
+        $command = "& '$escapedScript' -ProgramDir '$escapedProgram' -OutputPath '$escapedOutput'"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        $probeProcess = Start-Process -FilePath "$PSHOME\powershell.exe" -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $encoded" -Credential $credential -LoadUserProfile -Wait -PassThru
+        $probeResults = @(Get-Content -LiteralPath $probeOutput -Encoding ASCII)
+        $probeResults | ForEach-Object { Write-Host "MRV2_T1=STANDARD_USER_ACL:$_" }
+        Assert-True ($probeProcess.ExitCode -eq 0) "standard user could access a private root"
+        Assert-True ($probeResults.Count -eq 3) "standard-user ACL probe returned incomplete results"
+    }
+    finally {
+        Remove-LocalUser -Name $probeUser -ErrorAction SilentlyContinue
+        foreach ($probeFile in $probeFiles.Values) {
+            Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
+        }
+        $probePasswordText = $null
+        $probePassword = $null
+        $credential = $null
+    }
+
+    $stoppedForSystemStart = Invoke-CandidateBat $Script:InstallRoot " " $Script:StopBat
+    Assert-True ($stoppedForSystemStart.Code -eq 0) "stop BAT failed before SYSTEM task start proof"
+    Wait-Until { $null -eq (Get-HealthJson) } 60 "service still answers before SYSTEM task start proof"
+    $mainTask = Get-ScheduledTask -TaskPath "\" -TaskName $Script:MainTaskName
+    Assert-True ([string]$mainTask.Principal.UserId -eq "SYSTEM") "main task principal is not SYSTEM during ACL proof"
+    Enable-ScheduledTask -InputObject $mainTask | Out-Null
+    Start-ScheduledTask -InputObject $mainTask
+    Wait-Until {
+        $healthAfterAcl = Get-HealthJson
+        ($null -ne $healthAfterAcl) -and
+        ($healthAfterAcl.ok -eq $true) -and
+        ($healthAfterAcl.bind_mode -eq "lan") -and
+        ($healthAfterAcl.setup_complete -eq $true) -and
+        ($healthAfterAcl.install_id -ceq $installId) -and
+        ($healthAfterAcl.product_generation -eq 2)
+    } 120 "application did not return the complete healthy identity through the SYSTEM task after ACL checks"
+    Write-Host "DACL boundaries and SYSTEM-task startup verified"
+    $Script:SanitizedDiagnosticsOnly = $false
+
     Write-Step "fail-closed-corruption"
     $stopped = Invoke-CandidateBat $Script:InstallRoot " " $Script:StopBat
     Assert-True ($stopped.Code -eq 0) "stop BAT failed before corruption test"
@@ -449,20 +622,6 @@ try {
     catch {
         Write-Host "best-effort stop after corruption test did not complete; runner VM is disposable"
     }
-
-    Write-Step "dacl-boundaries"
-    # icacls 对可解析的 BUILTIN 组显示为“BUILTIN\Users”而非原始 SID，两种形式都接受。
-    function Test-AclHasUsersAce([string]$AclText) {
-        return ($AclText -match 'S-1-5-32-545') -or ($AclText -match 'BUILTIN\\Users:') -or ($AclText -match '(^|[\r\n])Users:')
-    }
-    $appAcl = (& icacls.exe "$Script:ProgramDir\app") -join "`n"
-    Assert-True (Test-AclHasUsersAce $appAcl) "app tree does not carry a Users (S-1-5-32-545) ACE: $appAcl"
-    Assert-True ($appAcl -match '\(RX\)') "app tree Users ACE does not look read-and-execute: $appAcl"
-    foreach ($private in @("data", "backups", "logs")) {
-        $privateAcl = (& icacls.exe (Join-Path $Script:ProgramDir $private)) -join "`n"
-        Assert-True (-not (Test-AclHasUsersAce $privateAcl)) "$private must not carry a Users (S-1-5-32-545) ACE: $privateAcl"
-    }
-    Write-Host "DACL boundaries verified: app readable by Users, private dirs admin/SYSTEM only"
 
     Write-Host ""
     Write-Host "MRV2_T1=PASS"

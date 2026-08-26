@@ -31,6 +31,7 @@ from v2.installer.installer_core import (
     encode_elevation_context,
     production_install_root,
     validate_target,
+    windows_filesystem_acl_policy_script,
     windows_system_directory,
 )
 from v2.installer.tests.helpers import load_fixture_bundle
@@ -406,12 +407,14 @@ class InstallerCoreTests(unittest.TestCase):
 
     def test_windows_acl_never_recursively_opens_private_tree_to_users(self) -> None:
         configure = inspect.getsource(WindowsSystemController.configure_disabled)
+        filesystem_policy = windows_filesystem_acl_policy_script()
         verify = inspect.getsource(WindowsSystemController.verify_security)
         self.assertNotIn("$root /grant:r", configure)
         self.assertNotIn("$root /reset /T", configure)
+        self.assertIn("windows_filesystem_acl_policy_script()", configure)
         self.assertLess(
-            configure.index("foreach ($private in $privateRoots)"),
-            configure.index("if (-not $isPrivate) { Set-FileAcl $fullPath $true }"),
+            filesystem_policy.index("foreach ($private in $privateRoots)"),
+            filesystem_policy.index("if (-not $isPrivate) { Set-FileAcl $fullPath $true }"),
         )
         self.assertIn("Get-ChildItem -LiteralPath $root -Force -Recurse", verify)
         self.assertIn("-band (-bnot $allowed)", verify)
@@ -426,6 +429,29 @@ class InstallerCoreTests(unittest.TestCase):
             "Get-Acl -LiteralPath $env:MRV2_REGISTRY_KEY",
             verify,
         )
+
+    def test_windows_acceptance_runs_private_tree_denials_as_a_standard_user(self) -> None:
+        acceptance = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "scripts"
+            / "v2-windows-acceptance.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertIn("'app', 'runtime'", acceptance)
+        self.assertIn("Start-Process", acceptance)
+        self.assertIn("-Credential", acceptance)
+        self.assertIn("Add-LocalGroupMember", acceptance)
+        self.assertIn("directory=$directoryResult;file=$fileResult", acceptance)
+        self.assertIn("if ($failed) { exit 1 }", acceptance)
+        self.assertIn("Get-Acl", acceptance)
+        self.assertIn("S-1-5-32-545", acceptance)
+        self.assertIn("MRV2_T1=DIAGNOSTICS_REDACTED", acceptance)
+        self.assertIn("$healthAfterAcl.ok -eq $true", acceptance)
+        self.assertIn("$healthAfterAcl.bind_mode -eq \"lan\"", acceptance)
+        self.assertIn("$healthAfterAcl.setup_complete -eq $true", acceptance)
+        self.assertIn("$healthAfterAcl.install_id -ceq $installId", acceptance)
+        self.assertIn("$healthAfterAcl.product_generation -eq 2", acceptance)
+        self.assertNotIn("icacls.exe", acceptance[acceptance.index('Write-Step "dacl-boundaries"') :])
 
     def test_windows_tasks_use_one_daily_backup_bound_to_install_id(self) -> None:
         configure = inspect.getsource(WindowsSystemController.configure_disabled)

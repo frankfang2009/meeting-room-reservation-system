@@ -1166,6 +1166,71 @@ class PassiveSystemController(SystemController):
         self.configured = False
 
 
+def windows_filesystem_acl_policy_script() -> str:
+    """Return the one Windows filesystem ACL policy used by install and update."""
+
+    return r"""
+$adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
+$systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
+$usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
+function Set-FileAcl([string]$path, [bool]$allowUsers) {
+    $acl = New-Object System.Security.AccessControl.DirectorySecurity
+    if (-not (Get-Item -LiteralPath $path -Force).PSIsContainer) {
+        $acl = New-Object System.Security.AccessControl.FileSecurity
+    }
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.SetOwner($adminSid)
+    $inheritance = if ((Get-Item -LiteralPath $path -Force).PSIsContainer) {
+        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    } else {
+        [System.Security.AccessControl.InheritanceFlags]::None
+    }
+    $propagation = [System.Security.AccessControl.PropagationFlags]::None
+    $allow = [System.Security.AccessControl.AccessControlType]::Allow
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($systemSid, 'FullControl', $inheritance, $propagation, $allow)))
+    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($adminSid, 'FullControl', $inheritance, $propagation, $allow)))
+    if ($allowUsers) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, 'ReadAndExecute', $inheritance, $propagation, $allow)))
+    }
+    Set-Acl -LiteralPath $path -AclObject $acl
+}
+$privateRoots = @(
+    (Join-Path $program 'data'),
+    (Join-Path $program 'backups'),
+    (Join-Path $program 'logs')
+)
+$publicRoots = @(
+    (Join-Path $program 'app'),
+    (Join-Path $program 'runtime')
+)
+foreach ($public in $publicRoots) {
+    if (-not (Test-Path -LiteralPath $public -PathType Container)) {
+        throw "V2 程序目录缺失：$public"
+    }
+}
+foreach ($private in $privateRoots) {
+    if (-not (Test-Path -LiteralPath $private -PathType Container)) {
+        throw "V2 私有目录缺失：$private"
+    }
+    foreach ($item in @((Get-Item -LiteralPath $private -Force)) + @(Get-ChildItem -LiteralPath $private -Force -Recurse)) {
+        Set-FileAcl $item.FullName $false
+    }
+}
+foreach ($item in @((Get-Item -LiteralPath $root -Force)) + @(Get-ChildItem -LiteralPath $root -Force -Recurse)) {
+    $fullPath = [IO.Path]::GetFullPath($item.FullName)
+    $isPrivate = $false
+    foreach ($privateRoot in $privateRoots) {
+        $prefix = [IO.Path]::GetFullPath($privateRoot).TrimEnd('\')
+        if ($fullPath -eq $prefix -or $fullPath.StartsWith($prefix + '\', [StringComparison]::OrdinalIgnoreCase)) {
+            $isPrivate = $true
+            break
+        }
+    }
+    if (-not $isPrivate) { Set-FileAcl $fullPath $true }
+}
+"""
+
+
 class WindowsSystemController(SystemController):
     FIREWALL_MANUAL = "会议室预约系统V2-手动"
     FIREWALL_BACKGROUND = "会议室预约系统V2-后台"
@@ -1273,57 +1338,7 @@ foreach ($name in @($env:MRV2_FW_MANUAL, $env:MRV2_FW_BACKGROUND)) {
         throw "V2 专属防火墙规则已经存在，拒绝覆盖：$name"
     }
 }
-
-# staging 从创建起只有 SYSTEM 与 Administrators。这里先把三个现场目录继续
-# 固定为私有 DACL，再逐项开放程序树只读执行；任何时刻都不会把 secret/data
-# 暂时递归授权给普通 Users。
-$adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
-$systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
-$usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
-function Set-FileAcl([string]$path, [bool]$allowUsers) {
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
-    if (-not (Get-Item -LiteralPath $path -Force).PSIsContainer) {
-        $acl = New-Object System.Security.AccessControl.FileSecurity
-    }
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.SetOwner($adminSid)
-    $inheritance = if ((Get-Item -LiteralPath $path -Force).PSIsContainer) {
-        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    } else {
-        [System.Security.AccessControl.InheritanceFlags]::None
-    }
-    $propagation = [System.Security.AccessControl.PropagationFlags]::None
-    $allow = [System.Security.AccessControl.AccessControlType]::Allow
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($systemSid, 'FullControl', $inheritance, $propagation, $allow)))
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($adminSid, 'FullControl', $inheritance, $propagation, $allow)))
-    if ($allowUsers) {
-        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, 'ReadAndExecute', $inheritance, $propagation, $allow)))
-    }
-    Set-Acl -LiteralPath $path -AclObject $acl
-}
-$privateRoots = @(
-    (Join-Path $program 'data'),
-    (Join-Path $program 'backups'),
-    (Join-Path $program 'logs')
-)
-foreach ($private in $privateRoots) {
-    foreach ($item in @((Get-Item -LiteralPath $private -Force)) + @(Get-ChildItem -LiteralPath $private -Force -Recurse)) {
-        Set-FileAcl $item.FullName $false
-    }
-}
-foreach ($item in @((Get-Item -LiteralPath $root -Force)) + @(Get-ChildItem -LiteralPath $root -Force -Recurse)) {
-    $fullPath = [IO.Path]::GetFullPath($item.FullName)
-    $isPrivate = $false
-    foreach ($privateRoot in $privateRoots) {
-        $prefix = [IO.Path]::GetFullPath($privateRoot).TrimEnd('\')
-        if ($fullPath -eq $prefix -or $fullPath.StartsWith($prefix + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            $isPrivate = $true
-            break
-        }
-    }
-    if (-not $isPrivate) { Set-FileAcl $fullPath $true }
-}
-
+""" + windows_filesystem_acl_policy_script() + r"""
 $action = New-ScheduledTaskAction -Execute $pythonw -Argument ('"' + $service + '"') -WorkingDirectory $working
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest

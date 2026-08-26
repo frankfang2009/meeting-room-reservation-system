@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sqlite3
 import tempfile
 import types
@@ -315,11 +317,31 @@ class UpdateCoreTests(unittest.TestCase):
         self.assertEqual(events, ["apply", "verify"])
         self.assertFalse(list((self.install_root / "_程序文件").glob(".update-displaced-*")))
 
-    def test_rollback_after_program_replace_reapplies_program_security(self) -> None:
-        controller = PassiveUpdateSystemController(running=True)
+    def test_rollback_reapplies_full_security_after_all_files_and_before_run_state(self) -> None:
+        service = self.install_root / "_程序文件" / "app" / "service.py"
+        original_service = service.read_bytes()
+        unknown = self.install_root / "_程序文件" / "data" / "unknown.bin"
+        unknown.write_bytes(b"before")
+        events: list[tuple[str, bytes, bytes]] = []
+
+        class RecordingController(PassiveUpdateSystemController):
+            def apply_security(inner_self, identity):
+                events.append(("apply", service.read_bytes(), unknown.read_bytes()))
+                super().apply_security(identity)
+
+            def verify(inner_self, identity):
+                events.append(("verify", service.read_bytes(), unknown.read_bytes()))
+                super().verify(identity)
+
+            def restore(inner_self, identity, state):
+                events.append(("restore", service.read_bytes(), unknown.read_bytes()))
+                super().restore(identity, state)
+
+        controller = RecordingController(running=True)
 
         def fail(stage: str) -> None:
             if stage == "program_replaced":
+                unknown.write_bytes(b"during-update")
                 raise RuntimeError("injected failure")
 
         with self.assertRaisesRegex(RuntimeError, "injected failure"):
@@ -331,9 +353,40 @@ class UpdateCoreTests(unittest.TestCase):
                 health_probe=None,
                 fault_hook=fail,
             ).run()
-        # copytree 重建的旧树同样要重新过安全策略，回滚后的安装仍是合规 ACL。
+        self.assertEqual(
+            events[-3:],
+            [
+                ("apply", original_service, b"before"),
+                ("verify", original_service, b"before"),
+                ("restore", original_service, b"before"),
+            ],
+        )
         self.assertGreaterEqual(controller.security_applications, 1)
         self.assertEqual(load_v2_identity(self.install_root).version, "2.1.0")
+
+    def test_rollback_security_verification_failure_keeps_runtime_stopped(self) -> None:
+        class VerificationFails(PassiveUpdateSystemController):
+            def verify(inner_self, identity):
+                del identity
+                raise OSError("synthetic security verification failure")
+
+        controller = VerificationFails(running=True)
+
+        def fail(stage: str) -> None:
+            if stage == "program_replaced":
+                raise RuntimeError("injected failure")
+
+        with self.assertRaisesRegex(UpdateRollbackError, "自动回滚未能验证"):
+            V2UpdateTransaction(
+                self._update_bundle(),
+                self.install_root,
+                controller,
+                online_backup=None,
+                health_probe=None,
+                fault_hook=fail,
+            ).run()
+
+        self.assertFalse(controller.running)
 
     def test_stale_displaced_dirs_are_cleaned_by_rollback_and_never_block_retry(self) -> None:
         program = self.install_root / "_程序文件"
@@ -366,7 +419,7 @@ class UpdateCoreTests(unittest.TestCase):
         self.assertEqual(result.target_version, "2.4.0")
         self.assertFalse(list(program.glob(".update-displaced-*")))
 
-    def test_windows_controller_reapplies_protected_dacl_on_program_roots(self) -> None:
+    def test_windows_controller_reapplies_exact_policy_to_public_and_private_roots(self) -> None:
         controller = WindowsUpdateSystemController()
         captured: dict[str, str] = {}
         controller.base._run_powershell = (  # type: ignore[method-assign]
@@ -378,8 +431,11 @@ class UpdateCoreTests(unittest.TestCase):
         for name in ("'app'", "'runtime'"):
             self.assertIn(name, script)
         self.assertIn("ReadAndExecute", script)
-        # data/backups/logs 的私有 DACL 不归更新器重写。
-        self.assertNotIn("Join-Path $program 'data'", script)
+        for name in ("data", "backups", "logs"):
+            self.assertIn(f"Join-Path $program '{name}'", script)
+        self.assertIn("$privateRoots", script)
+        self.assertIn("SetAccessRuleProtection($true, $false)", script)
+        self.assertIn("SetOwner($adminSid)", script)
 
     def test_precommit_failure_restores_program_data_version_and_running_state(self) -> None:
         service = self.install_root / "_程序文件" / "app" / "service.py"
@@ -541,6 +597,127 @@ class UpdateCoreTests(unittest.TestCase):
         interrupted._restore = failed_rollback
         with self.assertRaises(UpdateRollbackError):
             interrupted.run()
+
+        # 模拟机器在回滚已于私有 backups 树构建好 data 候选目录、
+        # 且已把现行 data 移开后断电。下次运行必须完成该原子窗口。
+        state_path = self.install_root / "_程序文件" / "update-transaction.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        rollback = Path(state["rollback_root"])
+        restored_data = rollback / "data-restore-candidate"
+        displaced_data = rollback / "data-before-restore"
+        shutil.copytree(rollback / "protected-data" / "data", restored_data)
+        os.replace(self.install_root / "_程序文件" / "data", displaced_data)
+
+        recovery_events: list[str] = []
+
+        class RecoveryController(PassiveUpdateSystemController):
+            def capture_and_stop(inner_self, identity):
+                recovery_events.append("stop")
+                return super().capture_and_stop(identity)
+
+            def apply_security(inner_self, identity):
+                recovery_events.append("apply")
+                return super().apply_security(identity)
+
+            def verify(inner_self, identity):
+                recovery_events.append("verify")
+                return super().verify(identity)
+
+            def restore(inner_self, identity, state):
+                recovery_events.append("restore")
+                return super().restore(identity, state)
+
+        recovery_controller = RecoveryController(running=True)
+        result = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            recovery_controller,
+            online_backup=None,
+            health_probe=None,
+        ).run()
+        self.assertEqual(recovery_events[:4], ["stop", "apply", "verify", "restore"])
+        self.assertEqual(result.target_version, "2.4.0")
+        self.assertEqual(load_v2_identity(self.install_root).version, "2.4.0")
+        self.assertTrue(recovery_controller.running)
+
+    def test_partial_restore_candidate_is_rebuilt_after_cleanup_interruption(self) -> None:
+        bundle = self._update_bundle()
+        data = self.install_root / "_程序文件" / "data"
+        install_id_before = (data / "install_id").read_bytes()
+        unknown = data / "unknown.bin"
+        unknown.write_bytes(b"before")
+
+        def fail(stage: str) -> None:
+            if stage == "program_replaced":
+                unknown.write_bytes(b"during-update")
+                raise RuntimeError("power loss")
+
+        interrupted = V2UpdateTransaction(
+            bundle,
+            self.install_root,
+            PassiveUpdateSystemController(running=True),
+            online_backup=None,
+            health_probe=None,
+            fault_hook=fail,
+        )
+
+        def leave_partial_candidate(identity, rollback, run_state, *, restore_controller):
+            del identity, run_state, restore_controller
+            snapshot = rollback / "protected-data" / "data"
+            candidate = rollback / "data-restore-candidate"
+            candidate.mkdir()
+            source = next(path for path in snapshot.rglob("*") if path.is_file())
+            destination = candidate / source.relative_to(snapshot)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            raise OSError("copy interrupted")
+
+        interrupted._restore = leave_partial_candidate
+        with self.assertRaises(UpdateRollbackError):
+            interrupted.run()
+
+        state_path = self.install_root / "_程序文件" / "update-transaction.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        rollback = Path(state["rollback_root"])
+        candidate = rollback / "data-restore-candidate"
+        self.assertTrue(candidate.is_dir())
+
+        controller = PassiveUpdateSystemController(running=False)
+        real_rmtree = shutil.rmtree
+        cleanup_attempted = False
+
+        def interrupt_candidate_cleanup(path, *args, **kwargs):
+            nonlocal cleanup_attempted
+            if Path(path) == candidate and not cleanup_attempted:
+                cleanup_attempted = True
+                raise OSError("candidate cleanup interrupted")
+            return real_rmtree(path, *args, **kwargs)
+
+        with mock.patch(
+            "v2.installer.update_core.shutil.rmtree",
+            side_effect=interrupt_candidate_cleanup,
+        ):
+            with self.assertRaisesRegex(OSError, "candidate cleanup interrupted"):
+                V2UpdateTransaction(
+                    bundle,
+                    self.install_root,
+                    controller,
+                    online_backup=None,
+                    health_probe=None,
+                ).run()
+        self.assertTrue(cleanup_attempted)
+        self.assertTrue(candidate.is_dir())
+        self.assertFalse(controller.running)
+
+        events: list[str] = []
+        controller.capture_and_stop = lambda identity: (  # type: ignore[method-assign]
+            events.append("stop") or PassiveUpdateSystemController.capture_and_stop(controller, identity)
+        )
+        controller.apply_security = lambda identity: events.append("apply")  # type: ignore[method-assign]
+        controller.verify = lambda identity: events.append("verify")  # type: ignore[method-assign]
+        controller.restore = lambda identity, run_state: (  # type: ignore[method-assign]
+            events.append("restore") or PassiveUpdateSystemController.restore(controller, identity, run_state)
+        )
         result = V2UpdateTransaction(
             bundle,
             self.install_root,
@@ -548,8 +725,11 @@ class UpdateCoreTests(unittest.TestCase):
             online_backup=None,
             health_probe=None,
         ).run()
+
+        self.assertEqual(events[:4], ["stop", "apply", "verify", "restore"])
         self.assertEqual(result.target_version, "2.4.0")
-        self.assertEqual(load_v2_identity(self.install_root).version, "2.4.0")
+        self.assertEqual(unknown.read_bytes(), b"before")
+        self.assertEqual((data / "install_id").read_bytes(), install_id_before)
         self.assertTrue(controller.running)
 
     def test_interrupted_transaction_rejects_tampered_snapshot_binding(self) -> None:
