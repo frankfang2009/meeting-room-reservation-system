@@ -64,6 +64,7 @@ import { buildTagSectionPayload } from "./features/tags/tag-drafts.js";
 import {
   dateLabel,
   formatLocalDateTime,
+  handoverLedgerSections,
   itemName,
   monthKey,
   normalizeTag,
@@ -2041,32 +2042,31 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   function renderHandovers() {
     const incoming = handoverBoard.incoming;
     const outgoing = handoverBoard.outgoing;
-    const total = incoming.length + outgoing.length;
+    const sections = handoverLedgerSections({ incoming, outgoing });
     const reservationSummary = (request) => `${withRelativeDay(request.reservation.date)} · ${request.reservation.start}–${request.reservation.end} · ${request.reservation.roomName}`;
     return <main className="main-canvas handover-canvas" tabIndex={0}>
       <header className="page-header handover-page-header"><div><h1>工作交接</h1><p>预约者变更需要双方明确确认，处理记录会保留在预约时间线中。</p></div></header>
       <div className="handover-page-layout">
-        <section className="handover-summary" aria-label="交接概览">
-          <div><span>待我确认</span><strong>{incoming.length}</strong></div>
-          <div><span>我发起的</span><strong>{outgoing.length}</strong></div>
-          <p>{total ? `当前共有 ${total} 条进行中的工作交接` : "当前没有进行中的工作交接"}</p>
-        </section>
-        <section className="handover-ledger" aria-labelledby="incoming-handover-heading">
-          <header><div><span className="handover-ledger-icon neutral" aria-hidden="true"><ArrowsLeftRight size={19} /></span><div><h2 id="incoming-handover-heading">待我确认</h2><p>接受后，你将成为新的预约者。</p></div></div><strong>{incoming.length}</strong></header>
-          {incoming.length ? <div className="handover-ledger-list">{incoming.map((request) => <article className="handover-ledger-row incoming" key={request.id}>
-            <div className="handover-ledger-party"><span>来自 {request.fromUser.name}</span><strong>{request.reservation.partyName}</strong><small>当事人</small></div>
-            <div className="handover-ledger-detail"><strong>{request.reservation.purpose}</strong><span>{reservationSummary(request)}</span></div>
-            <div className="handover-ledger-actions"><button type="button" className="handover-view" onClick={() => void openDetails(request.reservation, true)}>查看预约</button><button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(request.id, "decline")}>不接受</button><button type="button" className="handover-accept" disabled={noticeAckBusy} onClick={() => void decideHandover(request.id, "accept")}>接受交接</button></div>
-          </article>)}</div> : <div className="handover-ledger-empty"><CheckCircle size={28} weight="thin" /><p>没有需要你确认的交接</p></div>}
-        </section>
-        <section className="handover-ledger" aria-labelledby="outgoing-handover-heading">
-          <header><div><span className="handover-ledger-icon muted" aria-hidden="true"><Clock size={19} /></span><div><h2 id="outgoing-handover-heading">我发起的</h2><p>对方确认前，预约仍归你。</p></div></div><strong>{outgoing.length}</strong></header>
-          {outgoing.length ? <div className="handover-ledger-list">{outgoing.map((request) => <article className="handover-ledger-row outgoing" key={request.id}>
-            <div className="handover-ledger-party"><span>等待 {request.toUser.name} 确认</span><strong>{request.reservation.partyName}</strong><small>当事人</small></div>
-            <div className="handover-ledger-detail"><strong>{request.reservation.purpose}</strong><span>{reservationSummary(request)}</span></div>
-            <div className="handover-ledger-actions"><span className="handover-waiting">处理中</span><button type="button" className="handover-view" onClick={() => void openDetails(request.reservation, true)}>查看预约</button><button type="button" onClick={() => void withdrawHandoverRequest(request.id)}>撤回申请</button></div>
-          </article>)}</div> : <div className="handover-ledger-empty"><Clock size={28} weight="thin" /><p>你还没有发起交接</p></div>}
-        </section>
+        {sections.length ? sections.map((section) => <section className={`handover-ledger ${section.id}`} aria-labelledby={`${section.id}-handover-heading`} key={section.id}>
+          <header className="handover-ledger-kicker"><h2 id={`${section.id}-handover-heading`}>{section.eyebrow}</h2></header>
+          <div className="handover-ledger-list">{section.items.map((request) => <article className={`handover-ledger-row ${section.id}`} key={request.id}>
+            <div className="handover-ledger-party">
+              {section.items.length > 1 && <span>{section.id === "incoming" ? `来自 ${request.fromUser.name}` : `等待 ${request.toUser.name}确认`}</span>}
+              <strong>{request.reservation.partyName}</strong><small>当事人</small>
+            </div>
+            <div className="handover-ledger-detail"><strong>{request.reservation.purpose}</strong><span>{reservationSummary(request)}</span><small className="handover-ledger-consequence">{section.consequence}</small></div>
+            <div className="handover-ledger-actions">
+              <button type="button" className="handover-view" onClick={() => void openDetails(request.reservation, true)}>查看预约</button>
+              {section.id === "incoming" ? <>
+                <button type="button" disabled={noticeAckBusy} onClick={() => void decideHandover(request.id, "decline")}>不接受</button>
+                <button type="button" className="handover-accept" disabled={noticeAckBusy} onClick={() => void decideHandover(request.id, "accept")}>接受交接</button>
+              </> : <>
+                <span className="handover-waiting">处理中</span>
+                <button type="button" onClick={() => void withdrawHandoverRequest(request.id)}>撤回申请</button>
+              </>}
+            </div>
+          </article>)}</div>
+        </section>) : <p className="handover-page-empty" role="status">当前没有进行中的工作交接</p>}
       </div>
     </main>;
   }

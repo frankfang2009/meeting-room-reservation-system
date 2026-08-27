@@ -42,7 +42,8 @@ const expectedFiles = [
 // V2.4.0 工作交接：交接请求弹窗区块与人员选择抽屉（production-flows.css）、
 // 独立工作交接页（dashboard.css）。
 // V2.4.1：通知弹窗层级高于普通到达提醒（production-flows.css）。
-const frozenSourceSha256 = "d905776904b8405bccc0008d34d9b735b7d805c715235fdfa8169993fab5ea3c";
+// V2.4.1：交接页隐藏空分组并改为紧凑三列操作区（dashboard.css）。
+const frozenSourceSha256 = "6af5f8ed81e864e99ac9a1b2ad82b632760003ccbd8314170457fe49cb06122f";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -109,6 +110,15 @@ test("compact production actions retain at least a 44px hit target", () => {
   assert.match(bookingForms, /\.room-delete-button \{[\s\S]*?min-height: 44px;/);
   assert.match(bookingForms, /\.copy-reminder-button,[\s\S]*?height: 52px;/);
   assert.match(users, /\.users-create-button \{[\s\S]*?min-height: 46px;/);
+});
+
+test("handover rows use a stable three-column action grid and a themed pending status", () => {
+  const dashboard = fs.readFileSync(path.join(stylesRoot, "dashboard.css"), "utf8");
+  assert.match(dashboard, /\.handover-ledger-actions \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: 88px 96px 120px;/);
+  assert.match(dashboard, /\.handover-waiting \{[\s\S]*?color: var\(--terracotta-text\);[\s\S]*?background: var\(--terracotta-soft\);[\s\S]*?border: 1px solid var\(--terracotta-line\);/);
+  assert.match(dashboard, /\.handover-page-empty \{[\s\S]*?color: var\(--muted\);/);
+  assert.doesNotMatch(dashboard, /\.handover-summary/);
+  assert.doesNotMatch(dashboard, /\.handover-ledger-empty/);
 });
 
 test("stacked notices use one bounded scroll body and a responsive combined footer", () => {

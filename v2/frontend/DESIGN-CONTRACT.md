@@ -247,9 +247,17 @@ calendar and role boundaries are unchanged.
   ordinary requests can be deferred and acknowledgement never changes owner.
 - 工作交接 is a first-class rail destination beside 我的预约. Only incoming
   requests contribute to its numbered rail badge. The page uses the product's
-  open ledger language: an unboxed summary band, then 待我确认 and 我发起的
-  sections with count, party, purpose, relative date, time, room, and explicit
-  actions. 我的预约 remains visually unchanged and contains no handover board.
+  open ledger language without a summary-metric band. Empty groups do not
+  render: incoming-only shows only 待我确认, outgoing-only shows only 我发起的,
+  both preserve incoming-before-outgoing order, and the all-empty state keeps
+  only one quiet status line below the page heading. A single request names its
+  counterparty in the section eyebrow; multiple requests summarize the count
+  and retain per-row counterpart labels. Rows keep party, purpose, relative
+  date, time, room, consequence copy, and a stable three-column action area.
+  Incoming order is 查看预约 / 不接受 / 接受交接; outgoing order is 查看预约 /
+  处理中 / 撤回申请. 处理中 is a non-interactive capsule using the existing
+  terracotta text, soft-surface, and line tokens. 我的预约 remains visually
+  unchanged and contains no handover board.
 - A booking with a pending handover replaces the normal handover action with a
   disabled 交接处理中 control. The handover-request projection must preserve
   the actual reservation id; request ids must never leak into reservation ids.

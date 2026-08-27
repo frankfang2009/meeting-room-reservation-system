@@ -60,6 +60,34 @@ export function reservationStatusLabel(status) {
   return { active: "已预约", cancelled: "已取消" }[status] || "状态未知";
 }
 
+export function handoverLedgerSections({ incoming = [], outgoing = [] } = {}) {
+  const incomingItems = Array.isArray(incoming) ? incoming : [];
+  const outgoingItems = Array.isArray(outgoing) ? outgoing : [];
+  const sections = [];
+
+  if (incomingItems.length) {
+    const fromName = incomingItems[0]?.fromUser?.name || "同事";
+    sections.push({
+      id: "incoming",
+      eyebrow: incomingItems.length === 1 ? `待我确认 · 来自 ${fromName}` : `待我确认 · ${incomingItems.length} 条`,
+      consequence: "接受后，你将成为新的预约者。",
+      items: incomingItems,
+    });
+  }
+
+  if (outgoingItems.length) {
+    const toName = outgoingItems[0]?.toUser?.name || "对方";
+    sections.push({
+      id: "outgoing",
+      eyebrow: outgoingItems.length === 1 ? `我发起的 · 等待 ${toName}确认` : `我发起的 · ${outgoingItems.length} 条处理中`,
+      consequence: "对方确认前，预约仍归你。",
+      items: outgoingItems,
+    });
+  }
+
+  return sections;
+}
+
 export function formatLocalDateTime(value) {
   if (!value) return "—";
   const date = new Date(value);

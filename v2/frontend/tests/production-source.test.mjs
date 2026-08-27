@@ -276,10 +276,17 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /\{ id: "handovers", label: "工作交接", Icon: ArrowsLeftRight \}/);
   assert.match(app, /function renderHandovers\(\)/);
   assert.match(app, /className="main-canvas handover-canvas"/);
+  assert.match(app, /handoverLedgerSections\(\{ incoming, outgoing \}\)/);
+  assert.match(app, /sections\.length \? sections\.map/);
+  assert.match(app, /section\.id === "incoming"/);
+  assert.match(app, /当前没有进行中的工作交接/);
+  assert.doesNotMatch(app, /className="handover-summary"/);
+  assert.doesNotMatch(app, /className="handover-ledger-empty"/);
   assert.match(app, /activeView === "handovers" && renderHandovers\(\)/);
   assert.doesNotMatch(app, /className="handover-board" aria-label="工作交接"/);
   assert.match(app, /handoverPending/);
   assert.match(app, /withdrawHandoverRequest\(request\.id\)/);
+  assert.match(app, /handover-view[\s\S]{0,250}查看预约[\s\S]{0,1200}handover-waiting[\s\S]{0,100}处理中[\s\S]{0,350}撤回申请/);
   assert.match(app, /reservationEventLabel/);
   assert.match(productionSource, /handover: "预约已交接"/);
   assert.match(productionSource, /预约者由 \$\{from\} 交接给 \$\{to\}/);
