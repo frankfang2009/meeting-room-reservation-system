@@ -42,6 +42,9 @@ $Script:StopBat = "④ 停止本次后台系统.bat"
 $Script:MainTaskName = "会议室预约系统 V2"
 $Script:BackupTaskName = "会议室预约系统 V2 每日备份"
 $Script:SanitizedDiagnosticsOnly = $false
+$Script:StandardUserProbeName = $null
+$Script:StandardUserProbeRoot = $null
+$Script:StandardUserProbeFiles = @()
 
 function Write-Step([string]$Name) {
     Write-Host ""
@@ -144,6 +147,77 @@ function Invoke-Api {
     catch {
     }
     return @{ Status = [int]$response.StatusCode; Json = $json }
+}
+
+function Remove-StandardUserPrivateAccessProbeArtifacts {
+    $failures = @()
+    if (-not [string]::IsNullOrEmpty($Script:StandardUserProbeName)) {
+        try {
+            $probeUsers = @(
+                Get-LocalUser -ErrorAction Stop | Where-Object {
+                    $_.Name -ceq $Script:StandardUserProbeName
+                }
+            )
+            if ($probeUsers.Count -gt 0) {
+                Remove-LocalUser -Name $Script:StandardUserProbeName -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "local-user-remove"
+        }
+        try {
+            $probeUsers = @(
+                Get-LocalUser -ErrorAction Stop | Where-Object {
+                    $_.Name -ceq $Script:StandardUserProbeName
+                }
+            )
+            if ($probeUsers.Count -ne 0) {
+                $failures += "local-user-residue"
+            }
+        }
+        catch {
+            $failures += "local-user-verify"
+        }
+    }
+
+    foreach ($probeFile in @($Script:StandardUserProbeFiles)) {
+        try {
+            if (Test-Path -LiteralPath $probeFile -ErrorAction Stop) {
+                Remove-Item -LiteralPath $probeFile -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "probe-file-remove"
+        }
+        try {
+            if (Test-Path -LiteralPath $probeFile -ErrorAction Stop) {
+                $failures += "probe-file-residue"
+            }
+        }
+        catch {
+            $failures += "probe-file-verify"
+        }
+    }
+
+    if (-not [string]::IsNullOrEmpty($Script:StandardUserProbeRoot)) {
+        try {
+            if (Test-Path -LiteralPath $Script:StandardUserProbeRoot -ErrorAction Stop) {
+                Remove-Item -LiteralPath $Script:StandardUserProbeRoot -Recurse -Force -ErrorAction Stop
+            }
+        }
+        catch {
+            $failures += "probe-root-remove"
+        }
+        try {
+            if (Test-Path -LiteralPath $Script:StandardUserProbeRoot -ErrorAction Stop) {
+                $failures += "probe-root-residue"
+            }
+        }
+        catch {
+            $failures += "probe-root-verify"
+        }
+    }
+    return $failures
 }
 
 function Dump-Diagnostics {
@@ -469,28 +543,31 @@ try {
     }
     Write-Host ("MRV2_T1=ACL_SUMMARY:" + ($aclSummaries | ConvertTo-Json -Compress))
 
-    $probeRoot = Join-Path $WorkRoot "standard-user-acl-probe"
-    New-Item -ItemType Directory -Path $probeRoot | Out-Null
-    $probeAcl = Get-Acl -LiteralPath $probeRoot
-    $probeAcl.SetAccessRuleProtection($true, $false)
-    $probeAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
-        [System.Security.Principal.SecurityIdentifier]::new($usersSid),
-        [System.Security.AccessControl.FileSystemRights]::Modify,
-        [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
-        [System.Security.AccessControl.PropagationFlags]::None,
-        [System.Security.AccessControl.AccessControlType]::Allow
-    ))
-    Set-Acl -LiteralPath $probeRoot -AclObject $probeAcl
+    try {
+        $probeRoot = Join-Path $WorkRoot "standard-user-acl-probe"
+        New-Item -ItemType Directory -Path $probeRoot | Out-Null
+        $Script:StandardUserProbeRoot = $probeRoot
+        $probeAcl = Get-Acl -LiteralPath $probeRoot
+        $probeAcl.SetAccessRuleProtection($true, $false)
+        $probeAcl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            [System.Security.Principal.SecurityIdentifier]::new($usersSid),
+            [System.Security.AccessControl.FileSystemRights]::Modify,
+            [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit',
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        ))
+        Set-Acl -LiteralPath $probeRoot -AclObject $probeAcl
 
-    $probeFiles = @{}
-    foreach ($private in @('data', 'backups', 'logs')) {
-        $probeFile = Join-Path (Join-Path $Script:ProgramDir $private) "standard-user-read-probe.txt"
-        Set-Content -LiteralPath $probeFile -Value "synthetic ACL probe" -Encoding ASCII
-        $probeFiles[$private] = $probeFile
-    }
-    $probeScript = Join-Path $probeRoot "probe.ps1"
-    $probeOutput = Join-Path $probeRoot "result.txt"
-    @'
+        $probeFiles = @{}
+        foreach ($private in @('data', 'backups', 'logs')) {
+            $probeFile = Join-Path (Join-Path $Script:ProgramDir $private) "standard-user-read-probe.txt"
+            $Script:StandardUserProbeFiles += $probeFile
+            Set-Content -LiteralPath $probeFile -Value "synthetic ACL probe" -Encoding ASCII
+            $probeFiles[$private] = $probeFile
+        }
+        $probeScript = Join-Path $probeRoot "probe.ps1"
+        $probeOutput = Join-Path $probeRoot "result.txt"
+        @'
 param([string]$ProgramDir, [string]$OutputPath)
 $ErrorActionPreference = 'Stop'
 $results = @()
@@ -523,12 +600,12 @@ if ($failed) { exit 1 }
 exit 0
 '@ | Set-Content -LiteralPath $probeScript -Encoding UTF8
 
-    $probeUser = "MRV2AclProbe"
-    $probePasswordText = "Mrv2!" + [Guid]::NewGuid().ToString("N") + "aA1"
-    $probePassword = ConvertTo-SecureString $probePasswordText -AsPlainText -Force
-    Assert-True ($null -eq (Get-LocalUser -Name $probeUser -ErrorAction SilentlyContinue)) "standard ACL probe account already exists"
-    try {
+        $probeUser = "MRV2Acl" + [Guid]::NewGuid().ToString("N").Substring(0, 12)
+        $probePasswordText = "Mrv2!" + [Guid]::NewGuid().ToString("N") + "aA1"
+        $probePassword = ConvertTo-SecureString $probePasswordText -AsPlainText -Force
+        Assert-True ($null -eq (Get-LocalUser -Name $probeUser -ErrorAction SilentlyContinue)) "standard ACL probe account already exists"
         $probeAccount = New-LocalUser -Name $probeUser -Password $probePassword -AccountNeverExpires -PasswordNeverExpires
+        $Script:StandardUserProbeName = $probeUser
         $usersGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new($usersSid))
         $isUsersMember = @(
             Get-LocalGroupMember -Group $usersGroup | Where-Object {
@@ -547,20 +624,20 @@ exit 0
         $escapedOutput = $probeOutput.Replace("'", "''")
         $command = "& '$escapedScript' -ProgramDir '$escapedProgram' -OutputPath '$escapedOutput'"
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-        $probeProcess = Start-Process -FilePath "$PSHOME\powershell.exe" -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $encoded" -Credential $credential -LoadUserProfile -Wait -PassThru
+        $probePowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+        Assert-True (Test-Path -LiteralPath $probePowerShell -PathType Leaf) "Windows PowerShell standard-user probe host is missing"
+        $probeProcess = Start-Process -FilePath $probePowerShell -ArgumentList "-NoProfile -NonInteractive -EncodedCommand $encoded" -Credential $credential -Wait -PassThru
         $probeResults = @(Get-Content -LiteralPath $probeOutput -Encoding ASCII)
         $probeResults | ForEach-Object { Write-Host "MRV2_T1=STANDARD_USER_ACL:$_" }
         Assert-True ($probeProcess.ExitCode -eq 0) "standard user could access a private root"
         Assert-True ($probeResults.Count -eq 3) "standard-user ACL probe returned incomplete results"
     }
     finally {
-        Remove-LocalUser -Name $probeUser -ErrorAction SilentlyContinue
-        foreach ($probeFile in $probeFiles.Values) {
-            Remove-Item -LiteralPath $probeFile -Force -ErrorAction SilentlyContinue
-        }
+        $cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)
         $probePasswordText = $null
         $probePassword = $null
         $credential = $null
+        Assert-True ($cleanupFailures.Count -eq 0) "standard-user ACL probe cleanup left residue"
     }
 
     $stoppedForSystemStart = Invoke-CandidateBat $Script:InstallRoot " " $Script:StopBat

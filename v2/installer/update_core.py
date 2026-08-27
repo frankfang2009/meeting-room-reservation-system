@@ -1565,7 +1565,7 @@ class V2UpdateTransaction:
                 health_runtime_started = True
                 if self.health_probe is not None:
                     self.health_probe(identity)
-                self.controller.capture_and_stop(identity)
+                self.controller.capture_and_stop_fail_closed(identity)
                 health_runtime_started = False
                 self._stage(state, "healthcheck_passed_and_stopped", state_path)
                 self._commit_identity(identity, state, state_path)
@@ -1593,7 +1593,7 @@ class V2UpdateTransaction:
                         try:
                             # This snapshot belongs only to the transient health
                             # runtime. Preserve the original pre-update run_state.
-                            self.controller.capture_and_stop(identity)
+                            self.controller.capture_and_stop_fail_closed(identity)
                             health_runtime_started = False
                         except BaseException as rollback_error:
                             rollback_errors.append(str(rollback_error))

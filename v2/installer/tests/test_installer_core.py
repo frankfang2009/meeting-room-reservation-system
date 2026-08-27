@@ -453,6 +453,81 @@ class InstallerCoreTests(unittest.TestCase):
         self.assertIn("$healthAfterAcl.product_generation -eq 2", acceptance)
         self.assertNotIn("icacls.exe", acceptance[acceptance.index('Write-Step "dacl-boundaries"') :])
 
+    def test_windows_acceptance_uses_windows_powershell_for_standard_user_probe(self) -> None:
+        acceptance = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "scripts"
+            / "v2-windows-acceptance.ps1"
+        ).read_text(encoding="utf-8")
+        dacl = acceptance[acceptance.index('Write-Step "dacl-boundaries"') :]
+
+        self.assertIn(
+            '$probePowerShell = Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\powershell.exe"',
+            dacl,
+        )
+        self.assertIn(
+            'Assert-True (Test-Path -LiteralPath $probePowerShell -PathType Leaf)',
+            dacl,
+        )
+        self.assertIn("Start-Process -FilePath $probePowerShell", dacl)
+        self.assertNotIn('$PSHOME\\powershell.exe', dacl)
+
+    def test_windows_acceptance_rejects_standard_user_probe_cleanup_residue(self) -> None:
+        acceptance = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "scripts"
+            / "v2-windows-acceptance.ps1"
+        ).read_text(encoding="utf-8")
+        dacl = acceptance[acceptance.index('Write-Step "dacl-boundaries"') :]
+
+        self.assertIn(
+            "function Remove-StandardUserPrivateAccessProbeArtifacts", acceptance
+        )
+        self.assertIn("Get-LocalUser -ErrorAction Stop", acceptance)
+        self.assertIn("Remove-LocalUser", acceptance)
+        self.assertIn("local-user-residue", acceptance)
+        self.assertIn("probe-file-residue", acceptance)
+        self.assertIn("probe-root-residue", acceptance)
+        self.assertIn(
+            "$cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)",
+            dacl,
+        )
+        self.assertIn(
+            "Assert-True ($cleanupFailures.Count -eq 0)",
+            dacl,
+        )
+
+    def test_windows_acceptance_cleans_partial_standard_user_probe_setup(self) -> None:
+        acceptance = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "scripts"
+            / "v2-windows-acceptance.ps1"
+        ).read_text(encoding="utf-8")
+        dacl_start = acceptance.index('Write-Step "dacl-boundaries"')
+        dacl_end = acceptance.index("$stoppedForSystemStart", dacl_start)
+        dacl = acceptance[dacl_start:dacl_end]
+
+        protected_setup = dacl.index("try {")
+        probe_root_creation = dacl.index("$probeRoot = Join-Path")
+        self.assertLess(protected_setup, probe_root_creation)
+        probe_file_path = dacl.index("$probeFile = Join-Path")
+        probe_file_tracking = dacl.index(
+            "$Script:StandardUserProbeFiles += $probeFile"
+        )
+        probe_file_creation = dacl.index(
+            "Set-Content -LiteralPath $probeFile"
+        )
+        self.assertLess(probe_file_path, probe_file_tracking)
+        self.assertLess(probe_file_tracking, probe_file_creation)
+        self.assertRegex(
+            dacl,
+            r"finally\s*\{\s*\$cleanupFailures = @\("
+            r"Remove-StandardUserPrivateAccessProbeArtifacts\)",
+        )
+
     def test_windows_upgrade_acceptance_probes_preexisting_rollback_canaries_and_cleans_up(self) -> None:
         acceptance = (
             Path(__file__).resolve().parents[3]

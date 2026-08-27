@@ -755,17 +755,52 @@ class UpdateCoreTests(unittest.TestCase):
             list((self.install_root / "_程序文件").glob(".update-staging-*"))
         )
 
+    def test_health_success_uses_fail_closed_stop_before_commit(self) -> None:
+        events: list[str] = []
+
+        class RecordingController(PassiveUpdateSystemController):
+            def capture_and_stop(self, identity):
+                events.append("initial-stop")
+                return PassiveUpdateSystemController.capture_and_stop(self, identity)
+
+            def capture_and_stop_fail_closed(self, identity):
+                events.append("fail-closed-stop")
+                return PassiveUpdateSystemController.capture_and_stop(self, identity)
+
+            def start_for_health(self, identity):
+                events.append("start-health")
+                return super().start_for_health(identity)
+
+            def restore(self, identity, state):
+                events.append("restore-state")
+                return super().restore(identity, state)
+
+        controller = RecordingController(running=True)
+        result = V2UpdateTransaction(
+            self._update_bundle(),
+            self.install_root,
+            controller,
+            online_backup=None,
+            health_probe=lambda identity: events.append("health-passed"),
+        ).run()
+
+        self.assertEqual(result.target_version, "2.4.0")
+        self.assertEqual(
+            events,
+            [
+                "initial-stop",
+                "start-health",
+                "health-passed",
+                "fail-closed-stop",
+                "restore-state",
+            ],
+        )
+
     def test_health_failure_does_not_restore_files_when_second_stop_fails(self) -> None:
         class SecondStopFails(PassiveUpdateSystemController):
-            def __init__(self) -> None:
-                super().__init__(running=True)
-                self.stop_calls = 0
-
-            def capture_and_stop(self, identity):
-                self.stop_calls += 1
-                if self.stop_calls == 2:
-                    raise OSError("stop failed")
-                return super().capture_and_stop(identity)
+            def capture_and_stop_fail_closed(self, identity):
+                del identity
+                raise OSError("fail-closed stop failed")
 
         controller = SecondStopFails()
         transaction = V2UpdateTransaction(
