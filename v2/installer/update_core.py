@@ -883,9 +883,68 @@ $program = Join-Path $root '_程序文件'
         self.base.verify_security(identity.root, identity.install_id)
 
 
+BACKUP_NAME_PREFIX = "reservation-v2-backup-"
+
+
+def _backup_sequence_filename_floor(backup_dir: Path) -> int:
+    """取备份目录文件名中的最大序列，含当前安装无法解析的 sidecar。
+
+    健康检查失败的更新尝试会由换入的新版本运行时在 backups/ 留下带更高
+    databaseSchemaVersion 的备份；旧版本代码扫描 sidecar 时会跳过无法
+    解析的文件，但备份文件名里的序列已被占用，序列分配必须避开。
+    """
+
+    floor = 0
+    for suffix, stem_width in ((".db", 3), (".json", 5)):
+        for path in backup_dir.glob(f"{BACKUP_NAME_PREFIX}*{suffix}"):
+            stem = path.name[len(BACKUP_NAME_PREFIX) : -stem_width]
+            if len(stem) == 8 and stem.isdigit():
+                floor = max(floor, int(stem))
+    return floor
+
+
+def reconcile_backup_sequence_floor(identity: V2InstallIdentity) -> None:
+    """V241-B1：重试更新前把旧数据库的备份序列水位抬到文件名下限。
+
+    回滚会把 data 树恢复到在线备份之前的快照，backup_sequence 水位随
+    之回落，但被占用的备份文件名仍在。更新前在线备份由当前安装的旧
+    版本代码执行，其序列预留只认可解析的 sidecar，会把新序列瞄准已
+    存在的文件并以"拒绝覆盖"失败。这里仅当水位低于文件名下限时做
+    单行原子上调；水位是产品自身维护的单调键，上调不会复用或覆盖
+    任何既有备份。
+    """
+
+    database = identity.root / "_程序文件" / "data" / "reservation.db"
+    backup_dir = identity.root / "_程序文件" / "backups"
+    if not database.is_file() or not backup_dir.is_dir():
+        return
+    floor = _backup_sequence_filename_floor(backup_dir)
+    if floor <= 0:
+        return
+    db = sqlite3.connect(database, timeout=10)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+        ).fetchone()
+        current = int(row[0]) if row is not None and str(row[0]).isdigit() else 0
+        if floor > current:
+            db.execute(
+                """
+                INSERT INTO app_meta (key, value) VALUES ('backup_sequence', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(floor),),
+            )
+            db.execute("COMMIT")
+    finally:
+        db.close()
+
+
 def default_online_backup(identity: V2InstallIdentity) -> None:
     if not identity.setup_complete:
         return
+    reconcile_backup_sequence_floor(identity)
     python = identity.root / "_程序文件" / "runtime" / "python.exe"
     backup = identity.root / "_程序文件" / "app" / "backup.py"
     assert_plain_file(python, "V2 冻结 Python")

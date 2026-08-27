@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import gzip
+import os
 import tarfile
 import tempfile
 import unittest
@@ -290,6 +291,9 @@ class MacOSPackageBuilderTests(unittest.TestCase):
             },
         )
 
+    # NTFS 无法表达 POSIX 执行位，.command 也不是 Windows 可执行扩展名；
+    # 该属性只在 POSIX 宿主上有意义（CI 在 macOS/Linux 上运行本套件）。
+    @unittest.skipIf(os.name == "nt", "POSIX 执行位在 NTFS 上无法表达")
     def test_staging_from_zip_restores_top_folder_and_exec_bits(self) -> None:
         fixture = self._fixture()
         output_dir = self.root / "pkg"

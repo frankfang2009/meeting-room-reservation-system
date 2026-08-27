@@ -88,7 +88,7 @@ git diff --name-only HEAD^..HEAD → v2/docs/V241-WINDOWS-ACCEPTANCE-TASK.md   �
 2. 执行一次会触发健康检查失败的更新尝试（腿的故障注入路径）——更新器按契约先做「更新前在线备份」生成 `reservation-v2-backup-00000003.db`（12:23:46，155648 字节），随后健康失败 → 回滚；回滚**按设计保留 backups/ 全部文件**，但 data/（含 `backup-status.json`，sequence=2）恢复到尝试前；
 3. 重跑同一累计升级包：更新器再次请求「更新前在线备份」→ 按 status 计算目标序列=3 → 与保留的 00000003 文件**冲突** → `v2app/backup.py:637 create_backup` 抛 `RuntimeError: 备份序列目标已存在，拒绝覆盖`（`_程序文件\app\v2app\backup.py`，backup.log 12:25:15）→ 更新 BAT `MRV2_UPDATER_RESULT=1 / MRV2_UPDATE_GATE=PRODUCT_RC_1` → 验收腿 `upgrade BAT failed: code=1`（脚本 :608）。
 
-**定性**：手动/在线备份的序列恢复只读 `backup-status.json`、不核对备份目录既有文件；catch-up 路径有文件级幂等（12:24:57 `backup idempotent no-op mode=catch-up`），manual 路径没有。触发链 = 「失败更新的更新前备份在回滚后留存」+「重试更新」——正是本任务书 §5 与 §7.7（断电重试同包幂等）要求的能力路径，属**必须修复的放行阻断项**。
+**定性（初判，修复轮已修正见第 12 节）**：手动/在线备份的序列预留未把「当前版本无法解析的 sidecar 文件」计入占用——真实机制为跨版本 sidecar 兼容问题：健康失败尝试换入的新版本运行时在健康探针启动时把现场库迁移到新 schema 并留下 `databaseSchemaVersion=4` 的 seq3 备份；回滚把数据恢复到备份前快照（水位回落到 2），重试更新时由旧版本代码执行更新前在线备份，其序列预留扫描跳过无法解析的 seq3 sidecar → 预留 3 → 与保留的 00000003.db 冲突。触发链 = 「失败更新的健康运行时留下跨版本备份」+「重试更新」——正是本任务书 §5 与 §7.7（断电重试同包幂等）要求的能力路径，属**必须修复的放行阻断项**。
 **正面记录**：失败时更新器行为正确——fail-closed 中止、无半更新状态、未扫描/读取/删除任何 V1 目录、`backup-status.json` 如实记录 `status=failed, detail=RuntimeError`，与分支加固目标 1/2/3 的其余断言一致。
 **证据**：`evidence/upgrade-failure-backupdiag.log`（backup.log 尾部完整 traceback、backup-status、目录清单）、`evidence/t1-upgrade-transcript.log`、失败现场快照 `evidence/post-legs-inspection.log`（版本 2.1.0、install_id 保持、监听 0.0.0.0:8080 为产品 runtime pythonw、备份目录 7 个文件含 updates 占位）。
 **后续未执行**：按任务书 §2.6（失败后保存现场、不先改代码、不反复重跑），未重试升级腿、未做 §7.7 断电演练、未做升级后才能覆盖的项（升级后版本一致性、升级后预约/会话保留、`app/runtime` 提交后 RX 复核等）。
@@ -153,15 +153,73 @@ git diff --name-only HEAD^..HEAD → v2/docs/V241-WINDOWS-ACCEPTANCE-TASK.md   �
 
 | 编号 | 级别 | 摘要 | 证据 |
 |---|---|---|---|
-| V241-B1 | **产品 bug（高，放行阻断）** | 回滚后重试累计更新时「更新前在线备份」序列与回滚保留的备份文件冲突：`create_backup` 只按 `backup-status.json` 计算序列、不核对目录既有文件，抛 `备份序列目标已存在，拒绝覆盖` → 更新 fail-closed 中止。最短复现见第 6 节 | `upgrade-failure-backupdiag.log`、`t1-upgrade-transcript.log`、`v2app/backup.py:637` |
-| V241-B2 | 产品 bug（中，仅影响 Windows 宿主构建 macOS 包） | `build_macos_package.py:174` 以无 `newline` 参数的 `write_text` 写 `EDITION`：Windows 宿主产出 `macos-selfhost\r\n`，与常量 `\n` 不等且跨平台字节不一致（读回校验因 `read_text` 反向翻译而漏检）。测试 `test_builds_reproducible_zip_with_edition_and_permissions` 在本机 FAIL | `gate-unittest-installer-lf.txt` |
-| V241-O1 | 平台限制（非缺陷） | `test_staging_from_zip_restores_top_folder_and_exec_bits` 断言 `启动.command` 执行位：NTFS 无 POSIX 执行位且 `.command` 非 Windows 可执行扩展名，该 macOS 打包测试在 Windows 上原理性不可通过（CI 仅在 macOS/Linux 运行它） | 同上 |
+| V241-B1 | **产品 bug（高，放行阻断）→ 已修复并实机验证（第 12 节）** | 回滚后重试累计更新时「更新前在线备份」序列与回滚保留的备份文件冲突，抛 `备份序列目标已存在，拒绝覆盖` → 更新 fail-closed 中止。真实机制为跨版本 sidecar 兼容（新版本健康运行时留下 `databaseSchemaVersion=4` 备份；旧代码扫描跳过 + 回滚水位回落 → 重试瞄准已占用序列）。最短复现见第 6 节，修复见第 12 节 | `upgrade-failure-backupdiag.log`、`t1-upgrade-transcript.log`、`v2app/backup.py`、`update_core.py` |
+| V241-B2 | 产品 bug（中，仅影响 Windows 宿主构建 macOS 包）→ 已修复（第 12 节） | `build_macos_package.py` 以无 `newline` 参数的 `write_text` 写 `EDITION`：Windows 宿主产出 `macos-selfhost\r\n`，与常量 `\n` 不等且跨平台字节不一致（读回校验因 `read_text` 反向翻译而漏检，修复后改字节级比对）。测试 `test_builds_reproducible_zip_with_edition_and_permissions` 修复前在本机 FAIL、修复后 PASS | `gate-unittest-installer-lf.txt`、`fix1-gate-unittest-installer.txt` |
+| V241-O1 | 平台限制（非缺陷）→ 测试已加平台跳过（第 12 节） | `test_staging_from_zip_restores_top_folder_and_exec_bits` 断言 `启动.command` 执行位：NTFS 无 POSIX 执行位且 `.command` 非 Windows 可执行扩展名，该 macOS 打包测试在 Windows 上原理性不可通过（CI 仅在 macOS/Linux 运行它）；已加 `skipIf(os.name == "nt")` | 同上 |
 | V241-O2 | 环境（机器级，非产品） | Win11 23H2 内置 LocalAccounts 模块与所有公开 PS7 不兼容（详见第 4 节矩阵）；v241 新增的标准用户探针在本机需 5.1 委托垫片执行。建议：验收脚本后续可考虑探针账号操作显式走 `System32\WindowsPowerShell\v1.0\powershell.exe` 子进程以获得与探针进程一致的抗性 | `diag-*.log`、`smoke-*.log` |
 | V241-O3 | 观察 | 产品交互 BAT（④ 停止等）在无人值守/隐藏窗口下挂起于交互输入点；建议运维文档标注维护入口需真实控制台 | `cleanup-before-retry.log`（11:12–11:17 挂起 5 分钟后人为终止） |
 | V241-O4 | 观察（测试基建） | 验收脚本预检把 8080 的 TIME_WAIT 计入「被占用」：卸载后立即重跑腿会在预检失败，需沉降等待 | `t1-fresh5-transcript.log`（attempt 5 预检失败）vs attempt 6 通过 |
 
-## 11. 结果判定
+## 11. 结果判定（首验轮）
 
 - 第 1 节锚点核对：**PASS**；第 4 节静态门禁：**PASS（111/113，两个失败定性见 V241-B2/V241-O1，点名 6 测试全过）**；第 5 节全新腿：**PASS**；第 5 节升级腿：**FAIL（V241-B1）**；第 6–7 节逐项见第 7 节表，§7.8 视觉验收 **PASS**（代理视觉执行，第 7A 节）。
-- **结论：Windows 验收证据完成（未全过）。** 升级腿因 V241-B1 阻断放行；修复并复验（重跑升级腿 + 补第 9 节用户侧项）前，不得合并、打标签、签名或发布。
-- `formal_external_release_allowed=false`。本轮未创建 PR/合并/标签/Release/签名，未对外分发候选包；未关闭 UAC/SmartScreen/Defender/EDR/防火墙；仅使用合成测试数据。
+- 首验结论：升级腿因 V241-B1 阻断放行。修复见第 12 节，修复后升级腿复跑 **PASS**。
+- `formal_external_release_allowed=false`。全程未创建 PR/合并/标签/Release/签名，未对外分发候选包；未关闭 UAC/SmartScreen/Defender/EDR/防火墙；仅使用合成测试数据。
+
+## 12. 修复轮（V241-B1/B2，2026-08-27 下午，分支 `codex/v241-b1-b2-fixes`）
+
+### 12.1 V241-B1 根因定案与修复
+
+法证修正（首验轮 §6 的初判不准，此处为实锤机制）：升级腿时间线（backup.log/service.log 交叉比对）证实 seq3 备份（12:23:46.475）来自**健康失败尝试换入的新版本运行时**（pid 2548，`start_for_health` 后其 catch-up worker）：新代码 `prepare_database` 就地把现场库迁移到 schema 4 并写下 `databaseSchemaVersion=4` 的 seq3 sidecar。回滚把 data 恢复到在线备份前快照（`app_meta.backup_sequence` 水位回落到 2）。重试更新的更新前在线备份由**当前安装的旧版本代码**执行（更新未提交前 `default_online_backup` 调用已安装的 runtime+app），旧代码 `reserve_backup_sequence` 的 sidecar 扫描对 schema 4 抛「不属于已设置的 V2」被静默跳过 → 预留 3 → `create_backup` 命中现存 00000003.db 抛「拒绝覆盖」（该拒绝在 try 块外，现场文件完好，fail-closed 正确）。12:24:57 的 catch-up no-op（旧服务重启）亦吻合：当时最新可解析备份=seq2 且数据序列一致。
+
+修复（两处互补，因为更新前在线备份永远运行「源版本」代码）：
+1. `v2/backend/v2app/backup.py`：`reserve_backup_sequence` 增加 `_filename_sequence_floor`——文件名序列一并计入下限。保护今后从 V2.4.1+ 升级的安装（新代码自身兼容未来 schema 漂移）。
+2. `v2/installer/update_core.py`：`default_online_backup` 在调用旧版 CLI 前先 `reconcile_backup_sequence_floor(identity)`——更新器以纯文件名扫描结果、单行原子上调旧库 `app_meta.backup_sequence` 水位（产品自身维护的单调键；**不经** `prepare_database`，不触发迁移、不解析 sidecar、不触碰备份文件），使旧代码预留直接落到空闲序列。这是修复 V2.1.0→V2.4.1 重试场景的唯一可行层（旧代码已冻结不可改）。
+
+fix1 教训（如实记录）：第一轮仅修了新代码 reserve，重跑升级腿仍在同点失败——重试的在线备份运行旧代码，修复必须落在更新器层；`fix1-failure-diag.log` 的 backup.log traceback 与首验完全同点，据此完成上述法证修正。
+
+### 12.2 V241-B2 修复
+
+`v2/installer/build_macos_package.py`：EDITION 写入显式 `newline="\n"`；staging 校验从 `read_text`（会反向翻译换行、掩盖漂移）改为 `read_bytes` 字节级比对。既有测试 `test_builds_reproducible_zip_with_edition_and_permissions` 即字节级回归（修复前 Windows 宿主 FAIL、修复后 PASS），未另加重复断言。`test_staging_from_zip_restores_top_folder_and_exec_bits` 加 `@unittest.skipIf(os.name == "nt")`（V241-O1：NTFS 无法表达 POSIX 执行位，属性仅 POSIX 宿主有意义，CI 在 macOS/Linux 仍实跑）。
+
+### 12.3 回归测试
+
+| 测试 | 位置 | 红绿验证 |
+|---|---|---|
+| `test_backup_sequence_skips_foreign_sidecar_after_rollback_retry`（跨版本 sidecar 场景：水位 2 + 不可解析 seq3 → 下次备份必须为 seq4 且不触碰他版文件） | `v2/backend/tests/test_hardening.py` | 无修复=FAILED（BACKUP_FAILED 500，与生产症状一致）；有修复=PASS |
+| `test_online_backup_reconciles_watermark_above_foreign_sidecars`（更新器水位对齐：2→3、幂等、多次残留续升） | `v2/installer/tests/test_update_core.py` | PASS |
+| `test_online_backup_reconcile_is_noop_without_backup_files`（空备份目录 no-op） | 同上 | PASS |
+| （既有）`test_builds_reproducible_zip_with_edition_and_permissions` | `v2/installer/tests/test_build_macos.py` | 修复前 FAIL / 修复后 PASS |
+
+### 12.4 全量门禁复跑（Windows 实机，Python 3.13.14 / Node 22.17.1）
+
+| 门禁 | 结果 | 证据 |
+|---|---|---|
+| ruff check（backend/installer/tests） | PASS | `fix2-gate-ruff.txt` |
+| `v2/backend/tests`（含新增回归） | **151 tests OK**（5 skipped 为既有平台跳过；一次因整机负载出现的真实进程移交测试时序失败，单独静默复跑通过，见正文注） | `fix2-gate-unittest-backend.txt` |
+| `v2/installer/tests`（含 2 个新增回归 + O1 平台跳过） | **115 tests OK（skipped=1）** | `fix2-gate-unittest-installer.txt` |
+| `v2/tests` + `test_open_source_contract` | 32 OK / OK | `fix2-gate-unittest-tests.txt`、`fix2-gate-opensource.txt` |
+| `npm ci` + `npm run check` | PASS（rc=0） | `fix2-gate-npm.txt` |
+| `git diff --check` | PASS（无输出） | `fix2-gate-gitdiff.txt` |
+
+注：一轮后端套件在与提权 runner/转录并发负载下出现 `test_real_waitress_setup_handoff_has_no_bad_file_descriptor` 的 WinError 10053 时序失败（真实子进程监听移交测试，与本轮修改的模块无交集），runner 空闲后单独静默复跑 151/151 通过；以复跑结果为准。
+
+### 12.5 修复分支候选包（可复现双构建 `MRV2_REPRODUCIBLE_BUILD=PASS`）
+
+| 产物 | SHA-256 | 与首验候选差异 |
+|---|---|---|
+| 会议室预约系统-V2.4.0-安装包.zip | `1b3cabe318f630e626cc34c24fd2cabdbe9798c9c676f8333c4f919d2f3a57a0` | Windows 载荷不含变更文件→与首验安装包字节一致（合理） |
+| 会议室预约系统-V2.4.0-累计升级包.zip | `b4a020bbe2238e68789d839b5213e5ef059a8619bf70d02272557eceed946027` | 含修复版 `update_core.py`（更新工具随包分发） |
+
+### 12.6 Windows 累计升级腿复跑 —— **PASS**
+
+执行：`v2-windows-upgrade-acceptance.ps1 -BaselineZip <冻结V2.1.0> -UpdateZip <fix2 累计升级包> -WorkRoot D:\mrv2-v241\work\upgrade-fix2`（垫片适配同第 4 节；前置清理后预检通过；transcript `evidence/fix2-upgrade-transcript.log`，rc=0）。逐步：
+
+- preflight → install-baseline（V2.1.0 BAT RC_0，install_id `af507b06-…`）→ first-setup-and-business-data → wait-backup-catch-up → prepare-cumulative-update → **health-failure-rollback**（故障注入 → 健康失败 → 回滚到基线运行态）→ **standard-user-private-roots-after-rollback**：`data/backups/logs` 三项 `list=PASS;read=PASS` → **run-cumulative-update：`upgrade BAT returned 0 with product markers`（修复点，首验同点 FAILED）** → verify-version-and-identity → verify-service-and-data（`business data, login session and rooms survived the upgrade`）→ dacl-boundaries-after-upgrade（升级后 DACL 重固化复验）→ **`MRV2_T1U=PASS`**。
+- 中间失败尝试（fix1 候选 `cddb2759…`，仅修新代码）在同一验证点失败，已作为法证输入记录（`evidence/fix1-upgrade-transcript.log`、`fix1-failure-diag.log`），未计入最终判定。
+
+### 12.7 修复轮结论
+
+- **V241-B1：已修复并经实机累计升级腿验证 PASS（含健康失败回滚后重试的精确场景）。**
+- **V241-B2：已修复，Windows 宿主安装器套件 113/113（1 平台跳过）。**
+- 放行状态维持 `formal_external_release_allowed=false`：本轮仅新分支提交与推送，未创建 PR/合并/标签/Release/签名，未对外分发；第 9 节用户侧余项（真实 UAC 双击、真实重启、第二设备、系统 DPI 抽查、断电演练）仍待用户完成后方可申请放行。

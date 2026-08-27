@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 import types
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -138,6 +139,95 @@ class UpdateCoreTests(unittest.TestCase):
         connection.commit()
         connection.close()
         return database
+
+    def test_online_backup_reconciles_watermark_above_foreign_sidecars(self) -> None:
+        """V241-B1 回归：跨版本 sidecar 残留时，重试更新不再序列碰撞。
+
+        健康检查失败的更新会由换入的新版本运行时在 backups/ 留下当前
+        安装（V2.1.0）无法解析的 sidecar；回滚恢复旧库后水位回落。更新
+        器在执行更新前在线备份前必须把旧库水位抬到文件名下限，让旧版
+        本代码的序列预留落到空闲序列。
+        """
+
+        database = self._create_v2_database(setup_complete=True)
+        with closing(sqlite3.connect(database)) as db, db:
+            db.executemany(
+                "INSERT INTO app_meta VALUES (?, ?)",
+                (("backup_sequence", "2"), ("data_sequence", "5")),
+            )
+        backup_dir = self.install_root / "_程序文件" / "backups"
+        backup_dir.mkdir(exist_ok=True)
+        foreign_db = backup_dir / "reservation-v2-backup-00000003.db"
+        foreign_db.write_bytes(b"synthetic-new-runtime-backup")
+        foreign_sidecar = {
+            "schema": 1,
+            "kind": "meeting-room-v2-backup",
+            "installId": "0" * 36,
+            "productGeneration": 2,
+            "databaseSchemaVersion": 999,
+            "setupComplete": True,
+            "databaseSha256": "a" * 64,
+            "databaseBytes": 28,
+            "sequence": 3,
+            "sourceDataSequence": 5,
+            "createdAtUtc": "2026-08-27T06:00:00Z",
+            "fileName": "reservation-v2-backup-00000003.db",
+        }
+        (backup_dir / "reservation-v2-backup-00000003.json").write_text(
+            json.dumps(foreign_sidecar, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["setup_complete"] = True
+        info_path.write_text(json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        identity = load_v2_identity(self.install_root)
+
+        update_core.reconcile_backup_sequence_floor(identity)
+        with closing(sqlite3.connect(database)) as db:
+            watermark = db.execute(
+                "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+            ).fetchone()[0]
+        self.assertEqual(watermark, "3")
+        self.assertEqual(foreign_db.read_bytes(), b"synthetic-new-runtime-backup")
+
+        # 幂等：水位不低于下限时不得改写。
+        update_core.reconcile_backup_sequence_floor(identity)
+        with closing(sqlite3.connect(database)) as db:
+            watermark = db.execute(
+                "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+            ).fetchone()[0]
+        self.assertEqual(watermark, "3")
+
+        # 更高的跨版本残留出现时继续上调（多次失败重试场景）。
+        (backup_dir / "reservation-v2-backup-00000005.db").write_bytes(b"x")
+        (backup_dir / "reservation-v2-backup-00000005.json").write_text("{}", encoding="utf-8")
+        update_core.reconcile_backup_sequence_floor(identity)
+        with closing(sqlite3.connect(database)) as db:
+            watermark = db.execute(
+                "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+            ).fetchone()[0]
+        self.assertEqual(watermark, "5")
+
+    def test_online_backup_reconcile_is_noop_without_backup_files(self) -> None:
+        database = self._create_v2_database(setup_complete=True)
+        with closing(sqlite3.connect(database)) as db, db:
+            db.executemany(
+                "INSERT INTO app_meta VALUES (?, ?)",
+                (("backup_sequence", "2"),),
+            )
+        info_path = self.install_root / INSTALL_INFO
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["setup_complete"] = True
+        info_path.write_text(json.dumps(info, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        identity = load_v2_identity(self.install_root)
+        (self.install_root / "_程序文件" / "backups").mkdir(exist_ok=True)
+        update_core.reconcile_backup_sequence_floor(identity)
+        with closing(sqlite3.connect(database)) as db:
+            watermark = db.execute(
+                "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+            ).fetchone()[0]
+        self.assertEqual(watermark, "2")
 
     def test_explicit_v2_identity_is_accepted_before_setup(self) -> None:
         identity = load_v2_identity(self.install_root)

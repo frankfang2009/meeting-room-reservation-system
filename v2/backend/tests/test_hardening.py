@@ -700,6 +700,64 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
             {"backup.requested", "backup.succeeded", "backup.failed"}.issubset(actions)
         )
 
+    def test_backup_sequence_skips_foreign_sidecar_after_rollback_retry(self):
+        """V241-B1 回归：失败更新回滚后重试，跨版本 sidecar 也要占住序列。
+
+        故障注入的健康失败更新会由新版本运行时留下当前版本无法解析的
+        sidecar（例如更高的 databaseSchemaVersion）；回滚恢复旧数据库
+        （水位回落）后，重试更新的更新前在线备份必须避开该序列，而不
+        是瞄准已存在的文件触发拒绝覆盖。
+        """
+
+        first = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(first.status_code, 201, first.get_json())
+        room = self.write(
+            "POST", "/api/v1/rooms", {"name": "跨版本序列房间", "sortOrder": 97}
+        )
+        self.assertEqual(room.status_code, 201)
+        second = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(second.status_code, 201, second.get_json())
+        self.assertEqual(second.get_json()["sequence"], 2)
+        backup_dir = self.root / "backups"
+        # 模拟更新器回滚：data 树回到在线备份之前的快照（水位 2），
+        # 但 backups/ 中残留更新版本运行时写出的 seq3 备份，其
+        # sidecar 带当前版本不支持的 databaseSchemaVersion。
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("UPDATE app_meta SET value='2' WHERE key='backup_sequence'")
+        second_path = backup_dir / second.get_json()["fileName"]
+        foreign_db = backup_dir / "reservation-v2-backup-00000003.db"
+        foreign_db.write_bytes(second_path.read_bytes())
+        foreign_sidecar_path = foreign_db.with_suffix(".json")
+        foreign_sidecar = json.loads(
+            second_path.with_suffix(".json").read_text(encoding="utf-8")
+        )
+        foreign_sidecar["sequence"] = 3
+        foreign_sidecar["fileName"] = foreign_db.name
+        foreign_sidecar["databaseSchemaVersion"] = (
+            foreign_sidecar["databaseSchemaVersion"] + 1
+        )
+        foreign_sidecar_path.write_text(
+            json.dumps(foreign_sidecar, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        with self.assertRaises(RuntimeError):
+            load_backup_sidecar(foreign_sidecar_path, expected_install_id=INSTALL_ID)
+        self.assertEqual(
+            [
+                value["sequence"]
+                for _, value in backup_records(
+                    backup_dir, expected_install_id=INSTALL_ID
+                )
+            ],
+            [2, 1],
+        )
+        retry = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(retry.status_code, 201, retry.get_json())
+        self.assertEqual(retry.get_json()["sequence"], 4)
+        # 拒绝覆盖语义保持：他版本备份文件未被触碰或改写。
+        self.assertEqual(foreign_db.read_bytes(), second_path.read_bytes())
+        self.assertTrue((backup_dir / "reservation-v2-backup-00000004.db").is_file())
+
     def test_backup_preserves_product_defined_api_errors(self):
         denied = ApiError(403, "FORBIDDEN", "当前账户无权执行备份")
         with mock.patch("v2app.api.system.locked_actor", side_effect=denied):
