@@ -2066,7 +2066,11 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
               </>}
             </div>
           </article>)}</div>
-        </section>) : <p className="handover-page-empty" role="status">当前没有进行中的工作交接</p>}
+        </section>) : <div className="handover-page-empty" role="status">
+          <span className="handover-page-empty-icon" aria-hidden="true"><ArrowsLeftRight size={40} /></span>
+          <h2>暂无工作交接</h2>
+          <p>收到确认请求或发起交接后，将在这里显示。</p>
+        </div>}
       </div>
     </main>;
   }

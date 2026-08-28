@@ -279,7 +279,7 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /handoverLedgerSections\(\{ incoming, outgoing \}\)/);
   assert.match(app, /sections\.length \? sections\.map/);
   assert.match(app, /section\.id === "incoming"/);
-  assert.match(app, /当前没有进行中的工作交接/);
+  assert.match(app, /className="handover-page-empty" role="status">[\s\S]{0,240}className="handover-page-empty-icon" aria-hidden="true">[\s\S]{0,120}<ArrowsLeftRight size=\{40\} \/>[\s\S]{0,180}<h2>暂无工作交接<\/h2>[\s\S]{0,180}<p>收到确认请求或发起交接后，将在这里显示。<\/p>/);
   assert.doesNotMatch(app, /className="handover-summary"/);
   assert.doesNotMatch(app, /className="handover-ledger-empty"/);
   assert.match(app, /activeView === "handovers" && renderHandovers\(\)/);

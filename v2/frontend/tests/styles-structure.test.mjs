@@ -43,7 +43,8 @@ const expectedFiles = [
 // 独立工作交接页（dashboard.css）。
 // V2.4.1：通知弹窗层级高于普通到达提醒（production-flows.css）。
 // V2.4.1：交接页隐藏空分组并改为紧凑三列操作区（dashboard.css）。
-const frozenSourceSha256 = "6af5f8ed81e864e99ac9a1b2ad82b632760003ccbd8314170457fe49cb06122f";
+// V2.4.1：交接页全空状态使用居中的图标、标题与说明（dashboard.css）。
+const frozenSourceSha256 = "0fa879562d0095d58bd6f80188babe35bba34782f5613ee4c9d4c42fdcafde16";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -116,7 +117,10 @@ test("handover rows use a stable three-column action grid and a themed pending s
   const dashboard = fs.readFileSync(path.join(stylesRoot, "dashboard.css"), "utf8");
   assert.match(dashboard, /\.handover-ledger-actions \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: 88px 96px 120px;/);
   assert.match(dashboard, /\.handover-waiting \{[\s\S]*?color: var\(--terracotta-text\);[\s\S]*?background: var\(--terracotta-soft\);[\s\S]*?border: 1px solid var\(--terracotta-line\);/);
-  assert.match(dashboard, /\.handover-page-empty \{[\s\S]*?color: var\(--muted\);/);
+  assert.match(dashboard, /\.handover-page-empty \{[\s\S]*?min-height: clamp\(320px, calc\(100vh - 390px\), 520px\);[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?text-align: center;/);
+  assert.match(dashboard, /\.handover-page-empty-icon \{[\s\S]*?width: 88px;[\s\S]*?height: 88px;[\s\S]*?color: var\(--terracotta-text\);[\s\S]*?background: var\(--terracotta-soft\);[\s\S]*?border-radius: 50%;/);
+  assert.match(dashboard, /\.handover-page-empty h2 \{[\s\S]*?font-size: 24px;[\s\S]*?font-weight: 600;/);
+  assert.match(dashboard, /\.handover-page-empty p \{[\s\S]*?color: var\(--muted\);[\s\S]*?font-size: 14px;/);
   assert.doesNotMatch(dashboard, /\.handover-summary/);
   assert.doesNotMatch(dashboard, /\.handover-ledger-empty/);
 });

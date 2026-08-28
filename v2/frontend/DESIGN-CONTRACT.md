@@ -249,10 +249,12 @@ calendar and role boundaries are unchanged.
   requests contribute to its numbered rail badge. The page uses the product's
   open ledger language without a summary-metric band. Empty groups do not
   render: incoming-only shows only 待我确认, outgoing-only shows only 我发起的,
-  both preserve incoming-before-outgoing order, and the all-empty state keeps
-  only one quiet status line below the page heading. A single request names its
-  counterparty in the section eyebrow; multiple requests summarize the count
-  and retain per-row counterpart labels. Rows keep party, purpose, relative
+  both preserve incoming-before-outgoing order. The all-empty state centers a
+  compact handover icon, title, and supporting line in the remaining canvas;
+  it uses the existing terracotta soft-surface token without adding a card,
+  action, count, or empty section shell. A single request names its counterparty
+  in the section eyebrow; multiple requests summarize the count and retain
+  per-row counterpart labels. Rows keep party, purpose, relative
   date, time, room, consequence copy, and a stable three-column action area.
   Incoming order is 查看预约 / 不接受 / 接受交接; outgoing order is 查看预约 /
   处理中 / 撤回申请. 处理中 is a non-interactive capsule using the existing
