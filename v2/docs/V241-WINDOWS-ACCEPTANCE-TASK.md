@@ -1,4 +1,4 @@
-# V2.4.1 Windows 验收任务书（2026-08-28）
+# V2.4.1 Windows 修复后复验任务书（2026-08-28）
 
 > 本任务书用于真实 Windows 测试机复核 V2.4.1 hardening 分支。执行者只做验收和
 > 证据记录，不修改产品代码，不创建标签或 Release，不把候选包对外分发。
@@ -7,7 +7,7 @@
 
 - 仓库：`frankfang2009/meeting-room-reservation-system`
 - 分支：`codex/v241-hardening-uncommitted`
-- 产品代码锚点：`2391ad66f7523757c0000d5073d7e2b025914738`
+- 产品代码锚点：`095675c0ead7aa3e3293b2cc5e9e10162101569b`
 - 基线：`25284f0e`（V2.4.0 发布证据合并后的 main）
 - 本任务书位于代码锚点之后的独立文档提交。检出远端分支后，必须确认：
 
@@ -21,7 +21,9 @@
   第一条结果必须是上述产品代码锚点；第二条只能包含
   `v2/docs/V241-WINDOWS-ACCEPTANCE-TASK.md`。不满足就停止，不要验收其他 SHA。
 
-本分支包含八个本地产品修复提交，重点变化如下：
+本分支在 2026-08-28 首轮 Windows 证据所测锚点 `2391ad66` 之上，已合入
+V241-B1、V241-B2 与 V241-O1 修复。当前复验以本节的新产品代码锚点为唯一真值，
+不得继续使用首轮候选包。重点变化如下：
 
 1. 更新健康运行时在成功提交前和故障回滚前均使用 fail-closed 停止；无法确认停净时
    禁止提交或恢复文件。
@@ -34,6 +36,12 @@
 6. 工作交接页移除概览指标带并按数据条件渲染分组；空分组不显示，双侧并存时“待我
    确认”在上，“处理中”使用产品陶土色状态胶囊，操作区保持固定顺序和响应式对齐；
    全空时在剩余画布居中显示主题色交接图标、“暂无工作交接”和一行说明。
+7. V241-B1：更新健康失败回滚后重试同一累计更新时，更新器先按备份文件名把旧库
+   `backup_sequence` 水位原子上调到已占用序列下限；新版备份代码也按文件名避开当前
+   版本无法解析的跨版本 sidecar，禁止覆盖任何既有备份。
+8. V241-B2：Windows 宿主构建 macOS 包时，`EDITION` 固定写入 LF 并做字节级校验，
+   保持跨平台可复现。
+9. V241-O1：NTFS 无法表达的 POSIX 执行位测试在 Windows 明确跳过；macOS/Linux 仍执行。
 
 F3（既有事务恢复在 `ExclusiveLock` 外执行）不属于本轮，禁止顺手修改。
 
@@ -74,6 +82,7 @@ Start-Transcript -Path D:\mrv2-v241\evidence\windows-v241-transcript.txt
 
    ```powershell
    python -m ruff check v2/backend v2/installer v2/tests
+   python -m unittest discover -s v2/backend/tests -v
    python -m unittest discover -s v2/installer/tests -v
    python -m unittest discover -s v2/tests -v
    Push-Location v2/frontend
@@ -90,22 +99,34 @@ Start-Transcript -Path D:\mrv2-v241\evidence\windows-v241-transcript.txt
    - `test_health_success_uses_fail_closed_stop_before_commit`
    - `test_health_failure_does_not_restore_files_when_second_stop_fails`
    - `test_health_probe_failure_stops_new_runtime_before_restore`
+   - `test_online_backup_reconciles_watermark_above_foreign_sidecars`
+   - `test_online_backup_reconcile_is_noop_without_backup_files`
+5. 后端测试应包含并通过
+   `test_backup_sequence_skips_foreign_sidecar_after_rollback_retry`。
+6. 预期结果：Ruff 退出 0；backend 151 项退出 0；installer 115 项退出 0（Windows
+   允许且只允许 POSIX 执行位用例 1 项 skip）；cross-layer 32 项退出 0；frontend
+   173 项与生产构建退出 0；`git diff --check` 无输出。任何 FAIL/ERROR 都必须把本节
+   判为 FAIL，不得以“已知失败”为由写成 PASS。
 
 ## 5. T1 全新安装与累计升级自动验收
 
-使用与代码锚点完全一致的内部候选安装包和累计升级包；先记录文件名、字节数与 SHA-256。
-若候选不是由该代码锚点构建，停止并报告，不得用 V2.4.0 历史包冒充。
+从产品代码锚点重新执行双副本可复现构建，必须得到
+`MRV2_REPRODUCIBLE_BUILD=PASS`；记录安装包、累计升级包的文件名、字节数与 SHA-256。
+若候选不是由该产品代码锚点构建，停止并报告；首轮锚点 `2391ad66` 的
+`950f8979…` 安装包与 `6d6d6505…` 累计升级包均已失效，不得复用或冒充。
+当前 `v2/VERSION` 在正式切版前仍为 `2.4.0`，所以本轮内部候选文件名可能仍显示
+V2.4.0；必须用产品代码锚点、双构建结果和本轮 SHA-256 识别，不得只看文件名。
 
 两条腿必须串行运行，并为每条腿使用新的不存在的 `WorkRoot`：
 
 ```powershell
 .github/scripts/v2-windows-acceptance.ps1 `
-  -CandidateZip <V2.4.1安装包绝对路径> `
+  -CandidateZip <本锚点重建安装包绝对路径> `
   -WorkRoot D:\mrv2-v241\work\fresh
 
 .github/scripts/v2-windows-upgrade-acceptance.ps1 `
   -BaselineZip <冻结V2.1.0安装包绝对路径> `
-  -UpdateZip <V2.4.1累计升级包绝对路径> `
+  -UpdateZip <本锚点重建累计升级包绝对路径> `
   -WorkRoot D:\mrv2-v241\work\upgrade
 ```
 
@@ -131,6 +152,9 @@ Start-Transcript -Path D:\mrv2-v241\evidence\windows-v241-transcript.txt
 - 程序替换或回滚后，`app/runtime` 仅向 Users 提供读取执行；
   `data/backups/logs` 不得包含 Users 允许 ACE。
 - 无 `.update-*`、临时程序树、探针账号、canary 或维护锁残留。
+- `health-failure-rollback` 后重跑累计更新必须越过 2026-08-28 首轮的
+  `run-cumulative-update` 失败点，最终输出 `MRV2_T1U=PASS`；保存脱敏备份序列摘要，
+  确认跨版本 seq3 sidecar 保留且新备份使用空闲序列，不得覆盖旧文件。
 
 任何腿失败都阻断后续放行。保存完整 transcript 和脚本自带的脱敏 diagnostics；不要附加
 数据库、secret、备份内容或原始日志。
@@ -182,5 +206,7 @@ Start-Transcript -Path D:\mrv2-v241\evidence\windows-v241-transcript.txt
 - `formal_external_release_allowed=false`；即使全部通过，也只能报告“Windows 验收证据完成”，
   不得自行合并、打标签、签名或发布。
 
-证据建议写入新分支的 `v2/docs/V241-WINDOWS-ACCEPTANCE-EVIDENCE-2026-08-27.md`，只提交
-脱敏 Markdown；截图和 transcript 保存在受控本地目录，仓库仅记录相对证据说明和摘要。
+证据写入新证据分支的
+`v2/docs/V241-WINDOWS-ACCEPTANCE-EVIDENCE-2026-08-28-R2.md`，只提交脱敏 Markdown；
+截图和 transcript 保存在受控本地目录，仓库仅记录相对证据说明和摘要。报告应明确区分
+本轮新产品锚点结果与首轮失败记录，不得把姊妹分支或旧候选结果冒充本轮结果。
