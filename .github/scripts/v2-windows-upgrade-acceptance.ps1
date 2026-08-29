@@ -565,31 +565,45 @@ try {
     $Script:SanitizedDiagnosticsOnly = $true
     $cleanupFailures = @()
     $rollbackFailure = $null
+    $rollbackCheckpoint = "fixture"
     try {
         $faultedUpdate = Join-Path $WorkRoot "update-health-failure"
         New-HealthFailureUpdateFixture -SourceRoot $updateFormal -DestinationRoot $faultedUpdate
+        $rollbackCheckpoint = "canaries-created"
         New-StandardUserPrivateAccessProbeCanaries
+        $rollbackCheckpoint = "candidate-returned"
         $failedUpgrade = Invoke-CandidateBat $faultedUpdate "升级到V$Script:TargetVersion.bat" "YES"
+        $rollbackCheckpoint = "candidate-exit-code"
         Assert-True ($failedUpgrade.Code -eq 1) "health-failure update returned $($failedUpgrade.Code) instead of 1"
+        $rollbackCheckpoint = "updater-result-marker"
         Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=1")) "health-failure update missed updater result marker"
+        $rollbackCheckpoint = "product-result-marker"
         Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATE_GATE=PRODUCT_RC_1")) "health-failure update missed product rollback marker"
+        $rollbackCheckpoint = "staging-clean"
         $stagingAfterFailure = @(Get-ChildItem -LiteralPath $Script:ProgramDir -Force -Directory -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like ".update-staging-*" })
         Assert-True ($stagingAfterFailure.Count -eq 0) ("staging residue remained: " + (($stagingAfterFailure | ForEach-Object Name) -join "; "))
+        $rollbackCheckpoint = "version-restored"
         Assert-True ((Get-Content -LiteralPath $Script:VersionFile -Raw -Encoding UTF8).Trim() -ceq $Script:BaselineVersion) "version did not roll back"
+        $rollbackCheckpoint = "service-restored"
         Wait-Until {
             $h = Get-HealthJson
             ($null -ne $h) -and ($h.ok -eq $true) -and ([string]$h.install_id -ceq $installId)
         } 120 "original service state was not restored"
         $restoredHealth = Get-HealthJson
         Assert-True ($null -ne $restoredHealth) "original service state was not restored"
+        $rollbackCheckpoint = "maintenance-lock-released"
         Wait-Until { -not (Test-Path -LiteralPath $lockPath -PathType Leaf) } 60 "maintenance lock still held after health-failure rollback"
+        $rollbackCheckpoint = "canaries-restored"
         Assert-StandardUserPrivateAccessProbeCanariesPresent
         Write-Step "standard-user-private-roots-after-rollback"
+        $rollbackCheckpoint = "standard-user-acl"
         Invoke-StandardUserPrivateAccessProbe
+        $rollbackCheckpoint = "complete"
     }
     catch {
         $rollbackFailure = $_
+        Write-Host "MRV2_T1U=ROLLBACK_CHECKPOINT:$rollbackCheckpoint"
     }
     finally {
         $cleanupFailures = @(Remove-StandardUserPrivateAccessProbeArtifacts)
