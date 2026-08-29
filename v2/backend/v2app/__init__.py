@@ -29,7 +29,7 @@ from .security import register_security
 from .services import update_check
 
 
-PRODUCT_VERSION = "V2.4.0"
+PRODUCT_VERSION = "V2.5.0"
 PACKAGE_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PACKAGE_DIR.parent
 DEFAULT_DATA_DIR = BACKEND_DIR / "data"
@@ -257,6 +257,20 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         if not assets.is_dir():
             return "Frontend assets are not built", 503
         return send_from_directory(assets, filename)
+
+    @app.get("/help", strict_slashes=False)
+    @app.get("/help/<path:help_path>")
+    def help_center(help_path: str | None = None):
+        # 帮助中心是单文件离线阅读器（hash 路由）：/help 下任意深路径都由同一
+        # 入口提供，避免落入 SPA 兜底后拿到应用 CSP、阻断产物内联脚本。
+        # 安全头（独立 CSP/no-store/无 Cookie 边界）统一由 register_security
+        # 的 after_request 按路径前缀设置，这里不重复定义第二套。
+        path = Path(app.config["STATIC_DIR"]) / "help" / "index.html"
+        if not path.is_file():
+            return "帮助中心尚未构建", 503, {
+                "Content-Type": "text/plain; charset=utf-8"
+            }
+        return send_from_directory(path.parent, path.name)
 
     @app.get("/")
     @app.get("/<path:frontend_path>")

@@ -35,7 +35,12 @@ import {
   validateSetupUsername,
   waitForSetupRestart,
 } from "../src/domain.js";
-import { relativeDayLabel, reservationEventSummary, reservationStatusLabel } from "../src/ui/presentation.js";
+import {
+  handoverLedgerSections,
+  relativeDayLabel,
+  reservationEventSummary,
+  reservationStatusLabel,
+} from "../src/ui/presentation.js";
 
 test("reservation statuses are always projected as Chinese UI copy", () => {
   assert.equal(reservationStatusLabel("active"), "已预约");
@@ -49,6 +54,41 @@ test("handover event copy distinguishes the reservation owner from the party", (
     before: { ownerName: "林晨" },
     after: { ownerName: "周宁" },
   }), "预约者由 林晨 交接给 周宁");
+});
+
+test("handover ledger omits empty groups and preserves incoming-first order", () => {
+  const incoming = [{ id: "incoming-1", fromUser: { name: "刘敏" } }];
+  const outgoing = [{ id: "outgoing-1", toUser: { name: "王芳" } }];
+
+  assert.deepEqual(handoverLedgerSections(), []);
+  assert.deepEqual(
+    handoverLedgerSections({ incoming }).map(({ id, eyebrow }) => ({ id, eyebrow })),
+    [{ id: "incoming", eyebrow: "待我确认 · 来自 刘敏" }],
+  );
+  assert.deepEqual(
+    handoverLedgerSections({ outgoing }).map(({ id, eyebrow }) => ({ id, eyebrow })),
+    [{ id: "outgoing", eyebrow: "我发起的 · 等待 王芳确认" }],
+  );
+  assert.deepEqual(
+    handoverLedgerSections({ incoming, outgoing }).map(({ id }) => id),
+    ["incoming", "outgoing"],
+  );
+});
+
+test("handover ledger names one counterparty and summarizes multiple requests", () => {
+  const sections = handoverLedgerSections({
+    incoming: [
+      { id: "incoming-1", fromUser: { name: "刘敏" } },
+      { id: "incoming-2", fromUser: { name: "周宁" } },
+    ],
+    outgoing: [
+      { id: "outgoing-1", toUser: { name: "王芳" } },
+      { id: "outgoing-2", toUser: { name: "林晨" } },
+    ],
+  });
+
+  assert.equal(sections[0].eyebrow, "待我确认 · 2 条");
+  assert.equal(sections[1].eyebrow, "我发起的 · 2 条处理中");
 });
 
 test("relative day labels follow the server business date across month and year boundaries", () => {

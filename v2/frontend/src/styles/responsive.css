@@ -218,6 +218,31 @@
   }
 }
 
+@media (max-height: 820px) {
+  .rail-nav {
+    gap: 8px;
+    padding-top: 10px;
+  }
+
+  .brand-mark,
+  .rail-button,
+  .avatar-button {
+    height: 46px;
+  }
+
+  .brand-mark {
+    height: 72px;
+  }
+
+  .rail-utility {
+    margin-bottom: 0;
+  }
+
+  .avatar-button {
+    margin-bottom: 8px;
+  }
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -231,6 +256,7 @@
 }
 
 @media (max-width: 1280px) {
+  .report-range-panel,
   .report-filters {
     grid-template-columns: repeat(3, minmax(130px, 1fr));
   }
@@ -255,6 +281,7 @@
     padding-left: 34px;
   }
 
+  .report-range-panel,
   .report-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -310,13 +337,8 @@
     width: 100%;
   }
 
-  .report-header-actions {
-    width: 100%;
+  .report-header-controls .report-analysis-toggle {
     margin-left: 0;
-  }
-
-  .report-header-actions button {
-    flex: 1;
   }
 
   .report-page-nav {
@@ -328,12 +350,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .report-metric-card:nth-child(2)::after {
-    display: none;
-  }
-
   .report-metric-card:nth-child(n + 3) {
-    border-top: 1px solid var(--hairline);
+    padding-top: 20px;
   }
 
   .report-chart-toolbar,

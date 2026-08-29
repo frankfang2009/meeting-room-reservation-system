@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Iterable, Mapping, Optional
 
-from ..common import local_now, parse_date, time_to_minutes
+from ..common import (
+    escape_like,
+    local_now,
+    parse_date,
+    time_to_minutes,
+    validate_inclusive_date_range,
+)
 from ..db import get_db
 from ..errors import ApiError
 from ..security import current_user
@@ -156,13 +162,7 @@ def parse_report_filters(args: Mapping[str, Any], scope: ReportScope) -> ReportF
     default_from = now.date().replace(day=1).isoformat()
     start = date.fromisoformat(parse_date(args.get("dateFrom") or default_from, field="dateFrom"))
     end = date.fromisoformat(parse_date(args.get("dateTo") or now.date().isoformat(), field="dateTo"))
-    if end < start or (end - start).days > 365:
-        raise ApiError(
-            422,
-            "VALIDATION_ERROR",
-            "日期范围无效或超过 366 天",
-            fields={"dateTo": "结束日期应不早于开始日期，且跨度不超过 366 天"},
-        )
+    validate_inclusive_date_range(start, end)
     if end >= date(9999, 12, 1):
         # 与预约历史的月份上界同一稳定线：月桶/周桶的下一界计算不得越过 date.max。
         raise ApiError(
@@ -224,10 +224,6 @@ def parse_export_status(value: Any) -> Optional[str]:
     return status
 
 
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def build_reservation_base_query(
     scope: ReportScope,
     filters: ReportFilters,
@@ -246,14 +242,16 @@ def build_reservation_base_query(
         clauses.append("r.tag_slot = ?")
         params.append(filters.tag_slot)
     if filters.query:
-        pattern = f"%{_escape_like(filters.query)}%"
+        pattern = f"%{escape_like(filters.query)}%"
         clauses.append(
             "(r.party_name LIKE ? ESCAPE '\\' "
             "OR r.case_number LIKE ? ESCAPE '\\' "
             "OR r.purpose LIKE ? ESCAPE '\\' "
-            "OR r.notes LIKE ? ESCAPE '\\')"
+            "OR r.notes LIKE ? ESCAPE '\\' "
+            "OR r.room_name_snapshot LIKE ? ESCAPE '\\' "
+            "OR r.tag_label_snapshot LIKE ? ESCAPE '\\')"
         )
-        params.extend([pattern, pattern, pattern, pattern])
+        params.extend([pattern] * 6)
     if status:
         clauses.append("r.status = ?")
         params.append(status)

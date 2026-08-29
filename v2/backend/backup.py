@@ -205,6 +205,14 @@ def _run_backup(args: argparse.Namespace, paths: _CliPaths) -> int:
             logger.info("backup skipped because setup is incomplete mode=%s", operation)
             _write_status(data_dir, status="skipped", detail="setup_incomplete")
             return 0
+        if (args.scheduled or args.catch_up) and not scheduled_backup_due(
+            backup_dir,
+            install_id=install_id,
+            catch_up=args.catch_up,
+        ):
+            logger.info("backup advisory no-op mode=%s", operation)
+            _write_status(data_dir, status="current", detail="idempotent_noop")
+            return 0
         with maintenance_lock(
             data_dir / "maintenance.lock",
             operation="backup",

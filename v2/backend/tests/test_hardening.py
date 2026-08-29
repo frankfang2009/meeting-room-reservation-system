@@ -26,6 +26,7 @@ import service as service_entrypoint
 import v2app.backup as backup_module
 import v2app.db as db_module
 from tests.test_backend import BackendTestCase, INSTALL_ID
+from v2app import create_app
 from v2app.backup import (
     backup_records,
     create_backup,
@@ -35,6 +36,149 @@ from v2app.backup import (
 )
 from v2app.db import prepare_database
 from v2app.errors import ApiError
+
+
+class HelpCenterRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def create_client(self, *, with_help: bool):
+        static_dir = self.root / "static"
+        static_dir.mkdir(exist_ok=True)
+        (static_dir / "index.html").write_text(
+            "<div id='root'>V2</div>", encoding="utf-8"
+        )
+        if with_help:
+            help_dir = static_dir / "help"
+            help_dir.mkdir()
+            (help_dir / "index.html").write_text(
+                "<!doctype html><title>帮助中心</title>", encoding="utf-8"
+            )
+        app = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(self.root / "data"),
+                "STATIC_DIR": str(static_dir),
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        return app.test_client()
+
+    def test_help_is_public_and_has_strict_offline_headers(self):
+        client = self.create_client(with_help=True)
+        for path in ("/help", "/help/", "/help/index.html", "/help/unknown-deep-path"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+                self.assertEqual(response.headers["X-Frame-Options"], "SAMEORIGIN")
+                csp = response.headers["Content-Security-Policy"]
+                self.assertIn("connect-src 'none'", csp)
+                self.assertIn("script-src 'unsafe-inline'", csp)
+                self.assertNotIn("script-src 'self'", csp)
+                self.assertNotIn("Set-Cookie", response.headers)
+                # 命中的必须是帮助产物本体，而不是 SPA 兜底页。
+                body = response.get_data(as_text=True)
+                self.assertIn("帮助中心", body)
+                self.assertNotIn("<div id='root'>", body)
+                response.close()
+
+    def test_missing_help_artifact_is_an_explicit_503(self):
+        client = self.create_client(with_help=False)
+        for path in ("/help", "/help/", "/help/index.html"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.get_data(as_text=True), "帮助中心尚未构建")
+                self.assertNotIn("<div id='root'>", response.get_data(as_text=True))
+                response.close()
+
+    def test_help_remains_served_in_recovery_mode(self):
+        # 恢复模式只阻断业务写入；帮助中心是不依赖数据库的静态公共资源，
+        # 数据库故障时仍应完整可用，供管理员按文档处置故障。
+        static_dir = self.root / "static-recovery"
+        static_dir.mkdir()
+        (static_dir / "index.html").write_text(
+            "<div id='root'>V2</div>", encoding="utf-8"
+        )
+        help_dir = static_dir / "help"
+        help_dir.mkdir()
+        (help_dir / "index.html").write_text(
+            "<!doctype html><title>帮助中心</title>", encoding="utf-8"
+        )
+        data_dir = self.root / "data-recovery"
+        data_dir.mkdir()
+        (data_dir / "install.json").write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "product_generation": 2,
+                    "install_id": INSTALL_ID,
+                    "installed_version": "2.4.0",
+                    "installed_at_utc": "2026-08-09T00:00:00Z",
+                    "port": 8080,
+                    "setup_bind": "127.0.0.1",
+                    "lan_bind": "0.0.0.0",
+                    "setup_complete": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (data_dir / "reservation.db").write_bytes(b"not-a-sqlite-database")
+        app = create_app(
+            {
+                "TESTING": True,
+                "DATA_DIR": str(data_dir),
+                "DATABASE": str(data_dir / "reservation.db"),
+                "STATIC_DIR": str(static_dir),
+                "INSTALL_ID": INSTALL_ID,
+            }
+        )
+        self.assertFalse(app.config["SYSTEM_READY"])
+        client = app.test_client()
+        for path in ("/help", "/help/index.html"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(
+                    "script-src 'unsafe-inline'",
+                    response.headers["Content-Security-Policy"],
+                )
+                self.assertIn("帮助中心", response.get_data(as_text=True))
+                response.close()
+
+
+class OrphanedTemporaryCompanionTests(unittest.TestCase):
+    def test_only_real_convention_temporaries_are_cleaned(self) -> None:
+        # FIX-11 回归：真实临时后缀是 `.part`（历史 glob `*.part-*` 与之永远失配）。
+        # 三类边界：断电遗留的规范临时件必须清理；正式备份不动；不符合规范的
+        # 隐藏文件（不同原名、无 .part 后缀）一律不动。
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reservation-v2-backup-00000001.db"
+            database.write_bytes(b"formal backup")
+            orphan_db_temp = root / f".{database.name}.9f2c7a1b0e.part"
+            orphan_db_temp.write_bytes(b"power-loss leftover")
+            orphan_sidecar_temp = root / f".{database.name}.json.{os.getpid()}.4d3e2f1c.part"
+            orphan_sidecar_temp.write_bytes(b"power-loss leftover")
+            unrelated_hidden = root / f".{database.name}.keepme"
+            unrelated_hidden.write_bytes(b"hidden but not a temporary")
+            wrong_stem = root / ".reservation-v2-backup-00000002.db.111.part"
+            wrong_stem.write_bytes(b"belongs to another backup stem")
+
+            backup_module._remove_orphaned_temporary_companions(database)
+
+            self.assertFalse(orphan_db_temp.exists(), "断电遗留的数据库临时件必须被清理")
+            self.assertFalse(orphan_sidecar_temp.exists(), "断电遗留的 sidecar 临时件必须被清理")
+            self.assertTrue(database.exists(), "正式备份不得被清理")
+            self.assertTrue(unrelated_hidden.exists(), "不符合临时命名规范的隐藏文件不得被清理")
+            self.assertTrue(wrong_stem.exists(), "不同原名的 .part 文件不得被清理")
 
 
 class ApiAndAuthenticationHardeningTests(BackendTestCase):
@@ -636,6 +780,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertEqual(sidecar["databaseSchemaVersion"], 4)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
         self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
+        self.assertEqual(list(backup_dir.glob(".*.part")), [])
         self.assertFalse(Path(str(first_path) + "-wal").exists())
         self.assertFalse(Path(str(first_path) + "-shm").exists())
         with closing(sqlite3.connect(first_path)) as backup_db:
@@ -671,12 +816,15 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 Path(str(created_path) + "-wal").write_bytes(b"")
                 Path(str(created_path) + "-shm").write_bytes(b"stale")
                 (backup_dir / f".{created_path.name}.old.part-shm").write_bytes(b"stale")
+                (backup_dir / f".{created_path.name}.9f2c7a1b0e.part").write_bytes(b"stale")
+                (backup_dir / f".{created_path.name}.json.{os.getpid()}.4d3e2f1c.part").write_bytes(b"stale")
         records = backup_records(backup_dir, expected_install_id=INSTALL_ID)
         self.assertEqual([value["sequence"] for _, value in records], [12, 11])
         self.assertIsNotNone(retired_path)
         self.assertFalse(Path(str(retired_path) + "-wal").exists())
         self.assertFalse(Path(str(retired_path) + "-shm").exists())
         self.assertEqual(list(backup_dir.glob(f".{retired_path.name}.*.part-*")), [])
+        self.assertEqual(list(backup_dir.glob(f".{retired_path.name}.*.part")), [])
         records[0][0].write_bytes(b"corrupted-backup")
         status = self.client.get("/api/v1/admin/system").get_json()
         self.assertEqual(status["backupSequence"], 11)
@@ -699,6 +847,64 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertTrue(
             {"backup.requested", "backup.succeeded", "backup.failed"}.issubset(actions)
         )
+
+    def test_backup_sequence_skips_foreign_sidecar_after_rollback_retry(self):
+        """V241-B1 回归：失败更新回滚后重试，跨版本 sidecar 也要占住序列。
+
+        故障注入的健康失败更新会由新版本运行时留下当前版本无法解析的
+        sidecar（例如更高的 databaseSchemaVersion）；回滚恢复旧数据库
+        （水位回落）后，重试更新的更新前在线备份必须避开该序列，而不
+        是瞄准已存在的文件触发拒绝覆盖。
+        """
+
+        first = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(first.status_code, 201, first.get_json())
+        room = self.write(
+            "POST", "/api/v1/rooms", {"name": "跨版本序列房间", "sortOrder": 97}
+        )
+        self.assertEqual(room.status_code, 201)
+        second = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(second.status_code, 201, second.get_json())
+        self.assertEqual(second.get_json()["sequence"], 2)
+        backup_dir = self.root / "backups"
+        # 模拟更新器回滚：data 树回到在线备份之前的快照（水位 2），
+        # 但 backups/ 中残留更新版本运行时写出的 seq3 备份，其
+        # sidecar 带当前版本不支持的 databaseSchemaVersion。
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("UPDATE app_meta SET value='2' WHERE key='backup_sequence'")
+        second_path = backup_dir / second.get_json()["fileName"]
+        foreign_db = backup_dir / "reservation-v2-backup-00000003.db"
+        foreign_db.write_bytes(second_path.read_bytes())
+        foreign_sidecar_path = foreign_db.with_suffix(".json")
+        foreign_sidecar = json.loads(
+            second_path.with_suffix(".json").read_text(encoding="utf-8")
+        )
+        foreign_sidecar["sequence"] = 3
+        foreign_sidecar["fileName"] = foreign_db.name
+        foreign_sidecar["databaseSchemaVersion"] = (
+            foreign_sidecar["databaseSchemaVersion"] + 1
+        )
+        foreign_sidecar_path.write_text(
+            json.dumps(foreign_sidecar, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        with self.assertRaises(RuntimeError):
+            load_backup_sidecar(foreign_sidecar_path, expected_install_id=INSTALL_ID)
+        self.assertEqual(
+            [
+                value["sequence"]
+                for _, value in backup_records(
+                    backup_dir, expected_install_id=INSTALL_ID
+                )
+            ],
+            [2, 1],
+        )
+        retry = self.write("POST", "/api/v1/admin/backups")
+        self.assertEqual(retry.status_code, 201, retry.get_json())
+        self.assertEqual(retry.get_json()["sequence"], 4)
+        # 拒绝覆盖语义保持：他版本备份文件未被触碰或改写。
+        self.assertEqual(foreign_db.read_bytes(), second_path.read_bytes())
+        self.assertTrue((backup_dir / "reservation-v2-backup-00000004.db").is_file())
 
     def test_backup_preserves_product_defined_api_errors(self):
         denied = ApiError(403, "FORBIDDEN", "当前账户无权执行备份")
@@ -749,6 +955,42 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 catch_up=True,
             )
         )
+
+    def test_current_scheduled_backup_skips_before_contending_for_maintenance_lock(self):
+        backup_dir = self.root / "backups"
+        create_backup(
+            self.database,
+            backup_dir,
+            install_id=INSTALL_ID,
+            sequence=1,
+        )
+        self.write_install_json(self.data_dir, setup_complete=True)
+        (self.data_dir / "install_id").write_text(
+            INSTALL_ID + "\n", encoding="utf-8"
+        )
+        paths = backup_entrypoint._CliPaths(
+            program_dir=self.root,
+            data_dir=self.data_dir,
+            backup_dir=backup_dir,
+        )
+        args = backup_entrypoint.argparse.Namespace(
+            scheduled=True,
+            catch_up=False,
+            expected_install_id=INSTALL_ID,
+        )
+        with mock.patch.object(
+            backup_entrypoint,
+            "maintenance_lock",
+            side_effect=RuntimeError("another verified maintenance task is active"),
+        ) as lock, mock.patch.object(
+            backup_entrypoint, "_logger", return_value=mock.Mock()
+        ):
+            self.assertEqual(backup_entrypoint._run_backup(args, paths), 0)
+        lock.assert_not_called()
+        status = json.loads(
+            (self.data_dir / "backup-status.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(status["status"], "current")
 
     def test_maintenance_lock_reclaims_dead_and_reused_pid_but_rejects_live(self):
         lock_path = self.data_dir / "maintenance.lock"
@@ -880,6 +1122,187 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                     install_id=INSTALL_ID,
                 )
         self.assertEqual(hashlib.sha256(self.database.read_bytes()).hexdigest(), before)
+
+    def test_restore_invalidates_sessions_above_the_backup_session_version(self):
+        employee = self.add_employee()
+        employee_client = self.app.test_client()
+        self.login("employee", "employee-pass-123", client=employee_client)
+        self.assertEqual(employee_client.get("/api/v1/bootstrap").status_code, 200)
+
+        created = self.write("POST", "/api/v1/admin/backups").get_json()
+        backup = self.root / "backups" / created["fileName"]
+        reset = self.write(
+            "POST",
+            f"/api/v1/users/{employee['id']}/reset-password",
+            {"password": "employee-new-pass-123"},
+        )
+        self.assertEqual(reset.status_code, 200, reset.get_json())
+        fresh_pre_restore_client = self.app.test_client()
+        self.login(
+            "employee",
+            "employee-new-pass-123",
+            client=fresh_pre_restore_client,
+        )
+        self.assertEqual(
+            fresh_pre_restore_client.get("/api/v1/bootstrap").status_code,
+            200,
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT session_version FROM users WHERE id = ?",
+                    (employee["id"],),
+                ).fetchone()[0],
+                2,
+            )
+
+        restored = restore_entrypoint.restore_backup(
+            database=self.database,
+            backup=backup,
+            backup_dir=self.root / "backups",
+            data_dir=self.data_dir,
+            install_id=INSTALL_ID,
+        )
+        self.assertTrue(restored["restored"])
+        with closing(sqlite3.connect(self.database)) as db:
+            restored_versions = [
+                row[0]
+                for row in db.execute(
+                    "SELECT session_version FROM users ORDER BY id"
+                )
+            ]
+        self.assertTrue(restored_versions)
+        self.assertTrue(all(version > 2 for version in restored_versions))
+        self.assertEqual(employee_client.get("/api/v1/bootstrap").status_code, 401)
+        self.assertEqual(
+            fresh_pre_restore_client.get("/api/v1/bootstrap").status_code,
+            401,
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM security_audit_log "
+                    "WHERE action = 'restore.succeeded'"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_restore_recovers_corrupt_live_database_without_reusing_unknown_sessions(self):
+        employee = self.add_employee()
+        backup_session = self.app.test_client()
+        self.login("employee", "employee-pass-123", client=backup_session)
+        created = self.write("POST", "/api/v1/admin/backups").get_json()
+        backup = self.root / "backups" / created["fileName"]
+
+        reset = self.write(
+            "POST",
+            f"/api/v1/users/{employee['id']}/reset-password",
+            {"password": "employee-new-pass-123"},
+        )
+        self.assertEqual(reset.status_code, 200, reset.get_json())
+        live_session = self.app.test_client()
+        self.login(
+            "employee",
+            "employee-new-pass-123",
+            client=live_session,
+        )
+        self.assertEqual(live_session.get("/api/v1/bootstrap").status_code, 200)
+        with closing(sqlite3.connect(self.database)) as db, db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT session_version FROM users WHERE id = ?",
+                    (employee["id"],),
+                ).fetchone()[0],
+                2,
+            )
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+
+        self.database.write_bytes(b"corrupt-live-database")
+        for side_file in (
+            Path(str(self.database) + "-wal"),
+            Path(str(self.database) + "-shm"),
+        ):
+            if side_file.exists():
+                side_file.unlink()
+
+        try:
+            restored = restore_entrypoint.restore_backup(
+                database=self.database,
+                backup=backup,
+                backup_dir=self.root / "backups",
+                data_dir=self.data_dir,
+                install_id=INSTALL_ID,
+            )
+        except sqlite3.DatabaseError as error:
+            self.fail(f"valid backup must recover a corrupt live database: {error}")
+
+        self.assertTrue(restored["restored"])
+        self.assertTrue(prepare_database(self.database).ready)
+        self.assertEqual(backup_session.get("/api/v1/bootstrap").status_code, 401)
+        self.assertEqual(live_session.get("/api/v1/bootstrap").status_code, 401)
+        with closing(sqlite3.connect(self.database)) as db:
+            restored_versions = {
+                row[0] for row in db.execute("SELECT session_version FROM users")
+            }
+        self.assertTrue(restored_versions)
+        self.assertTrue(restored_versions.isdisjoint({1, 2}))
+
+    def test_restore_fails_closed_before_snapshot_when_live_database_is_locked(self):
+        created = self.write("POST", "/api/v1/admin/backups").get_json()
+        backup = self.root / "backups" / created["fileName"]
+        live_room = self.write(
+            "POST",
+            "/api/v1/rooms",
+            {"name": "锁态现场", "sortOrder": 99},
+        ).get_json()
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            self.assertEqual(db.execute("PRAGMA journal_mode=DELETE").fetchone()[0], "delete")
+
+        before_hash = hashlib.sha256(self.database.read_bytes()).hexdigest()
+        snapshots_before = set((self.root / "backups").glob("pre-restore-*"))
+        real_connect = sqlite3.connect
+
+        def connect_without_wait(database, *args, **kwargs):
+            kwargs["timeout"] = 0.05
+            return real_connect(database, *args, **kwargs)
+
+        locker = real_connect(self.database, timeout=0, isolation_level=None)
+        locker.execute("BEGIN EXCLUSIVE")
+        try:
+            with mock.patch.object(
+                restore_entrypoint.sqlite3,
+                "connect",
+                side_effect=connect_without_wait,
+            ):
+                with self.assertRaises(sqlite3.OperationalError) as raised:
+                    restore_entrypoint.restore_backup(
+                        database=self.database,
+                        backup=backup,
+                        backup_dir=self.root / "backups",
+                        data_dir=self.data_dir,
+                        install_id=INSTALL_ID,
+                    )
+        finally:
+            locker.execute("ROLLBACK")
+            locker.close()
+
+        self.assertIn(
+            raised.exception.sqlite_errorcode & 0xFF,
+            {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED},
+        )
+        self.assertEqual(hashlib.sha256(self.database.read_bytes()).hexdigest(), before_hash)
+        self.assertEqual(
+            set((self.root / "backups").glob("pre-restore-*")),
+            snapshots_before,
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            self.assertEqual(
+                db.execute(
+                    "SELECT name FROM rooms WHERE id = ?", (live_room["id"],)
+                ).fetchone()[0],
+                "锁态现场",
+            )
 
     def test_schema_v1_backup_migrates_and_failed_migration_restores_live_database(self):
         created = self.write("POST", "/api/v1/admin/backups").get_json()

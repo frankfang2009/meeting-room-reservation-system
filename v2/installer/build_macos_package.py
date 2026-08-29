@@ -171,7 +171,11 @@ def _assemble_staging(
         shutil.copyfile(source, app / name)
     _copy_tree(backend_root / "v2app", app / "v2app", "v2app")
     _copy_tree(frontend_dist, app / "static", "前端产物")
-    (app / EDITION_FILE_NAME).write_text(EDITION_CONTENT, encoding="utf-8")
+    # newline 必须显式固定为 LF：Windows 宿主的文本模式默认会把 \n
+    # 翻译成 \r\n，破坏交付包字节一致性（V241-B2）。
+    (app / EDITION_FILE_NAME).write_text(
+        EDITION_CONTENT, encoding="utf-8", newline="\n"
+    )
     frontend_lock = backend_root.parent / "frontend" / "package-lock.json"
     (app / "frontend-production-components.json").write_bytes(
         build_frontend_component_evidence(frontend_lock)
@@ -194,8 +198,10 @@ def _assemble_staging(
     ):
         if not (staging / required).exists():
             raise MacPackageBuildError(f"交付包缺少必需路径：{required}")
-    edition = (staging / "app" / EDITION_FILE_NAME).read_text(encoding="utf-8")
-    if edition != EDITION_CONTENT:
+    # 字节级校验：read_text 会把 \r\n 反向翻译回 \n，掩盖写入侧的换行
+    # 漂移；只有比对原始字节才能真正拦住跨平台不一致。
+    edition = (staging / "app" / EDITION_FILE_NAME).read_bytes()
+    if edition != EDITION_CONTENT.encode("utf-8"):
         raise MacPackageBuildError("EDITION 标记内容不符")
     return staging
 

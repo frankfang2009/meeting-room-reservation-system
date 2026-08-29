@@ -1,6 +1,6 @@
 # V2 API v1 契约
 
-产品版本是 V2.4.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
+产品版本是 V2.5.0，API schema 的首个稳定版本仍使用 `/api/v1`。字段统一使用
 camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后缀以及创建、修改、
 事件和审计时间使用 UTC RFC3339。
 
@@ -37,7 +37,7 @@ camelCase。预约业务日期/时分使用服务器本地时间；带 `Utc` 后
 
 ```json
 {
-  "productVersion": "V2.4.0",
+  "productVersion": "V2.5.0",
   "setupComplete": true,
   "authenticated": true,
   "csrfToken": "...",
@@ -68,7 +68,7 @@ DNS rebinding 夺取首次管理员：
 
 ```json
 {
-  "productVersion": "V2.4.0",
+  "productVersion": "V2.5.0",
   "serverDate": "2026-08-10",
   "serverTime": "14:32:05",
   "currentUser": {},
@@ -105,6 +105,7 @@ DNS rebinding 夺取首次管理员：
 
 `GET /api/v1/reservations/history?month=YYYY-MM&ownerId=...&status=active|cancelled&tagId=...&query=...&pageSize=...&cursor=...`：
 员工始终由服务端收窄为本人，忽略或拒绝扩权参数。
+关键词最长 120 字，按字面量同时匹配当事人、案号、事项、备注、笔录室和标签快照。
 
 日期接受 `0001-01-01` 至 `9999-12-31`，但查询跨度最多 366 天。历史月份接受
 `0001-01` 至 `9999-11`；`9999-12` 无法安全形成右开区间，稳定返回 422 JSON，
@@ -197,7 +198,8 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
 - `scope=self|overall|person`；`person` 必须同时提供 `ownerId`；
 - `dateFrom/dateTo`，默认服务端当前自然月，含首尾日期且最长 366 天；
-- 可选 `roomId/tagId/query`，关键词最长 120 字并按字面量匹配当事人、案号、事项和备注。
+- 可选 `roomId/tagId/query`，关键词最长 120 字并按字面量匹配当事人、案号、事项、备注、
+  笔录室和标签快照。
 
 员工只允许 `scope=self` 且不得传 `ownerId`；管理员可使用全部三种视角。服务端先解析
 角色与范围再构造查询，员工请求全单位、指定人员或伪造 owner 均返回 `403 FORBIDDEN`。
@@ -225,12 +227,13 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   `eventId/assignedByName/fromName`，两者都不受通知开关约束）（不再只取单条）；临近
   提醒和他人修改/取消通知各自受个人开关控制。临近提醒是状态而非待办：
   窗口以请求时的当前 `reminderLeadMinutes` 实时计算并返回窗口内全部条目，没有确认
-  动作。变更通知以事件为维度：每项含 `eventId`、`changeType`、`actorName`、
+  动作。变更通知以事件为维度，并按事件快照中的当时预约者投递，不随预约当前归属
+  漂移：每项含 `eventId`、`changeType`、`actorName`、
   `occurredAt` 与 `diffs`（由事件快照计算的字段级对比，仅面向用户的字段），超过
   45 天未确认的变更事件过期不再返回。
 - `POST /api/v1/reminders/ack` 提交 `{ "eventId": "…" }` 按事件确认（幂等）；修改/取消
-  通知仅当前预约者可确认且受变更通知开关约束，管理员指派结果仅该 handover 事件快照
-  中的接收人可确认且不受开关约束，否则返回 `403/422/409`。确认动作只写回执、不改变
+  通知仅事件快照中的当时预约者可确认且受变更通知开关约束，管理员指派结果仅该
+  handover 事件快照中的接收人可确认且不受开关约束，否则返回 `403/422/409`。确认动作只写回执、不改变
   预约归属，并顺带清理 90 天前的旧回执。
 - `POST /api/v1/reservations/{id}/handover` 提交 `{ "toUserId": "…" }`：预约本人发起
   待确认交接请求（同一预约同时仅一个 pending，重复返回 `409 HANDOVER_REQUEST_EXISTS`；
@@ -281,7 +284,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
   日期缺失或非法时按通用 JSON 外形返回 `422 VALIDATION_ERROR`。
 - `GET /api/v1/integration/health` 需要 `health:read`，只返回
-  `{ "ok": true, "productVersion": "V2.4.0" }`。
+  `{ "ok": true, "productVersion": "V2.5.0" }`。
 
 令牌错误语义稳定为：缺少或不是 Bearer 认证时 `401 TOKEN_REQUIRED`；令牌未知或已撤销
 时 `401 TOKEN_INVALID`；当前时间达到 `expiresAt` 时 `401 TOKEN_EXPIRED`；令牌存在但缺少

@@ -20,12 +20,14 @@ def _reservation_id_of(row: Any) -> str:
 def _request_row(db, request_id: str) -> Any:
     row = db.execute(
         """
-        SELECT hr.id, hr.reservation_id, hr.from_user_id, hr.to_user_id,
-               hr.expected_revision, hr.status, hr.created_at, hr.decided_at,
+        SELECT hr.id AS request_id, hr.reservation_id, hr.from_user_id,
+               hr.to_user_id, hr.expected_revision,
+               hr.status AS request_status,
+               hr.created_at AS request_created_at,
+               hr.decided_at AS request_decided_at,
                r.*, u.display_name AS owner_display_name,
                f.display_name AS from_display_name,
-               t.display_name AS to_display_name,
-               r.status AS reservation_status
+               t.display_name AS to_display_name
         FROM handover_requests hr
         JOIN reservations r ON r.id = hr.reservation_id
         JOIN users u ON u.id = r.owner_user_id
@@ -67,16 +69,14 @@ def load_handover_reservation(reservation_id: str, actor: dict[str, Any]) -> Any
 
 
 def serialize_handover_request(row: Any) -> dict[str, Any]:
+    # 行内的请求列已全部别名（request_*），r.* 无重复列名；
+    # serialize_reservation 因此直接输出真实预约的 id/status/createdAt。
     reservation = serialize_reservation(row, None)
-    # Joined handover rows expose both hr.id and r.id as ``id``. sqlite3.Row
-    # keeps the first duplicate column, so the generic reservation serializer
-    # otherwise leaks the handover-request id as the reservation id.
-    reservation["id"] = _reservation_id_of(row)
     return {
-        "id": row["id"],
-        "status": row["status"],
-        "createdAt": row["created_at"],
-        "decidedAt": row["decided_at"],
+        "id": row["request_id"],
+        "status": row["request_status"],
+        "createdAt": row["request_created_at"],
+        "decidedAt": row["request_decided_at"],
         "expectedRevision": row["expected_revision"],
         "fromUser": {"id": row["from_user_id"], "name": row["from_display_name"]},
         "toUser": {"id": row["to_user_id"], "name": row["to_display_name"]},
@@ -174,6 +174,16 @@ def request_handover(reservation_id: str, payload: dict[str, Any]) -> dict[str, 
 
         if actor["role"] != "admin" and row["owner_user_id"] != actor["id"]:
             raise ApiError(403, "FORBIDDEN", "无权交接他人的预约")
+        db.execute(
+            """
+            UPDATE handover_requests
+            SET status = 'expired',
+                decided_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            WHERE reservation_id = ? AND status = 'pending'
+              AND expected_revision != ?
+            """,
+            (reservation_id, row["revision"]),
+        )
         existing = db.execute(
             """
             SELECT id FROM handover_requests
@@ -228,15 +238,26 @@ def _expire_request(request_id: str) -> None:
 
 def decide_handover(request_id: str, decision: str) -> dict[str, Any]:
     db = get_db()
+    invalid_error: tuple[str, str] | None = None
     with transaction(db):
         actor = locked_actor(db)
         row = _request_row(db, request_id)
-        if row["status"] != "pending":
+        if row["request_status"] != "pending":
             raise ApiError(409, "HANDOVER_REQUEST_CLOSED", "该交接请求已处理")
         if row["to_user_id"] != actor["id"]:
             raise ApiError(403, "FORBIDDEN", "只有被指定的接手人可以处理该交接请求")
 
-        if decision == "decline":
+        if row["status"] != "active" or _started(row):
+            invalid_error = (
+                "HANDOVER_EXPIRED",
+                "预约已开始或已取消，交接请求作废",
+            )
+        elif row["revision"] != row["expected_revision"]:
+            invalid_error = (
+                "REVISION_CONFLICT",
+                "预约内容已变化，该交接请求已作废，请让发起人重新发起",
+            )
+        elif decision == "decline":
             db.execute(
                 """
                 UPDATE handover_requests
@@ -257,11 +278,7 @@ def decide_handover(request_id: str, decision: str) -> dict[str, Any]:
             row = _request_row(db, request_id)
             return {"request": serialize_handover_request(row)}
 
-        if row["reservation_status"] != "active" or _started(row):
-            pass  # 预约已取消或已开始：请求过期作废，预约保持原归属。
-        elif row["revision"] != row["expected_revision"]:
-            pass  # 发起后预约被编辑过：请求作废，需要重新发起（乐观锁语义一致）。
-        else:
+        elif decision == "accept":
             to_user = db.execute(
                 "SELECT id, display_name FROM users WHERE id = ?",
                 (row["to_user_id"],),
@@ -292,13 +309,9 @@ def decide_handover(request_id: str, decision: str) -> dict[str, Any]:
     # 到达这里说明预约不可交接：先把请求状态落为过期（独立事务），
     # 再按原因返回冲突；翻转归属的事务已经整体回滚，预约保持原归属。
     _expire_request(request_id)
-    if row["revision"] != row["expected_revision"]:
-        raise ApiError(
-            409,
-            "REVISION_CONFLICT",
-            "预约内容已变化，该交接请求已作废，请让发起人重新发起",
-        )
-    raise ApiError(409, "HANDOVER_EXPIRED", "预约已开始或已取消，交接请求作废")
+    if invalid_error is None:
+        raise RuntimeError("交接决策无效")
+    raise ApiError(409, invalid_error[0], invalid_error[1])
 
 
 def withdraw_handover(request_id: str) -> dict[str, Any]:
@@ -306,7 +319,7 @@ def withdraw_handover(request_id: str) -> dict[str, Any]:
     with transaction(db):
         actor = locked_actor(db)
         row = _request_row(db, request_id)
-        if row["status"] != "pending":
+        if row["request_status"] != "pending":
             raise ApiError(409, "HANDOVER_REQUEST_CLOSED", "该交接请求已处理")
         if row["from_user_id"] != actor["id"] and actor["role"] != "admin":
             raise ApiError(403, "FORBIDDEN", "只有发起人或管理员可以撤回该交接请求")
@@ -332,8 +345,13 @@ def withdraw_handover(request_id: str) -> dict[str, Any]:
 
 
 def _pending_scope_clause() -> str:
-    # 只按读时条件过滤（active 且未开始）；不做 GET 内写回，避免被动轮询推进数据序号。
-    return "hr.status = 'pending' AND r.status = 'active' AND r.booking_date || ' ' || r.start_time > :now"
+    # 只按读时条件过滤（active、未开始且 revision 仍匹配）；不做 GET 内写回，
+    # 避免被动轮询推进数据序号。
+    return (
+        "hr.status = 'pending' AND r.status = 'active' "
+        "AND r.revision = hr.expected_revision "
+        "AND r.booking_date || ' ' || r.start_time > :now"
+    )
 
 
 def list_my_handovers() -> dict[str, Any]:
@@ -341,7 +359,12 @@ def list_my_handovers() -> dict[str, Any]:
     actor = locked_actor(db)
     now = local_now().replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
     query = """
-        SELECT hr.*, r.*, u.display_name AS owner_display_name,
+        SELECT hr.id AS request_id, hr.reservation_id, hr.from_user_id,
+               hr.to_user_id, hr.expected_revision,
+               hr.status AS request_status,
+               hr.created_at AS request_created_at,
+               hr.decided_at AS request_decided_at,
+               r.*, u.display_name AS owner_display_name,
                f.display_name AS from_display_name,
                t.display_name AS to_display_name
         FROM handover_requests hr

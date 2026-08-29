@@ -49,6 +49,7 @@ try:
         canonical_uuid4,
         is_reparse_or_link,
         json_bytes,
+        production_install_root,
         records_for_tree,
         safe_relative_path,
         sha256_bytes,
@@ -56,6 +57,7 @@ try:
         tree_digest,
         validate_records,
         version_tuple,
+        windows_filesystem_acl_policy_script,
     )
 except ImportError:
     from installer_core import (  # type: ignore
@@ -80,6 +82,7 @@ except ImportError:
         canonical_uuid4,
         is_reparse_or_link,
         json_bytes,
+        production_install_root,
         records_for_tree,
         safe_relative_path,
         sha256_bytes,
@@ -87,6 +90,7 @@ except ImportError:
         tree_digest,
         validate_records,
         version_tuple,
+        windows_filesystem_acl_policy_script,
     )
 
 
@@ -184,9 +188,6 @@ def resolve_install_root(explicit: Optional[Path] = None) -> Path:
 
     if explicit is not None:
         return Path(explicit)
-    environment = os.environ.get("MEETING_ROOM_V2_INSTALL_ROOT")
-    if environment:
-        return Path(environment)
     if os.name == "nt":
         try:
             import winreg
@@ -195,13 +196,25 @@ def resolve_install_root(explicit: Optional[Path] = None) -> Path:
                 value, kind = winreg.QueryValueEx(key, "InstallRoot")
             if kind != winreg.REG_SZ or not isinstance(value, str) or not value:
                 raise UpdatePolicyError("V2 安装根注册表记录无效")
-            return Path(value)
         except FileNotFoundError as error:
             raise UpdatePolicyError(
                 "没有 V2 安装根登记；必须由用户明确提供目录，更新器不会扫描磁盘"
             ) from error
         except OSError as error:
             raise UpdatePolicyError("无法读取 V2 安装根登记") from error
+        registered = Path(value).expanduser()
+        if not registered.is_absolute():
+            raise UpdatePolicyError("V2 安装根注册表记录无效")
+        try:
+            resolved = registered.resolve(strict=True)
+            expected = production_install_root().resolve(strict=True)
+        except OSError as error:
+            raise UpdatePolicyError("V2 安装根注册表记录无效") from error
+        if os.path.normcase(os.path.abspath(str(resolved))) != os.path.normcase(
+            os.path.abspath(str(expected))
+        ):
+            raise UpdatePolicyError("V2 安装根登记与固定生产目录不一致")
+        return resolved
     raise UpdatePolicyError("必须明确提供 V2 安装目录；更新器不会扫描磁盘")
 
 
@@ -669,6 +682,7 @@ class UpdateBundle:
         required = {
             "_程序文件/app/service.py",
             "_程序文件/app/static/index.html",
+            "_程序文件/app/static/help/index.html",
             "_程序文件/runtime/python.exe",
             "_程序文件/runtime/pythonw.exe",
         }
@@ -687,6 +701,11 @@ class UpdateSystemController:
     """只管理已核验属于当前 install_id 的 V2 资源。"""
 
     def capture_and_stop(self, identity: V2InstallIdentity) -> Mapping[str, Any]:
+        raise NotImplementedError
+
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
         raise NotImplementedError
 
     def start_for_health(self, identity: V2InstallIdentity) -> None:
@@ -727,6 +746,11 @@ class PassiveUpdateSystemController(UpdateSystemController):
         self.backup_running = False
         return state
 
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
+        return self.capture_and_stop(identity)
+
     def start_for_health(self, identity: V2InstallIdentity) -> None:
         del identity
         self.running = True
@@ -756,6 +780,16 @@ class WindowsUpdateSystemController(UpdateSystemController):
         self.base = WindowsSystemController()
 
     def capture_and_stop(self, identity: V2InstallIdentity) -> Mapping[str, Any]:
+        return self._capture_and_stop(identity, restore_on_error=True)
+
+    def capture_and_stop_fail_closed(
+        self, identity: V2InstallIdentity
+    ) -> Mapping[str, Any]:
+        return self._capture_and_stop(identity, restore_on_error=False)
+
+    def _capture_and_stop(
+        self, identity: V2InstallIdentity, *, restore_on_error: bool
+    ) -> Mapping[str, Any]:
         script = r"""
 $ErrorActionPreference='Stop'
 $identity='MeetingRoomReservationV2:'+$env:MRV2_INSTALL_ID
@@ -768,6 +802,9 @@ $manual=Get-NetFirewallRule -DisplayName $env:MRV2_FW_MANUAL -ErrorAction Stop
 $background=Get-NetFirewallRule -DisplayName $env:MRV2_FW_BACKGROUND -ErrorAction Stop
 foreach ($rule in @($manual,$background)) { if ([string]$rule.Description -ne $identity) { throw 'V2 防火墙身份不一致。' } }
 $state=[ordered]@{service_running=([string]$main.State -eq 'Running');service_task_enabled=([string]$main.State -ne 'Disabled');backup_task_enabled=([string]$backup.State -ne 'Disabled');backup_task_running=([string]$backup.State -eq 'Running');manual_firewall_enabled=([string]$manual.Enabled -eq 'True');background_firewall_enabled=([string]$background.Enabled -eq 'True')}
+"""
+        if restore_on_error:
+            script += r"""
 try {
   foreach ($task in @($main,$backup)) { Stop-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue; Disable-ScheduledTask -InputObject $task | Out-Null }
   foreach ($rule in @($manual,$background)) { Disable-NetFirewallRule -InputObject $rule }
@@ -780,6 +817,17 @@ try {
   if ($state.backup_task_running) { Start-ScheduledTask -InputObject $backup }
   throw
 }
+"""
+        else:
+            script += r"""
+foreach ($task in @($main,$backup)) { Stop-ScheduledTask -InputObject $task -ErrorAction Stop }
+foreach ($task in @($main,$backup)) { Disable-ScheduledTask -InputObject $task -ErrorAction Stop | Out-Null }
+foreach ($rule in @($manual,$background)) { Disable-NetFirewallRule -InputObject $rule -ErrorAction Stop }
+$stoppedMain=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
+$stoppedBackup=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_BACKUP_TASK_NAME -ErrorAction Stop
+if ([string]$stoppedMain.State -eq 'Running' -or [string]$stoppedBackup.State -eq 'Running') { throw 'V2 任务停止状态无法验证。' }
+"""
+        script += r"""
 $state | ConvertTo-Json -Compress
 """
         output = self.base._run_powershell(
@@ -820,34 +868,14 @@ if ($env:MRV2_STATE_BACKGROUND_FIREWALL_ENABLED -ne '1') { Disable-NetFirewallRu
         self.base._run_powershell(script, environment)
 
     def apply_security(self, identity: V2InstallIdentity) -> None:
-        # os.replace 换入的 app/runtime 只带 _程序文件 的继承 ACL；两个策略根
-        # 必须像全新安装的 configure_disabled 一样重新固化为受保护 DACL，
-        # verify_security 才会通过。回滚恢复出的旧树同样需要本步骤。
+        # 更新和回滚都可能换入新目录；始终复用全新安装的
+        # 同一份文件系统策略，不只修补 app/runtime 两个程序根。
         script = r"""
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$program = Join-Path ([IO.Path]::GetFullPath($env:MRV2_ROOT).TrimEnd('\')) '_程序文件'
-$adminSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
-$systemSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')
-$usersSid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-545')
-function Set-ProgramAcl([string]$path) {
-    $acl = New-Object System.Security.AccessControl.DirectorySecurity
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.SetOwner($adminSid)
-    $inheritance = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-    $propagation = [System.Security.AccessControl.PropagationFlags]::None
-    $allow = [System.Security.AccessControl.AccessControlType]::Allow
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($systemSid, 'FullControl', $inheritance, $propagation, $allow)))
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($adminSid, 'FullControl', $inheritance, $propagation, $allow)))
-    $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($usersSid, 'ReadAndExecute', $inheritance, $propagation, $allow)))
-    Set-Acl -LiteralPath $path -AclObject $acl
-}
-foreach ($name in @('app', 'runtime')) {
-    $dir = Join-Path $program $name
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw "V2 更新后的 $name 目录缺失：$dir" }
-    Set-ProgramAcl $dir
-}
-"""
+$root = [IO.Path]::GetFullPath($env:MRV2_ROOT).TrimEnd('\')
+$program = Join-Path $root '_程序文件'
+""" + windows_filesystem_acl_policy_script()
         self.base._run_powershell(
             script, self.base._environment(identity.root, identity.install_id)
         )
@@ -856,9 +884,68 @@ foreach ($name in @('app', 'runtime')) {
         self.base.verify_security(identity.root, identity.install_id)
 
 
+BACKUP_NAME_PREFIX = "reservation-v2-backup-"
+
+
+def _backup_sequence_filename_floor(backup_dir: Path) -> int:
+    """取备份目录文件名中的最大序列，含当前安装无法解析的 sidecar。
+
+    健康检查失败的更新尝试会由换入的新版本运行时在 backups/ 留下带更高
+    databaseSchemaVersion 的备份；旧版本代码扫描 sidecar 时会跳过无法
+    解析的文件，但备份文件名里的序列已被占用，序列分配必须避开。
+    """
+
+    floor = 0
+    for suffix, stem_width in ((".db", 3), (".json", 5)):
+        for path in backup_dir.glob(f"{BACKUP_NAME_PREFIX}*{suffix}"):
+            stem = path.name[len(BACKUP_NAME_PREFIX) : -stem_width]
+            if len(stem) == 8 and stem.isdigit():
+                floor = max(floor, int(stem))
+    return floor
+
+
+def reconcile_backup_sequence_floor(identity: V2InstallIdentity) -> None:
+    """V241-B1：重试更新前把旧数据库的备份序列水位抬到文件名下限。
+
+    回滚会把 data 树恢复到在线备份之前的快照，backup_sequence 水位随
+    之回落，但被占用的备份文件名仍在。更新前在线备份由当前安装的旧
+    版本代码执行，其序列预留只认可解析的 sidecar，会把新序列瞄准已
+    存在的文件并以"拒绝覆盖"失败。这里仅当水位低于文件名下限时做
+    单行原子上调；水位是产品自身维护的单调键，上调不会复用或覆盖
+    任何既有备份。
+    """
+
+    database = identity.root / "_程序文件" / "data" / "reservation.db"
+    backup_dir = identity.root / "_程序文件" / "backups"
+    if not database.is_file() or not backup_dir.is_dir():
+        return
+    floor = _backup_sequence_filename_floor(backup_dir)
+    if floor <= 0:
+        return
+    db = sqlite3.connect(database, timeout=10)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT value FROM app_meta WHERE key = 'backup_sequence'"
+        ).fetchone()
+        current = int(row[0]) if row is not None and str(row[0]).isdigit() else 0
+        if floor > current:
+            db.execute(
+                """
+                INSERT INTO app_meta (key, value) VALUES ('backup_sequence', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (str(floor),),
+            )
+            db.execute("COMMIT")
+    finally:
+        db.close()
+
+
 def default_online_backup(identity: V2InstallIdentity) -> None:
     if not identity.setup_complete:
         return
+    reconcile_backup_sequence_floor(identity)
     python = identity.root / "_程序文件" / "runtime" / "python.exe"
     backup = identity.root / "_程序文件" / "app" / "backup.py"
     assert_plain_file(python, "V2 冻结 Python")
@@ -1033,10 +1120,7 @@ class V2UpdateTransaction:
             shutil.copytree(program_snapshot / name, current)
             if tree_digest(records_for_tree(current)) != manifest[f"{name}_tree_sha256"]:
                 raise UpdateRollbackError(f"V2 旧 {name} 恢复后哈希不一致")
-        # copytree 重建的树同样只带继承 ACL；清残渣后立即恢复受保护 DACL，
-        # 回滚后的安装必须继续满足 verify_security 的同一份契约。
         self._cleanup_displaced_dirs(identity.root)
-        self.controller.apply_security(identity)
         for record in manifest["root_files"]:
             relative = str(record["path"])
             destination = identity.root.joinpath(*relative.split("/"))
@@ -1066,15 +1150,73 @@ class V2UpdateTransaction:
             != snapshot_manifest.get("tree_sha256")
         ):
             raise UpdateRollbackError("V2 数据回滚快照身份或哈希不一致")
+
+        # 先在 backups 下的私有回滚树中构建并校验完整恢复目录，
+        # 完整换入 data 策略根后再统一固化 ACL。
+        restored_data = rollback / "data-restore-candidate"
+        displaced_data = rollback / "data-before-restore"
         data = identity.root / "_程序文件" / "data"
-        if data.exists():
-            shutil.rmtree(data)
-        shutil.copytree(data_snapshot, data)
-        if tree_digest(records_for_tree(data)) != snapshot_manifest["tree_sha256"]:
-            raise UpdateRollbackError("V2 data 恢复后哈希不一致")
+        expected_data_sha256 = snapshot_manifest["tree_sha256"]
+
+        if restored_data.exists():
+            if not restored_data.is_dir() or is_reparse_or_link(restored_data):
+                raise UpdateRollbackError("V2 data 恢复候选目录非法")
+            if tree_digest(records_for_tree(restored_data)) != expected_data_sha256:
+                # 候选目录是精确事务 rollback 下的普通文件树，且
+                # 绑定快照已验证。不完整候选可丢弃并从快照重建。
+                shutil.rmtree(restored_data)
+        if displaced_data.exists() and (
+            not displaced_data.is_dir() or is_reparse_or_link(displaced_data)
+        ):
+            raise UpdateRollbackError("V2 data 恢复旧目录非法")
+
+        if displaced_data.exists():
+            if data.exists():
+                if (
+                    not data.is_dir()
+                    or is_reparse_or_link(data)
+                    or tree_digest(records_for_tree(data)) != expected_data_sha256
+                ):
+                    raise UpdateRollbackError("V2 data 恢复中断现场存在冲突")
+                if restored_data.exists():
+                    shutil.rmtree(restored_data)
+            else:
+                if not restored_data.exists():
+                    raise UpdateRollbackError("V2 data 恢复中断现场不完整")
+                os.replace(restored_data, data)
+                if tree_digest(records_for_tree(data)) != expected_data_sha256:
+                    raise UpdateRollbackError("V2 data 恢复后哈希不一致")
+            shutil.rmtree(displaced_data)
+        else:
+            if data.is_dir() and tree_digest(records_for_tree(data)) == expected_data_sha256:
+                if restored_data.exists():
+                    shutil.rmtree(restored_data)
+            else:
+                if not data.is_dir() or is_reparse_or_link(data):
+                    raise UpdateRollbackError("V2 现行 data 目录缺失或非法")
+                if not restored_data.exists():
+                    shutil.copytree(data_snapshot, restored_data)
+                    if tree_digest(records_for_tree(restored_data)) != expected_data_sha256:
+                        raise UpdateRollbackError("V2 data 恢复候选目录哈希不一致")
+                os.replace(data, displaced_data)
+                try:
+                    os.replace(restored_data, data)
+                except BaseException:
+                    os.replace(displaced_data, data)
+                    raise
+                if tree_digest(records_for_tree(data)) != expected_data_sha256:
+                    os.replace(data, restored_data)
+                    os.replace(displaced_data, data)
+                    raise UpdateRollbackError("V2 data 恢复后哈希不一致")
+                shutil.rmtree(displaced_data)
+
+        # 所有 program/root/data 替换完成后才重固化统一策略并完整验证。
+        # 安全或身份验证失败时不得恢复原运行状态。
+        self.controller.apply_security(identity)
+        self.controller.verify(identity)
+        load_v2_identity(identity.root)
         if restore_controller:
             self.controller.restore(identity, run_state)
-        load_v2_identity(identity.root)
 
     def _replace_program(self, identity: V2InstallIdentity, staging: Path) -> None:
         replaced: list[tuple[Path, Path]] = []
@@ -1182,12 +1324,46 @@ class V2UpdateTransaction:
         if source_version not in self.bundle.supported_source_versions:
             raise UpdatePolicyError("未完成更新事务的来源版本不受当前更新包支持")
         install_id = canonical_uuid4(state.get("install_id"))
-        if install_id is None or _read_text(root / INSTALL_ID_FILE, "V2 install_id 文件") != install_id:
+        txid = str(state.get("transaction_id"))
+        if not re_fullmatch_hex32(txid):
+            raise UpdatePolicyError("未完成更新事务 ID 非法")
+        rollback = root / "_程序文件" / "backups" / "updates" / txid
+        if (
+            state.get("rollback_root") != str(rollback)
+            or not rollback.is_dir()
+            or is_reparse_or_link(rollback)
+        ):
+            raise UpdatePolicyError("未完成更新事务缺少可验证回滚材料")
+
+        live_data = root / "_程序文件" / "data"
+        identity_data = live_data
+        if not live_data.exists():
+            # data 目录的原子换入窗口中断时，只从已绑定事务的
+            # 私有快照读取原身份，并同时验证待换入候选树。
+            displaced_data = rollback / "data-before-restore"
+            restored_data = rollback / "data-restore-candidate"
+            identity_data = rollback / "protected-data" / "data"
+            expected_data_sha256 = state.get("data_snapshot_sha256")
+            if (
+                not displaced_data.is_dir()
+                or is_reparse_or_link(displaced_data)
+                or not identity_data.is_dir()
+                or is_reparse_or_link(identity_data)
+                or not restored_data.is_dir()
+                or is_reparse_or_link(restored_data)
+                or not isinstance(expected_data_sha256, str)
+                or tree_digest(records_for_tree(identity_data))
+                != expected_data_sha256
+                or tree_digest(records_for_tree(restored_data))
+                != expected_data_sha256
+            ):
+                raise UpdatePolicyError("V2 data 恢复中断现场无法验证")
+        if install_id is None or _read_text(identity_data / "install_id", "V2 install_id 文件") != install_id:
             raise UpdatePolicyError("未完成更新事务的 install_id 不一致")
         if _read_text(root / GENERATION_FILE, "V2 产品代际文件") != str(PRODUCT_GENERATION):
             raise UpdatePolicyError("未完成更新事务的产品代际不是 2")
 
-        current_info = _read_json(root / INSTALL_INFO, "V2 当前安装身份")
+        current_info = _read_json(identity_data / "install.json", "V2 当前安装身份")
         current_manifest = _read_json(root / INSTALLED_MANIFEST, "V2 当前发布清单")
         expected_info_fields = {
             "schema",
@@ -1223,15 +1399,11 @@ class V2UpdateTransaction:
             raise UpdatePolicyError("未完成更新事务出现未知或回退的版本身份")
         if current_info.get("install_id") != install_id:
             raise UpdatePolicyError("未完成更新事务的安装身份文件已变化")
-        if current_versions == {VERSION}:
+        if current_versions == {VERSION} and live_data.exists():
             return load_v2_identity(root)
-        if current_versions == {source_version}:
+        if current_versions == {source_version} and live_data.exists():
             return load_v2_identity(root)
 
-        txid = str(state.get("transaction_id"))
-        if not re_fullmatch_hex32(txid):
-            raise UpdatePolicyError("未完成更新事务 ID 非法")
-        rollback = root / "_程序文件" / "backups" / "updates" / txid
         snapshot_info = _read_json(
             rollback / "protected-data" / "data" / "install.json",
             "V2 更新前安装身份快照",
@@ -1242,9 +1414,9 @@ class V2UpdateTransaction:
             or snapshot_info.get("installed_version") != source_version
         ):
             raise UpdatePolicyError("V2 更新前身份快照与未完成事务不一致")
-        database = root / "_程序文件" / "data" / "reservation.db"
-        if database.exists():
-            setup_complete = _database_setup_state(database)
+        identity_database = identity_data / "reservation.db"
+        if identity_database.exists():
+            setup_complete = _database_setup_state(identity_database)
         else:
             setup_complete = False
         if snapshot_info.get("setup_complete") is not setup_complete:
@@ -1254,7 +1426,7 @@ class V2UpdateTransaction:
             install_id=install_id,
             version=source_version,
             setup_complete=setup_complete,
-            database=database,
+            database=live_data / "reservation.db",
             install_info=snapshot_info,
         )
 
@@ -1320,7 +1492,9 @@ class V2UpdateTransaction:
         # 版本文件是提交点。若三份身份已经全部指向目标版本，
         # 中断只可恢复原运行状态、补写回执和清理，不得回滚可能已产生的新数据。
         if identity.version == VERSION:
+            self.controller.verify(identity)
             self.controller.capture_and_stop(identity)
+            self.controller.verify(identity)
             self.controller.restore(identity, run_state)
             self._cleanup_displaced_dirs(identity.root)
             self._finalize_receipt(identity, dict(state), state_path)
@@ -1332,7 +1506,9 @@ class V2UpdateTransaction:
             raise UpdatePolicyError("未完成更新事务的源版本已变化")
         stage = str(state["stage"])
         if stage == "service_stopped_pre_snapshot":
+            self.controller.verify(identity)
             self.controller.capture_and_stop(identity)
+            self.controller.verify(identity)
             self.controller.restore(identity, run_state)
         else:
             snapshot_manifest = _read_json(
@@ -1343,7 +1519,7 @@ class V2UpdateTransaction:
                 "tree_sha256"
             ):
                 raise UpdatePolicyError("未完成更新事务的数据快照摘要不一致")
-            self.controller.capture_and_stop(identity)
+            self.controller.capture_and_stop_fail_closed(identity)
             self._restore(
                 identity,
                 rollback,
@@ -1410,6 +1586,7 @@ class V2UpdateTransaction:
         }
         prepared = False
         resources_stopped = False
+        health_runtime_started = False
         committed = False
         self.log.add_path(
             identity.root / "_程序文件" / "logs" /
@@ -1417,6 +1594,7 @@ class V2UpdateTransaction:
         )
         with ExclusiveLock(lock_path):
             try:
+                self.controller.verify(identity)
                 if self.online_backup is not None:
                     self.online_backup(identity)
                 rollback.mkdir(parents=True)
@@ -1444,15 +1622,18 @@ class V2UpdateTransaction:
                 self.controller.verify(identity)
                 self._stage(state, "security_verified", state_path)
                 self.controller.start_for_health(identity)
+                health_runtime_started = True
                 if self.health_probe is not None:
                     self.health_probe(identity)
-                self.controller.capture_and_stop(identity)
+                self.controller.capture_and_stop_fail_closed(identity)
+                health_runtime_started = False
                 self._stage(state, "healthcheck_passed_and_stopped", state_path)
                 self._commit_identity(identity, state, state_path)
                 committed = True
                 final_identity = load_v2_identity(identity.root)
                 if final_identity.install_id != identity.install_id or final_identity.version != VERSION:
                     raise UpdateRollbackError("V2 更新提交后安装身份不一致")
+                self.controller.verify(final_identity)
                 self.controller.restore(final_identity, run_state)
                 self._stage(state, "run_state_restored", state_path)
                 receipt = self._finalize_receipt(final_identity, state, state_path)
@@ -1468,17 +1649,27 @@ class V2UpdateTransaction:
                     ) from error
                 rollback_errors: list[str] = []
                 if prepared:
-                    try:
-                        self._restore(
-                            identity,
-                            rollback,
-                            run_state,
-                            restore_controller=resources_stopped,
-                        )
-                    except BaseException as rollback_error:
-                        rollback_errors.append(str(rollback_error))
+                    if health_runtime_started:
+                        try:
+                            # This snapshot belongs only to the transient health
+                            # runtime. Preserve the original pre-update run_state.
+                            self.controller.capture_and_stop_fail_closed(identity)
+                            health_runtime_started = False
+                        except BaseException as rollback_error:
+                            rollback_errors.append(str(rollback_error))
+                    if not rollback_errors:
+                        try:
+                            self._restore(
+                                identity,
+                                rollback,
+                                run_state,
+                                restore_controller=resources_stopped,
+                            )
+                        except BaseException as rollback_error:
+                            rollback_errors.append(str(rollback_error))
                 elif resources_stopped:
                     try:
+                        self.controller.verify(identity)
                         self.controller.restore(identity, run_state)
                     except BaseException as rollback_error:
                         rollback_errors.append(str(rollback_error))

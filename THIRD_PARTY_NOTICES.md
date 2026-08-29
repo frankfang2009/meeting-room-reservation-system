@@ -8,6 +8,7 @@ Important direct runtime dependencies include:
 | --- | --- | --- |
 | React / React DOM | Web interface | MIT |
 | Phosphor Icons for React | Interface icons | MIT |
+| Lucide Icons (SVG path data) | Offline help-center icons embedded in `v2/docs/help/build.mjs` | ISC |
 | Flask | HTTP application framework | BSD-3-Clause |
 | Waitress | WSGI server | ZPL-2.1 |
 | CPython embeddable runtime | Windows runtime | Python-2.0 |

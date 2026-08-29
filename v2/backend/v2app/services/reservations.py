@@ -12,6 +12,7 @@ from ..common import (
     canonical_json,
     clean_text,
     decode_cursor,
+    escape_like,
     encode_cursor,
     local_now,
     minutes_to_time,
@@ -20,6 +21,7 @@ from ..common import (
     parse_int,
     parse_page_size,
     time_to_minutes,
+    validate_inclusive_date_range,
 )
 from ..db import get_db, transaction
 from ..errors import ApiError
@@ -218,6 +220,14 @@ def serialize_reservation(row: Any, actor: Optional[dict[str, Any]] = None) -> d
         "canCancel": can_cancel,
         "handoverState": item.get("handover_state"),
     }
+
+
+def reservation_details_allowed(row: Any, actor: dict[str, Any]) -> bool:
+    return bool(
+        row["status"] != "cancelled"
+        or actor["role"] == "admin"
+        or row["owner_user_id"] == actor["id"]
+    )
 
 
 def _snapshot(row: Any) -> dict[str, Any]:
@@ -572,8 +582,7 @@ def list_reservations(
 ) -> dict[str, Any]:
     start = date.fromisoformat(parse_date(date_from, field="dateFrom"))
     end = date.fromisoformat(parse_date(date_to, field="dateTo"))
-    if end < start or (end - start).days > 366:
-        raise ApiError(422, "VALIDATION_ERROR", "日期范围无效或过大")
+    validate_inclusive_date_range(start, end)
     actor = current_user()
     args = args or {}
     page_size = parse_page_size(args.get("pageSize"))
@@ -698,10 +707,15 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
         if len(query) > 120:
             raise ApiError(422, "VALIDATION_ERROR", "搜索内容过长")
         clauses.append(
-            "(r.party_name LIKE ? OR r.case_number LIKE ? OR r.room_name_snapshot LIKE ? OR r.tag_label_snapshot LIKE ?)"
+            "(r.party_name LIKE ? ESCAPE '\\' "
+            "OR r.case_number LIKE ? ESCAPE '\\' "
+            "OR r.purpose LIKE ? ESCAPE '\\' "
+            "OR r.notes LIKE ? ESCAPE '\\' "
+            "OR r.room_name_snapshot LIKE ? ESCAPE '\\' "
+            "OR r.tag_label_snapshot LIKE ? ESCAPE '\\')"
         )
-        pattern = f"%{query}%"
-        params.extend([pattern, pattern, pattern, pattern])
+        pattern = f"%{escape_like(query)}%"
+        params.extend([pattern] * 6)
     cursor_context = canonical_json(
         {
             "kind": "history",
@@ -731,6 +745,7 @@ def list_history(args: dict[str, Any]) -> dict[str, Any]:
                    AND EXISTS (
                    SELECT 1 FROM handover_requests hr
                    WHERE hr.reservation_id = r.id AND hr.status = 'pending'
+                     AND hr.expected_revision = r.revision
                  ) THEN 'pending'
                  WHEN r.status = 'active' AND EXISTS (
                    SELECT 1 FROM reservation_events re
@@ -767,11 +782,7 @@ def get_reservation(reservation_id: str) -> dict[str, Any]:
     if row is None:
         raise ApiError(404, "NOT_FOUND", "预约不存在")
     actor = current_user()
-    if (
-        row["status"] == "cancelled"
-        and actor["role"] != "admin"
-        and row["owner_user_id"] != actor["id"]
-    ):
+    if not reservation_details_allowed(row, actor):
         raise ApiError(403, "FORBIDDEN", "无权查看他人已取消的预约")
     return serialize_reservation(row, actor)
 

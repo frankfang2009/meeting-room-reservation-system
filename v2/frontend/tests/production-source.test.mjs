@@ -20,6 +20,7 @@ const responsiveStyles = fs.readFileSync(path.join(root, "src/styles/responsive.
 const settingsStyles = fs.readFileSync(path.join(root, "src/styles/settings.css"), "utf8");
 const systemStyles = fs.readFileSync(path.join(root, "src/styles/system.css"), "utf8");
 const systemExtensionStyles = fs.readFileSync(path.join(root, "src/styles/system-extensions.css"), "utf8");
+const productionFlowsStyles = fs.readFileSync(path.join(root, "src/styles/production-flows.css"), "utf8");
 const designContract = fs.readFileSync(path.join(root, "DESIGN-CONTRACT.md"), "utf8");
 
 test("production entry contains no demo credentials or query-state router", () => {
@@ -76,9 +77,17 @@ test("personal center delegates all activity analysis to the data center", () =>
   assert.doesNotMatch(productionSource, /我的活动|本月服务概览|活动数据|查看数据中心|profile-activity|profile-heatmap|activityMonths|getActivityDay/);
 });
 
-test("data center separates each analysis task into a focused page and removes the personnel list", () => {
-  assert.match(dataCenter, /\{ id: "overview", label: "概览" \}, \{ id: "time", label: "时段分布" \}, \{ id: "rooms", label: "笔录室" \}, \{ id: "tags", label: "标签" \}/);
-  assert.match(dataCenter, /role="tablist" aria-label="数据中心页面"/);
+test("data center keeps its default canvas concise and progressively reveals analysis", () => {
+  assert.match(dataCenter, /const \[analysisOpen, setAnalysisOpen\] = useState\(false\)/);
+  assert.match(dataCenter, /reportAnalysisPages\(isOverall\)/);
+  assert.match(dataCenter, /role="tablist" aria-label="分析视图"/);
+  assert.match(dataCenter, /aria-label="刷新数据"/);
+  assert.match(dataCenter, /aria-label="分析与导出"/);
+  assert.match(dataCenter, /<ReportRangeForm/);
+  assert.match(dataCenter, /<ReportFilters[\s\S]*?onReset=\{resetAnalysisFilters\}/);
+  assert.match(dataCenter, /<MetricCard label="取消" value=\{report\?\.summary\?\.cancelledCount/);
+  assert.doesNotMatch(dataCenter, /更新于|取消率|label: "概览"/);
+  assert.doesNotMatch(dataCenter, /悬停柱形查看|悬停笔录室查看|悬停类别查看|悬停圆点查看|悬停查看详情|悬停突出类别|查看一周中预约集中|比较各笔录室承接|查看服务标签在全部有效预约/);
   assert.match(dataCenter, /<TimeDistribution items=\{report\?\.weekdayTimeDistribution\}/);
   assert.match(dataCenter, /<RoomDistribution items=\{report\?\.roomWorkload\}/);
   assert.match(dataCenter, /<TagComposition items=\{isOverall \? report\?\.globalTagDistribution : report\?\.tagDistribution\}/);
@@ -89,7 +98,6 @@ test("data center separates each analysis task into a focused page and removes t
   assert.match(dataCenter, /预约\{trend\.granularity === "month" \? "月" : "周"\}趋势/);
   assert.match(dataCenter, /const valueLabel = metric === "duration" \? duration\.value : item\.activeCount/);
   assert.match(dataCenter, /\{activeItem\.activeCount\}场 · \{activeDuration\.value\}\{activeDuration\.unit\}/);
-  assert.doesNotMatch(dataCenter, /report-analysis-section|report-analysis-tabs/);
   assert.doesNotMatch(dataCenter, /personWorkload|工作负荷分布|report-person-workload/);
   assert.match(productionSource, /role !== "admin"\) return \{ scope: "self" \}/);
 });
@@ -139,6 +147,13 @@ test("personal preferences expose real scoped defaults and server-backed persona
   assert.match(productionSource, />默认标签</);
   assert.match(app, /defaultBookingTagId\(\{[\s\S]{0,180}defaultTagSlot: bootstrap\.preferences\?\.defaultTagSlot,[\s\S]{0,100}draft/);
   assert.match(productionSource, /onChange\("personalTags"/);
+});
+
+test("browser-only landing preference is a secondary, collapsed usage habit", () => {
+  assert.match(productionSource, /const \[usageOpen, setUsageOpen\] = useState\(false\)/);
+  assert.match(productionSource, /aria-expanded=\{usageOpen\}/);
+  assert.match(productionSource, />更多使用习惯</);
+  assert.match(productionSource, /usageOpen && <div className="settings-disclosure-content">[\s\S]*?>登录后默认打开</);
 });
 
 test("revision conflicts rebase the drawer baseline while preserving the draft", () => {
@@ -202,12 +217,17 @@ test("the due-reminder poller stays on for handover requests regardless of switc
   assert.doesNotMatch(app, /if \(!bootstrap\?\.preferences\?\.bookingReminder && !bootstrap\?\.preferences\?\.bookingChangeNotifications\) \{[\s\S]{0,200}return undefined/);
 });
 
-test("reminder lead preference controls both visible copy and editability", () => {
+test("reminder preferences progressively reveal their retained lead time and sound", () => {
+  assert.match(productionSource, />预约变更</);
+  assert.match(productionSource, />预约提醒</);
   assert.match(productionSource, /开始前 \{draft\.reminderLeadMinutes \|\| 30\} 分钟提醒我/);
+  assert.match(productionSource, /draft\.bookingReminder && <div className="settings-reminder-details">/);
   assert.match(productionSource, /value=\{draft\.reminderLeadMinutes \|\| 30\}/);
-  assert.match(productionSource, /disabled=\{!draft\.bookingReminder\}/);
   assert.match(productionSource, /\[15, 30, 60\]\.map/);
   assert.match(productionSource, /onChange\("reminderLeadMinutes", Number\(event\.target\.value\)\)/);
+  assert.match(productionSource, />提醒提示音</);
+  assert.match(productionSource, />工作交接仍会提示，不受这两项开关影响。</);
+  assert.doesNotMatch(productionSource, /disabled=\{!draft\.bookingReminder\}/);
   assert.doesNotMatch(productionSource, /开始前30分钟提醒我/);
 });
 
@@ -219,6 +239,10 @@ test("external reminder copy stays manual, scoped, and recoverable", () => {
   assert.match(app, /无法自动复制，请手动复制提醒信息", "error"/);
   assert.match(productionSource, />对外提醒模板</);
   assert.match(productionSource, /仅复制到剪贴板，由您自行发送/);
+  assert.match(productionSource, /const \[reminderTemplateOpen, setReminderTemplateOpen\] = useState\(false\)/);
+  assert.match(productionSource, /aria-expanded=\{reminderTemplateOpen\}/);
+  assert.match(productionSource, />编辑模板</);
+  assert.match(productionSource, /reminderTemplateOpen && <div className="settings-disclosure-content settings-template-content">/);
   assert.match(productionSource, /maxLength=\{200\}/);
   assert.match(app, /setPreferencesDraft\(bootstrap\?\.preferences \|\| \{\}\)/);
   assert.doesNotMatch(app, /已发送|跳转微信|window\.open\([^)]*微信/);
@@ -258,6 +282,7 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /decideHandover\(item\.handoverRequestId, "decline"\)/);
   assert.match(app, /deferVisibleHandovers/);
   assert.match(app, /稍后处理/);
+  assert.match(app, /const deferVisibleHandovers = \(\) => \{[\s\S]{0,500}void refreshHandoverBoard\(\);/);
   assert.match(app, /const canHandover = !handoverPending && booking\.status === "active" && !hasBookingStarted/);
   assert.match(app, /drawer\.type === "handover"/);
   assert.match(app, /api\.getUserDirectory\(drawer\.booking\.id\)/);
@@ -274,10 +299,17 @@ test("handover requests ride the action modal, the dedicated page, and the detai
   assert.match(app, /\{ id: "handovers", label: "工作交接", Icon: ArrowsLeftRight \}/);
   assert.match(app, /function renderHandovers\(\)/);
   assert.match(app, /className="main-canvas handover-canvas"/);
+  assert.match(app, /handoverLedgerSections\(\{ incoming, outgoing \}\)/);
+  assert.match(app, /sections\.length \? sections\.map/);
+  assert.match(app, /section\.id === "incoming"/);
+  assert.match(app, /<IdleState[\s\S]{0,260}className="handover-page-empty"[\s\S]{0,260}Icon=\{ArrowsLeftRight\}[\s\S]{0,160}title="暂无工作交接"[\s\S]{0,180}announce/);
+  assert.doesNotMatch(app, /className="handover-summary"/);
+  assert.doesNotMatch(app, /className="handover-ledger-empty"/);
   assert.match(app, /activeView === "handovers" && renderHandovers\(\)/);
   assert.doesNotMatch(app, /className="handover-board" aria-label="工作交接"/);
   assert.match(app, /handoverPending/);
   assert.match(app, /withdrawHandoverRequest\(request\.id\)/);
+  assert.match(app, /handover-view[\s\S]{0,250}查看预约[\s\S]{0,1200}handover-waiting[\s\S]{0,100}处理中[\s\S]{0,350}撤回申请/);
   assert.match(app, /reservationEventLabel/);
   assert.match(productionSource, /handover: "预约已交接"/);
   assert.match(productionSource, /预约者由 \$\{from\} 交接给 \$\{to\}/);
@@ -318,6 +350,47 @@ test("mixed handover and change notices share one scroll body and keep actions i
   assert.match(app, /handoverNoticeCount \? `\$\{handoverNoticeCount\} 条工作交接`/);
 });
 
+test("admin and token submissions expose independent repeat-submit guards", () => {
+  for (const state of ["roomSaving", "userSaving", "passwordResetting", "tokenCreating"]) {
+    assert.match(app, new RegExp(`const \\[${state}, set${state[0].toUpperCase()}${state.slice(1)}\\] = useState\\(false\\)`));
+  }
+  assert.match(app, /if \(roomSaving\) return;[\s\S]{0,220}setRoomSaving\(true\)[\s\S]{0,700}finally \{\s*setRoomSaving\(false\)/);
+  assert.match(app, /if \(userSaving\) return;[\s\S]{0,220}setUserSaving\(true\)[\s\S]{0,850}finally \{\s*setUserSaving\(false\)/);
+  assert.match(app, /if \(passwordResetting\) return;[\s\S]{0,220}setPasswordResetting\(true\)[\s\S]{0,850}finally \{\s*setPasswordResetting\(false\)/);
+  assert.match(app, /if \(tokenCreating\) return;[\s\S]{0,220}setTokenCreating\(true\)[\s\S]{0,700}finally \{\s*setTokenCreating\(false\)/);
+  assert.match(app, /<RoomAdminForm[\s\S]{0,260}busy=\{roomSaving\}/);
+  assert.match(app, /<UserAdminForm[\s\S]{0,260}busy=\{userSaving\}/);
+  assert.match(adminForms, /disabled=\{busy\}[\s\S]{0,120}\{busy \? "正在保存…"/);
+  assert.match(app, /system-token-form[\s\S]{0,1200}disabled=\{tokenCreating\}/);
+});
+
+test("handover focus and duplicate-name labels favor safe neutral actions", () => {
+  assert.match(app, /noticeOnlyHandoverRequests[\s\S]{0,450}handover-defer-button" data-initial-focus/);
+  assert.doesNotMatch(app, /notice-item-ack" data-initial-focus=\{index === 0 && acknowledgementNotices\.length === 0/);
+  assert.match(app, /function disambiguateDirectoryUsers\(users\)/);
+  assert.match(app, /sameNameAndDepartment[\s\S]{0,500}disambiguator: `同名人员 \$\{index \+ 1\}`/);
+  assert.match(app, /user\.disambiguator \? <small>\{user\.disambiguator\}<\/small>/);
+  const handoverDirectoryMarkup = app.match(/directory\.length \? <ul className="handover-picker-list"[\s\S]*?<\/ul>/)?.[0] || "";
+  assert.doesNotMatch(handoverDirectoryMarkup, /user\.username/);
+  assert.match(productionSource, /临近提醒与到达提醒到达时播放一声温和的轻提示/);
+  assert.doesNotMatch(productionSource, /临近提醒与变更通知到达时播放一声温和的轻提示/);
+});
+
+test("reminder and history races are bounded before applying asynchronous results", () => {
+  assert.match(app, /const dueRemindersRequestRef = useRef\(0\)/);
+  assert.match(app, /const requestNumber = dueRemindersRequestRef\.current \+ 1;[\s\S]{0,120}dueRemindersRequestRef\.current = requestNumber/);
+  assert.match(app, /api\.getDueReminders\(\)[\s\S]{0,500}if \(dueRemindersRequestRef\.current !== requestNumber\) return false;[\s\S]{0,500}setDueReminders/);
+  assert.match(app, /const previousMonth = monthKey\(new Date\(year, month - 2, 1\)\);[\s\S]{0,220}if \(previousMonth < earliestMonth\) return/);
+  assert.match(app, /previousHistoryMonth\.id >= historyMonths\.at\(-1\)\.id[\s\S]{0,120}<button className="more-bookings-button history-more"/);
+});
+
+test("arrival reminders wait for drawers and modal layering stays authoritative", () => {
+  assert.match(app, /if \(!arrivalNotice \|\| drawer\) return undefined/);
+  assert.match(app, /dueReminders\.upcoming\.some\(\(item\) => item\.id === arrivalNotice\.booking\.id\)/);
+  assert.match(app, /\[arrivalNotice, drawer, dueReminders\.upcoming\]/);
+  assert.match(productionFlowsStyles, /\.notice-modal-layer \{[\s\S]{0,100}z-index: 110;/);
+});
+
 test("administrator assignments notify the receiver without a reject action", () => {
   assert.match(app, /const assignments = items\.filter\(\(item\) => item\.kind === "assignment"\)/);
   assert.match(app, /const assignmentNotices = dueReminders\.assignments/);
@@ -330,9 +403,10 @@ test("administrator assignments notify the receiver without a reject action", ()
   assert.match(app, /已生效指派和预约变更只能确认知晓/);
 });
 
-test("the frozen empty-state action consumes a valid default room", () => {
+test("the true-empty booking action consumes a valid default room", () => {
   assert.match(app, /defaultRoomId\) \|\| activeRooms\[0\]/);
-  assert.match(app, /onClick=\{openDefaultCreate\}>\{!activeRooms\.length/);
+  assert.match(app, /title="还没有预约"[\s\S]{0,260}action=\{\{ label: "前往预约日历", onClick: openDefaultCreate \}\}/);
+  assert.match(app, /!activeRooms\.length \? <IdleState[\s\S]{0,280}title="当前没有可预约的笔录室"[\s\S]{0,260}navigate\("rooms"\)/);
   assert.match(app, /openCreate\(preferredRoom\.id, start, dayKey\)/);
 });
 
@@ -374,11 +448,23 @@ test("reservation and history views consume opaque cursor pages", () => {
 
 test("history appends older months in place with the same filters and dividers", () => {
   assert.match(app, /api\.getHistory\(\{ month, ownerId:[\s\S]{0,260}roomId: historyRoom, status: historyStatus, tagId: historyTag, query: historyQuery\.trim\(\), pageSize: 50, cursor \}\)/);
-  assert.match(app, /loadHistory\(\{ append: true, month: monthKey\(new Date\(year, month - 2, 1\)\) \}\)/);
+  assert.match(app, /const previousMonth = monthKey\(new Date\(year, month - 2, 1\)\)[\s\S]{0,260}if \(previousMonth < earliestMonth\) return;[\s\S]{0,120}loadHistory\(\{ append: true, month: previousMonth \}\)/);
   assert.match(app, /className="history-month-divider" role="separator">\{section\.label\}/);
   assert.match(app, /historySections\.map\(\(section, sectionIndex\)/);
   assert.match(app, /onClick=\{loadPreviousHistoryMonth\}/);
   assert.doesNotMatch(app, /onClick=\{\(\) => setHistoryMonth\(previousHistoryMonth\.id\)\}/);
+});
+
+test("idle states share one visual grammar while preserving recovery paths", () => {
+  assert.match(app, /import \{ IdleState \} from "\.\/features\/idle\/IdleState\.jsx"/);
+  assert.equal(fs.existsSync(path.join(root, "src/features/idle/IdleState.jsx")), true);
+  assert.match(app, /<IdleState[\s\S]{0,260}className="handover-page-empty"[\s\S]{0,260}title="暂无工作交接"/);
+  assert.match(app, /<IdleState[\s\S]{0,260}className="[^"]*booking-zero-state"[\s\S]{0,260}title="还没有预约"/);
+  assert.match(app, /<IdleState[\s\S]{0,260}className="calendar-zero-state"[\s\S]{0,260}title="当前没有可预约的笔录室"/);
+  assert.match(app, /<IdleState[\s\S]{0,260}className="rooms-empty"[\s\S]{0,260}title="尚未创建笔录室"/);
+  assert.match(app, /const historyFiltersActive = Boolean\(historyQuery\.trim\(\) \|\| historyScope === "mine" \|\| historyOwner \|\| historyRoom \|\| historyStatus \|\| historyTag\)/);
+  assert.match(app, /historyFiltersActive \? <div className="history-empty history-filter-empty"[\s\S]{0,180}没有符合条件的记录[\s\S]{0,180}resetHistoryFilters/);
+  assert.match(app, /title="这个月还没有预约记录"[\s\S]{0,220}label: "查看其他月份"[\s\S]{0,180}setHistoryMonthOpen\(true\)/);
 });
 
 test("reservation details separate edit and cancellation capabilities", () => {
@@ -630,17 +716,24 @@ test("administrator room metrics refresh after booking changes and while visible
   assert.match(app, /loadCalendar\(\), loadUpcoming\(\), loadHistory\(\), loadRooms\(\{ silent: true \}\)/);
 });
 
-test("security audit is Chinese, collapsible, and counts newly received rows", () => {
+test("security controls are default-collapsed but retain refresh, filters, and abnormal signals", () => {
   assert.match(app, /"room\.created": "创建笔录室"/);
   assert.match(app, /auditOutcomeLabel\(outcome\)/);
   assert.doesNotMatch(app, /title=\{item\.action\}/);
   assert.doesNotMatch(app, /<small>\{item\.action\}<\/small>/);
-  assert.match(app, /auditHidden \? "显示" : "隐藏"/);
+  assert.match(app, /const \[auditHidden, setAuditHidden\] = useState\(true\)/);
+  assert.match(app, /const \[tokensOpen, setTokensOpen\] = useState\(false\)/);
+  assert.match(app, /className="system-section-disclosure" aria-expanded=\{!auditHidden\}/);
+  assert.match(app, /安全审计：\{auditUnreadCount > 0/);
+  assert.match(app, /className="system-section-disclosure" aria-expanded=\{tokensOpen\}/);
+  assert.match(app, /只读集成：\{tokens\.length\} 个令牌/);
+  assert.match(app, /tokensOpen && <div className="system-token-list">/);
   assert.match(app, /setAuditUnreadCount\(\(current\) => current \+ newlyReceived\.length\)/);
   assert.match(app, /action: hidden \? "" : auditFilters\.action\.trim\(\)/);
   assert.match(app, /auditHiddenRef\.current = nextHidden/);
   assert.match(app, /if \(!nextHidden\) \{[\s\S]{0,120}setAuditUnreadCount\(0\);[\s\S]{0,80}loadAudit\(\)/);
   assert.match(app, /system-audit-unread/);
+  assert.match(app, /system-backup-row/);
 });
 
 test("system status offers a quiet administrator work-hours editor", () => {

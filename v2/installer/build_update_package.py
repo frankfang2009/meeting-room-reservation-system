@@ -121,6 +121,7 @@ def _payload_files(payload_root: Path, runtime_files: Mapping[str, bytes]) -> tu
     required = {
         "_程序文件/app/service.py",
         "_程序文件/app/static/index.html",
+        "_程序文件/app/static/help/index.html",
         "_程序文件/runtime/python.exe",
         "_程序文件/runtime/pythonw.exe",
         FRONTEND_COMPONENTS_FILE,

@@ -3,6 +3,7 @@
 @import "./styles/login.css";
 @import "./styles/setup.css";
 @import "./styles/shell.css";
+@import "./styles/help-center.css";
 @import "./styles/dashboard.css";
 @import "./styles/history.css";
 @import "./styles/rooms.css";
@@ -18,4 +19,5 @@
 @import "./styles/responsive.css";
 @import "./styles/production-flows.css";
 @import "./styles/system-extensions.css";
+@import "./styles/idle-states.css";
 @import "./styles/accessibility.css";

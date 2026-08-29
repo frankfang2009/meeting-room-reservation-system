@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V2.4.0 离线累计更新的零参数 Python 入口。"""
+"""V2.5.0 离线累计更新的零参数 Python 入口。"""
 
 from __future__ import annotations
 
@@ -78,7 +78,19 @@ def _decode_update_context(value: str, manifest_sha256: str) -> Path:
     ):
         raise UpdatePolicyError("管理员更新上下文身份不一致")
     root = Path(str(context["install_root"]))
-    identity = load_v2_identity(root)
+    if not root.is_absolute():
+        raise UpdatePolicyError("管理员更新上下文安装根非法")
+    registered_root = resolve_install_root()
+    try:
+        context_root = root.resolve(strict=True)
+        registered_root = Path(registered_root).resolve(strict=True)
+    except OSError as error:
+        raise UpdatePolicyError("管理员更新上下文安装根无法验证") from error
+    if os.path.normcase(os.path.abspath(str(context_root))) != os.path.normcase(
+        os.path.abspath(str(registered_root))
+    ):
+        raise UpdatePolicyError("管理员更新上下文与已登记安装根不一致")
+    identity = load_v2_identity(registered_root)
     return identity.root
 
 

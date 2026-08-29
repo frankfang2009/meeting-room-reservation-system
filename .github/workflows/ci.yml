@@ -80,6 +80,8 @@ jobs:
       - name: Install frontend dependencies
         working-directory: v2/frontend
         run: npm ci
+      - name: Help center content and evidence gate
+        run: node v2/docs/help/test.mjs
       - name: Frontend contracts and build
         working-directory: v2/frontend
         run: npm run check
@@ -117,6 +119,8 @@ jobs:
           node-version: "22.17.1"
           cache: npm
           cache-dependency-path: v2/frontend/package-lock.json
+      - name: Help center content and evidence gate
+        run: node v2/docs/help/test.mjs
       - name: Frontend contracts and build
         working-directory: v2/frontend
         run: |
@@ -156,6 +160,8 @@ jobs:
           node-version: "22.17.1"
           cache: npm
           cache-dependency-path: v2/frontend/package-lock.json
+      - name: Help center content and evidence gate
+        run: node v2/docs/help/test.mjs
       - name: Frontend contracts and build
         working-directory: v2/frontend
         run: |

@@ -12,7 +12,7 @@ from v2.installer.build_package import (
     PackageBuildError,
     build_package as production_build_package,
 )
-from v2.installer.installer_core import Bundle, InstallerError, safe_relative_path
+from v2.installer.installer_core import Bundle, InstallerError, VERSION, safe_relative_path
 
 from v2.installer.tests.helpers import create_inputs, extract_tool, refresh_runtime_mapping
 
@@ -73,6 +73,10 @@ class PackageBuilderTests(unittest.TestCase):
         artifact_sbom = result.sbom_path.read_bytes()
         artifact_notices = result.notices_path.read_bytes()
         self.assertNotEqual(artifact_sbom, runtime_sbom)
+        self.assertEqual(
+            json.loads(artifact_sbom)["metadata"]["component"]["version"],
+            VERSION,
+        )
         self.assertTrue(artifact_notices.startswith(runtime_notices.rstrip()))
         component_names = {
             item["name"] for item in json.loads(artifact_sbom)["components"]
@@ -99,7 +103,7 @@ class PackageBuilderTests(unittest.TestCase):
         result = self._build("candidate")
         with zipfile.ZipFile(result.artifact_path, "r") as archive:
             names = set(archive.namelist())
-            launcher = archive.read("安装V2.4.0.bat").decode("utf-8")
+            launcher = archive.read("安装V2.5.0.bat").decode("utf-8")
             manifest = json.loads(
                 archive.read("_V2安装工具/manifest.json").decode("utf-8")
             )
@@ -294,7 +298,7 @@ class PackageBuilderTests(unittest.TestCase):
     def test_tampered_payload_is_rejected_by_bundle_loader(self) -> None:
         result = self._build("tamper")
         tool = extract_tool(result, self.root / "tamper-extracted")
-        payload = tool / "payload-v2.4.0.zip"
+        payload = tool / "payload-v2.5.0.zip"
         payload.write_bytes(payload.read_bytes() + b"tamper")
         with self.assertRaises(InstallerError):
             Bundle.load(tool, _test_fixture=True)

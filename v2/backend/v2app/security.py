@@ -252,14 +252,24 @@ def register_security(app: Flask) -> None:
 
     @app.after_request
     def add_security_headers(response):
+        help_response = request.path == "/help" or request.path.startswith("/help/")
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; "
+            "default-src 'none'; script-src 'unsafe-inline'; "
+            "style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+            if help_response
+            else "default-src 'self'; img-src 'self' data:; "
             "style-src 'self' 'unsafe-inline'; script-src 'self'; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+            "form-action 'self'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["X-Frame-Options"] = (
+            "SAMEORIGIN" if help_response else "DENY"
+        )
+        response.headers["Referrer-Policy"] = (
+            "no-referrer" if help_response else "same-origin"
+        )
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["X-Meeting-Room-System"] = "2"
         if request.path.startswith("/assets/"):

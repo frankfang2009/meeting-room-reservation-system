@@ -188,6 +188,21 @@ class UpdateCheckUnitTests(unittest.TestCase):
         self.assertTrue(performed)
         self.assertEqual(summary["status"], "unknown")
 
+    def test_perform_check_degrades_when_state_cannot_be_persisted(self) -> None:
+        with mock.patch.object(update_check, "_fetch_manifest", return_value=_manifest("9.9.9")), mock.patch.object(
+            update_check, "_save_state", side_effect=OSError("read-only data dir")
+        ):
+            performed, summary = update_check.perform_check(
+                data_dir=self.data_dir,
+                current_version="2.3.0",
+                url="https://example.invalid/latest-macos.json",
+                force=True,
+            )
+        self.assertTrue(performed)
+        self.assertEqual(summary["status"], "unknown")
+        self.assertTrue(summary["lastCheckFailed"])
+        self.assertIsNone(summary["latestVersion"])
+
     def test_oversized_manifest_is_rejected(self) -> None:
         big = _ManifestServer(b"x" * (update_check.MANIFEST_MAX_BYTES + 1))
         self.addCleanup(big.close)
@@ -378,6 +393,18 @@ class UpdateCheckApiTests(BackendTestCase):
         )
         # 与现有 admin 边界一致：未登录与员工同样稳定 403，不泄露更多信息。
         self.assertEqual(response.status_code, 403)
+
+    def test_manual_check_returns_unknown_when_state_cannot_be_persisted(self) -> None:
+        self.setup_system()
+        self.login()
+        self._enable_update_check("https://example.invalid/latest-macos.json")
+        with mock.patch.object(update_check, "_fetch_manifest", return_value=_manifest("9.9.9")), mock.patch.object(
+            update_check, "_save_state", side_effect=OSError("read-only data dir")
+        ):
+            response = self.write("POST", "/api/v1/admin/system/update-check")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        self.assertEqual(response.get_json()["status"], "unknown")
+        self.assertTrue(response.get_json()["lastCheckFailed"])
 
 
 @unittest.skipIf(os.name == "nt", "macOS 自托管适配仅覆盖 POSIX")

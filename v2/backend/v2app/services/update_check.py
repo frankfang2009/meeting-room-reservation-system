@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 import re
 import secrets
@@ -35,6 +36,7 @@ _VERSION_PATTERN = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 
 # 单例锁串行化“读状态-请求-写状态”，避免并发检查互相覆盖。
 _state_lock = threading.RLock()
+_logger = logging.getLogger(__name__)
 
 
 class UpdateCheckError(RuntimeError):
@@ -218,6 +220,12 @@ def view(
     if not enabled:
         return {"enabled": False}
     state = load_state(data_dir)
+    return _summary_from_state(state, current_version)
+
+
+def _summary_from_state(
+    state: dict[str, Any], current_version: str
+) -> dict[str, Any]:
     current = normalize_version(current_version)
     latest = normalize_version(state.get("latestVersion"))
     # 成功路径总会清空 lastErrorAtUtc，因此它非空即代表最近一次落盘尝试失败，
@@ -248,6 +256,18 @@ def view(
     }
 
 
+def _save_state_safely(
+    data_dir: Path, state: dict[str, Any], *, failed_at: str
+) -> bool:
+    try:
+        _save_state(data_dir, state)
+        return True
+    except OSError:
+        state["lastErrorAtUtc"] = failed_at
+        _logger.exception("failed to persist update-check state")
+        return False
+
+
 def perform_check(
     *,
     data_dir: Path,
@@ -265,6 +285,7 @@ def perform_check(
 
     with _state_lock:
         state = load_state(data_dir)
+        previous_state = dict(state)
         last_attempt = _parse_utc(state.get("lastAttemptAtUtc"))
         now = _utc_now()
         if (
@@ -280,24 +301,21 @@ def perform_check(
             manifest = parse_manifest(_fetch_manifest(url, timeout))
         except UpdateCheckError:
             state["lastErrorAtUtc"] = now
-            _save_state(data_dir, state)
-            return True, view(
-                enabled=True, data_dir=data_dir, current_version=current_version
-            )
+            _save_state_safely(data_dir, state, failed_at=now)
+            return True, _summary_from_state(state, current_version)
         except Exception:
             state["lastErrorAtUtc"] = now
-            _save_state(data_dir, state)
-            return True, view(
-                enabled=True, data_dir=data_dir, current_version=current_version
-            )
+            _save_state_safely(data_dir, state, failed_at=now)
+            return True, _summary_from_state(state, current_version)
         state["lastSuccessAtUtc"] = now
         state["lastErrorAtUtc"] = None
         state["latestVersion"] = manifest["version"]
         state["latestTag"] = manifest["tag"]
-        _save_state(data_dir, state)
-        return True, view(
-            enabled=True, data_dir=data_dir, current_version=current_version
-        )
+        if _save_state_safely(data_dir, state, failed_at=now):
+            return True, _summary_from_state(state, current_version)
+        previous_state["lastAttemptAtUtc"] = now
+        previous_state["lastErrorAtUtc"] = now
+        return True, _summary_from_state(previous_state, current_version)
 
 
 def maybe_periodic_check(

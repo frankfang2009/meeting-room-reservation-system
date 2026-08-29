@@ -15,8 +15,8 @@
 .rail-button,
 .avatar-button {
   position: relative;
-  width: 52px;
-  height: 52px;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -26,7 +26,7 @@
 }
 
 .brand-mark {
-  height: 105px;
+  height: 88px;
   color: var(--terracotta);
 }
 
@@ -35,8 +35,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
-  padding-top: 52px;
+  gap: 12px;
+  padding-top: 18px;
 }
 
 .rail-button {
@@ -48,7 +48,7 @@
 .rail-button::before {
   content: "";
   position: absolute;
-  left: -14px;
+  left: -17px;
   top: 9px;
   bottom: 9px;
   width: 3px;
@@ -61,11 +61,14 @@
   background: rgba(20, 20, 19, 0.045);
 }
 
-.rail-button.active {
+.rail-button.active,
+.avatar-button.active {
   color: var(--ink-secondary);
+  background: color-mix(in srgb, var(--terracotta) 8%, transparent);
 }
 
-.rail-button.active::before {
+.rail-button.active::before,
+.avatar-button.active::before {
   background: var(--terracotta);
 }
 
@@ -94,16 +97,24 @@
 }
 
 .avatar-button {
-  margin-top: auto;
-  margin-bottom: 23px;
+  margin-bottom: 16px;
   color: #85837c;
-  border-radius: 50%;
+  border-radius: 12px;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.rail-utility {
+  width: 100%;
+  display: grid;
+  place-items: center;
+  margin-top: auto;
+  margin-bottom: 8px;
 }
 
 .avatar-button::before {
   content: "";
   position: absolute;
-  right: -14px;
+  left: -17px;
   top: 9px;
   bottom: 9px;
   width: 3px;
@@ -113,14 +124,12 @@
 
 .avatar-button:hover {
   color: var(--ink);
+  background: rgba(20, 20, 19, 0.045);
 }
 
-.avatar-button.active {
-  color: var(--terracotta);
-}
-
-.avatar-button.active::before {
-  background: var(--terracotta);
+.avatar-button.active:hover {
+  color: var(--ink-secondary);
+  background: color-mix(in srgb, var(--terracotta) 8%, transparent);
 }
 
 .avatar-button.active:focus-visible {

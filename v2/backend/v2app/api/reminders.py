@@ -9,7 +9,10 @@ from ..common import clean_text, local_now, parse_json_object
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import current_user, locked_actor, login_required
-from ..services.reservations import serialize_reservation
+from ..services.reservations import (
+    reservation_details_allowed,
+    serialize_reservation,
+)
 
 
 bp = Blueprint("reminder_api", __name__, url_prefix="/api/v1/reminders")
@@ -74,6 +77,35 @@ def _snapshot_owner(snapshot_json) -> tuple[str, str]:
     return str(snapshot.get("ownerId") or ""), str(snapshot.get("ownerName") or "")
 
 
+def _event_snapshot_reservation(row) -> dict:
+    snapshot = _change_snapshot(row["after_json"]) or _change_snapshot(
+        row["before_json"]
+    )
+    owner_id = str(snapshot.get("ownerId") or "")
+    owner_name = str(snapshot.get("ownerName") or "")
+    return {
+        "id": row["id"],
+        "date": snapshot.get("date"),
+        "roomId": snapshot.get("roomId"),
+        "roomName": snapshot.get("roomName"),
+        "start": snapshot.get("start"),
+        "end": snapshot.get("end"),
+        "partyName": snapshot.get("partyName"),
+        "caseNumber": snapshot.get("caseNumber"),
+        "purpose": snapshot.get("purpose"),
+        "notes": snapshot.get("notes"),
+        "tagId": snapshot.get("tagId"),
+        "tagLabel": snapshot.get("tagLabel"),
+        "ownerId": owner_id,
+        "owner": {"id": owner_id, "name": owner_name},
+        "status": snapshot.get("status"),
+        "revision": snapshot.get("revision"),
+        "canEdit": False,
+        "canCancel": False,
+        "handoverState": None,
+    }
+
+
 @bp.get("/due")
 @login_required
 def due_reminders():
@@ -105,20 +137,29 @@ def due_reminders():
             JOIN reservations r ON r.id = e.reservation_id
             JOIN users u ON u.id = r.owner_user_id
             JOIN users a ON a.id = e.actor_user_id
-            WHERE r.owner_user_id = ?
-              AND e.actor_user_id != r.owner_user_id
+            WHERE CASE
+                    WHEN json_valid(e.before_json)
+                    THEN json_extract(e.before_json, '$.ownerId')
+                    WHEN json_valid(e.after_json)
+                    THEN json_extract(e.after_json, '$.ownerId')
+                  END = ?
+              AND e.actor_user_id != ?
               AND e.event_type IN ('updated', 'cancelled')
               AND substr(e.occurred_at, 1, 16) >= ?
               AND NOT EXISTS (
                   SELECT 1 FROM notice_receipts nr
-                  WHERE nr.event_id = e.id AND nr.user_id = r.owner_user_id
+                  WHERE nr.event_id = e.id AND nr.user_id = ?
               )
             ORDER BY e.occurred_at, e.rowid
             """,
-            (actor["id"], cutoff),
+            (actor["id"], actor["id"], cutoff, actor["id"]),
         ).fetchall()
         for row in changed_rows:
-            item = serialize_reservation(row, actor)
+            item = (
+                serialize_reservation(row, actor)
+                if reservation_details_allowed(row, actor)
+                else _event_snapshot_reservation(row)
+            )
             item["kind"] = "change"
             item["changeType"] = row["change_type"]
             item["eventId"] = row["event_id"]
@@ -145,6 +186,7 @@ def due_reminders():
         JOIN users f ON f.id = hr.from_user_id
         WHERE hr.to_user_id = ? AND hr.status = 'pending'
           AND r.status = 'active'
+          AND r.revision = hr.expected_revision
           AND r.booking_date || ' ' || r.start_time > ?
         ORDER BY hr.created_at, hr.rowid
         """,
@@ -246,7 +288,7 @@ def acknowledge_notice():
         actor = locked_actor(db)
         row = db.execute(
             """
-            SELECT e.event_type, e.actor_user_id, e.after_json, r.owner_user_id
+            SELECT e.event_type, e.actor_user_id, e.before_json, e.after_json
             FROM reservation_events e
             JOIN reservations r ON r.id = e.reservation_id
             WHERE e.id = ?
@@ -262,11 +304,14 @@ def acknowledge_notice():
             if row["actor_user_id"] == actor["id"]:
                 raise ApiError(422, "VALIDATION_ERROR", "本人操作不产生指派通知")
         else:
-            if row["owner_user_id"] != actor["id"]:
+            event_owner_id, _ = _snapshot_owner(row["before_json"])
+            if not event_owner_id:
+                event_owner_id, _ = _snapshot_owner(row["after_json"])
+            if event_owner_id != actor["id"]:
                 raise ApiError(403, "FORBIDDEN", "无权确认他人的预约变更通知")
             if (
                 row["event_type"] not in ("updated", "cancelled")
-                or row["actor_user_id"] == row["owner_user_id"]
+                or row["actor_user_id"] == event_owner_id
             ):
                 raise ApiError(422, "VALIDATION_ERROR", "该事件不是他人的预约变更")
             preference = db.execute(

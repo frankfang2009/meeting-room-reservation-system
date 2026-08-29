@@ -9,16 +9,20 @@ import {
 } from "@phosphor-icons/react";
 
 import { api } from "../../api.js";
+import { createLifetimeGuard } from "../../async-guards.js";
 import {
+  defaultReportAnalysisPage,
   defaultReportFilters,
   filenameFromDisposition,
   formatCancellationRate,
   formatReportDuration,
+  reportAnalysisPages,
   reportComposition,
   reportExportCount,
   reportScope,
   reportTagOptions,
   reportTrendModel,
+  resetReportAnalysisFilters,
   tagTone,
   weekdaySlotDistribution,
 } from "./reporting.js";
@@ -82,7 +86,7 @@ function TrendChart({ granularity, items = [], metric, onMetricChange }) {
       <div className="report-chart-detail" aria-live="polite">
         {activeItem
           ? <><strong>{activeItem.intervalLabel}</strong><span>{activeItem.activeCount}场 · {activeDuration.value}{activeDuration.unit}</span></>
-          : <span>悬停柱形查看{grainLabel}区间与概要</span>}
+          : null}
       </div>
       <SegmentedControl label="趋势指标" value={metric} onChange={onMetricChange} options={[{ value: "count", label: "场次" }, { value: "duration", label: "时长" }]} />
     </div>
@@ -203,7 +207,6 @@ function TimeDistribution({ items = [], settings = {} }) {
       </div>
     </div>
     <div className="report-time-legend" aria-hidden="true"><span><i className="small" />少</span><span><i className="medium" />中</span><span><i className="large" />多</span></div>
-    <p className="report-interaction-hint">悬停圆点查看场次 · 点击固定查看 · Esc 清除</p>
     <table className="sr-only"><caption>星期与半小时时段分布明细</caption><thead><tr><th>星期</th><th>开始时间</th><th>结束时间</th><th>预约占用槽</th></tr></thead><tbody>{rows.flatMap((row) => row.cells.filter((cell) => cell.count).map((cell) => <tr key={`${row.weekday}:${cell.slot}`}><td>{row.label}</td><td>{cell.slot}</td><td>{slotFromEnd(cell.slot, slotMinutes)}</td><td>{cell.count}</td></tr>))}</tbody></table>
   </figure>;
 }
@@ -221,7 +224,7 @@ function RoomDistribution({ items = [] }) {
   return <figure className="report-room-distribution" onKeyDown={(event) => event.key === "Escape" && setPinnedKey("")}>
     <div className="report-visual-toolbar">
       <div className="report-chart-detail" aria-live="polite">
-        {activeItem ? <><strong>{activeItem.label}</strong><span>{activeItem.activeCount}场 · {activeDuration.value}{activeDuration.unit} · 占全部{totalCount ? formatCancellationRate(activeItem.activeCount / totalCount) : "—"}</span></> : <span>悬停笔录室查看场次、时长与构成</span>}
+        {activeItem ? <><strong>{activeItem.label}</strong><span>{activeItem.activeCount}场 · {activeDuration.value}{activeDuration.unit} · 占全部{totalCount ? formatCancellationRate(activeItem.activeCount / totalCount) : "—"}</span></> : null}
       </div>
       <SegmentedControl label="笔录室指标" value={metric} onChange={setMetric} options={[{ value: "count", label: "场次" }, { value: "duration", label: "时长" }]} />
     </div>
@@ -249,7 +252,6 @@ function RoomDistribution({ items = [] }) {
         </button>;
       })}
     </div>
-    <p className="report-interaction-hint">悬停查看详情 · 点击固定查看 · Esc 清除</p>
   </figure>;
 }
 
@@ -282,7 +284,7 @@ function TagComposition({ items = [] }) {
     </div>
     <div className="report-composition-copy">
       <div className="report-chart-detail" aria-live="polite">
-        {activeItem ? <><strong>{activeItem.label}</strong><span>{activeItem.activeCount}场 · 占{activeItem.shareLabel}</span></> : <span>悬停类别查看构成</span>}
+        {activeItem ? <><strong>{activeItem.label}</strong><span>{activeItem.activeCount}场 · 占{activeItem.shareLabel}</span></> : null}
       </div>
       <div className="report-composition-legend">
         {categories.map((item) => <button
@@ -299,14 +301,19 @@ function TagComposition({ items = [] }) {
       </div>
       {!categories.every((item) => item.tagId) && <p className="report-composition-insight">未使用单位标签仅表示缺少单位分类，不作为质量判断。</p>}
     </div>
-    <p className="report-interaction-hint">悬停突出类别 · 点击固定查看 · Esc 清除</p>
   </figure>;
+}
+
+function ReportRangeForm({ draft, onChange, onApply, onReset, busy }) {
+  return <form id="report-range-panel" className="report-range-panel" aria-label="日期范围" onSubmit={onApply}>
+    <label><span>开始日期</span><input type="date" value={draft.dateFrom} onChange={(event) => onChange("dateFrom", event.target.value)} /></label>
+    <label><span>结束日期</span><input type="date" value={draft.dateTo} onChange={(event) => onChange("dateTo", event.target.value)} /></label>
+    <div className="report-filter-actions"><button className="report-filter-apply" type="submit" disabled={busy}><FunnelSimple size={17} />应用时间范围</button><button type="button" disabled={busy} onClick={onReset}><ArrowClockwise size={17} />恢复本月</button></div>
+  </form>;
 }
 
 function ReportFilters({ draft, onChange, onApply, onReset, rooms, tags, busy }) {
   return <form className="report-filters" onSubmit={onApply}>
-    <label><span>开始日期</span><input type="date" value={draft.dateFrom} onChange={(event) => onChange("dateFrom", event.target.value)} /></label>
-    <label><span>结束日期</span><input type="date" value={draft.dateTo} onChange={(event) => onChange("dateTo", event.target.value)} /></label>
     <label><span>笔录室</span><select value={draft.roomId} onChange={(event) => onChange("roomId", event.target.value)}><option value="">全部笔录室</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.name}{room.isActive === false ? "（已停用）" : ""}</option>)}</select></label>
     <label><span>标签</span><select value={draft.tagId} onChange={(event) => onChange("tagId", event.target.value)}><option value="">全部标签</option>{tags.map((tag) => <option value={tag.id} key={`${tag.id}:${tag.label}`}>{tag.label}</option>)}</select></label>
     <label className="report-query-field"><span>关键词</span><input value={draft.query} maxLength={120} placeholder="当事人、案号、事项或备注" onChange={(event) => onChange("query", event.target.value)} /></label>
@@ -335,11 +342,18 @@ export function DataCenter({
   const [message, setMessage] = useState("");
   const [exportStatus, setExportStatus] = useState("");
   const [exporting, setExporting] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
-  const [reportPage, setReportPage] = useState("overview");
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [reportPage, setReportPage] = useState(() => defaultReportAnalysisPage(role === "admin"));
   const [trendMetric, setTrendMetric] = useState("count");
   const requestRef = useRef(0);
+  // 会话存活标记：登出或切换账号后工作台整体重挂载，旧实例卸载时置 false；
+  // 在途的 CSV 响应不得再触发浏览器下载或提示。
+  const sessionLifetime = useMemo(createLifetimeGuard, []);
+  useEffect(() => {
+    sessionLifetime.begin();
+    return () => { sessionLifetime.end(); };
+  }, [sessionLifetime]);
 
   const scope = useMemo(() => reportScope(role, currentUser.id, view), [currentUser.id, role, view]);
   const tags = useMemo(() => reportTagOptions({ role, view, currentUser, users, globalTags, personalTags }), [currentUser, globalTags, personalTags, role, users, view]);
@@ -370,19 +384,22 @@ export function DataCenter({
     setDraft((current) => ({ ...current, tagId: "" }));
     setApplied((current) => ({ ...current, tagId: "" }));
     setExportStatus("");
-    setReportPage("overview");
+    setReportPage(defaultReportAnalysisPage(next === "overall"));
     setReport(null);
   };
 
   const applyFilters = (event) => {
     event.preventDefault();
     setApplied({ ...draft, query: draft.query.trim() });
-    setFiltersOpen(false);
   };
 
-  const resetFilters = () => {
-    setDraft(initialFilters);
-    setApplied(initialFilters);
+  const resetRange = () => {
+    setDraft((current) => ({ ...current, dateFrom: initialFilters.dateFrom, dateTo: initialFilters.dateTo }));
+  };
+
+  const resetAnalysisFilters = () => {
+    setDraft((current) => resetReportAnalysisFilters(current));
+    setApplied((current) => resetReportAnalysisFilters(current));
     setExportStatus("");
   };
 
@@ -390,6 +407,7 @@ export function DataCenter({
     setExporting(true);
     try {
       const result = await api.downloadReportCsv({ ...scope, ...applied, status: exportStatus });
+      if (!sessionLifetime.isActive()) return;
       const url = URL.createObjectURL(result.blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -420,24 +438,17 @@ export function DataCenter({
     : scope.scope === "overall";
   const scopeLabel = report?.resolvedScope?.owner?.name || currentUser.name || "本人";
   const exportCount = reportExportCount(report, exportStatus);
-  const pages = useMemo(() => isOverall
-    ? [{ id: "overview", label: "概览" }, { id: "time", label: "时段分布" }, { id: "rooms", label: "笔录室" }, { id: "tags", label: "标签" }]
-    : [{ id: "overview", label: "概览" }, { id: "time", label: "时段分布" }, { id: "tags", label: "标签" }], [isOverall]);
+  const pages = useMemo(() => reportAnalysisPages(isOverall), [isOverall]);
 
   useEffect(() => {
-    if (!pages.some((page) => page.id === reportPage)) setReportPage("overview");
-  }, [pages, reportPage]);
+    if (!pages.some((page) => page.id === reportPage)) setReportPage(defaultReportAnalysisPage(isOverall));
+  }, [isOverall, pages, reportPage]);
 
-  const pageHeading = {
-    time: ["时段分布", "查看一周中预约集中出现的半小时时段"],
-    rooms: ["笔录室", "比较各笔录室承接的预约场次与服务时长"],
-    tags: ["标签", "查看服务标签在全部有效预约中的构成"],
-  }[reportPage];
+  const pageHeading = { time: "时段分布", rooms: "笔录室", tags: "标签" }[reportPage];
 
   return <main className="main-canvas data-center-canvas" tabIndex={0} onKeyDown={(event) => {
     if (event.key === "Escape") {
-      setFiltersOpen(false);
-      setExportOpen(false);
+      setRangeOpen(false);
     }
   }}>
     <header className="page-header data-center-header">
@@ -446,40 +457,38 @@ export function DataCenter({
         {role === "admin" && permissions.viewOverallReports
           ? <label className="report-view-control"><span className="sr-only">选择数据视角</span><select value={view} onChange={(event) => changeView(event.target.value)}><option value="overall">全单位概览</option>{users.map((user) => <option value={user.id} key={user.id}>{user.name} · {user.department}{user.enabled === false ? "（已停用）" : ""}</option>)}</select></label>
           : <span className="report-view-label">我的数据</span>}
-        <button className="report-range-button" type="button" onClick={() => { setFiltersOpen(true); setExportOpen(false); }}><span>{shortDate(applied.dateFrom)}—{shortDate(applied.dateTo)}</span></button>
-        <span className="report-generated-at">{report?.generatedAtUtc ? `更新于 ${new Date(report.generatedAtUtc).toLocaleString("zh-CN", { hour12: false })}` : "正在读取最新数据"}</span>
-        <div className="report-header-actions">
-          <button type="button" aria-expanded={filtersOpen} onClick={() => { setFiltersOpen((current) => !current); setExportOpen(false); }}><FunnelSimple size={17} />筛选</button>
-          <button type="button" aria-expanded={exportOpen} onClick={() => { setExportOpen((current) => !current); setFiltersOpen(false); }}><DownloadSimple size={17} />导出 CSV</button>
-        </div>
+        <button className="report-range-button" type="button" aria-expanded={rangeOpen} aria-controls="report-range-panel" onClick={() => setRangeOpen((current) => !current)}><span>{shortDate(applied.dateFrom)}—{shortDate(applied.dateTo)}</span></button>
+        <button className="report-refresh-button" type="button" aria-label="刷新数据" title="刷新数据" disabled={state === "loading"} onClick={loadReport}><ArrowClockwise className={state === "loading" ? "spin" : undefined} size={18} weight="bold" /></button>
+        <button className="report-analysis-toggle" type="button" aria-expanded={analysisOpen} onClick={() => setAnalysisOpen((current) => !current)}><FunnelSimple size={17} />{analysisOpen ? "收起" : "分析与导出"}</button>
       </div>
     </header>
 
-    <nav className="report-page-nav" role="tablist" aria-label="数据中心页面">
-      {pages.map((page) => <button className={reportPage === page.id ? "active" : ""} type="button" role="tab" aria-selected={reportPage === page.id} onClick={() => setReportPage(page.id)} key={page.id}>{page.label}</button>)}
-    </nav>
-
-    {filtersOpen && <ReportFilters draft={draft} onChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onApply={applyFilters} onReset={resetFilters} rooms={rooms} tags={tags} busy={state === "loading"} />}
-    {exportOpen && <section className="report-export-panel" aria-label="CSV 导出设置"><div><strong>办件明细</strong><span>当前范围预计 {exportCount} 条，CSV 含单位内部办件信息</span></div><label><span className="sr-only">记录状态</span><select value={exportStatus} onChange={(event) => setExportStatus(event.target.value)}><option value="">全部状态</option><option value="active">仅有效</option><option value="cancelled">仅已取消</option></select></label><button type="button" disabled={exporting || state !== "ready" || exportCount > 20000} onClick={downloadCsv}>{exporting ? <><CircleNotch className="spin" size={17} />正在生成</> : <><DownloadSimple size={17} />导出{isOverall ? "全单位" : scopeLabel}的服务记录</>}</button></section>}
+    {rangeOpen && <ReportRangeForm draft={draft} onChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onApply={(event) => { applyFilters(event); setRangeOpen(false); }} onReset={resetRange} busy={state === "loading"} />}
+    <span className="sr-only" role="status" aria-live="polite">{state === "loading" ? "正在刷新数据" : state === "ready" ? "数据已刷新" : ""}</span>
 
     {state === "failed" && !report ? <section className="report-load-state" role="alert"><Info size={32} /><h2>数据暂时无法读取</h2><p>{message}</p><button type="button" onClick={loadReport}><ArrowClockwise size={17} />重新加载</button></section> : <>
-      {reportPage === "overview" && <>
-        <section className={`report-metrics ${state === "loading" ? "loading" : ""}`} aria-label="核心指标">
-          <MetricCard label="有效预约" value={report?.summary?.activeCount ?? "—"} unit="场" />
-          <MetricCard label="已结束" value={report?.summary?.endedCount ?? "—"} unit="场" />
-          <MetricCard label="总时长" value={report ? duration.value : "—"} unit={report ? duration.unit : ""} />
-          <MetricCard label="取消" value={report?.summary?.cancelledCount ?? "—"} unit="场" note={isOverall ? `取消率 ${formatCancellationRate(report?.summary?.cancellationRate)}` : undefined} tone="guardrail" />
+      <section className={`report-metrics ${state === "loading" ? "loading" : ""}`} aria-label="核心指标">
+        <MetricCard label="有效预约" value={report?.summary?.activeCount ?? "—"} unit="场" />
+        <MetricCard label="已结束" value={report?.summary?.endedCount ?? "—"} unit="场" />
+        <MetricCard label="总时长" value={report ? duration.value : "—"} unit={report ? duration.unit : ""} />
+        <MetricCard label="取消" value={report?.summary?.cancelledCount ?? "—"} unit="场" />
+      </section>
+      {!analysisOpen && <section className="report-section report-trend-section" aria-label="预约趋势"><header><div><h2>预约{trend.granularity === "month" ? "月" : "周"}趋势</h2></div></header>{state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <TrendChart granularity={trend.granularity} items={trend.items} metric={trendMetric} onMetricChange={setTrendMetric} />}</section>}
+      {analysisOpen && <section className="report-analysis-workspace" aria-label="分析与导出">
+        <div className="report-analysis-heading"><h2>分析与导出</h2></div>
+        <nav className="report-page-nav" role="tablist" aria-label="分析视图">
+          {pages.map((page) => <button className={reportPage === page.id ? "active" : ""} type="button" role="tab" aria-selected={reportPage === page.id} onClick={() => setReportPage(page.id)} key={page.id}>{page.label}</button>)}
+        </nav>
+        <ReportFilters draft={draft} onChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onApply={applyFilters} onReset={resetAnalysisFilters} rooms={rooms} tags={tags} busy={state === "loading"} />
+        <section className="report-focus-page" role="tabpanel">
+          <header className="report-focus-heading"><h2>{pageHeading}</h2>{reportPage === "tags" && <span>共 {report?.summary?.activeCount ?? "—"} 场</span>}</header>
+          {state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <>
+            {reportPage === "time" && <TimeDistribution items={report?.weekdayTimeDistribution} settings={settings} />}
+            {reportPage === "rooms" && <RoomDistribution items={report?.roomWorkload} />}
+            {reportPage === "tags" && <TagComposition items={isOverall ? report?.globalTagDistribution : report?.tagDistribution} />}
+          </>}
         </section>
-        <section className="report-section report-trend-section" role="tabpanel"><header><div><h2>预约{trend.granularity === "month" ? "月" : "周"}趋势</h2></div></header>{state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <TrendChart granularity={trend.granularity} items={trend.items} metric={trendMetric} onMetricChange={setTrendMetric} />}</section>
-      </>}
-
-      {reportPage !== "overview" && <section className="report-focus-page" role="tabpanel">
-        <header className="report-focus-heading"><div><h2>{pageHeading?.[0]}</h2><p>{pageHeading?.[1]}</p></div>{reportPage === "tags" && <span>共 {report?.summary?.activeCount ?? "—"} 场</span>}</header>
-        {state === "loading" && !report ? <div className="report-chart-loading" role="status" aria-label="正在汇总数据"><div className="report-chart-skeleton" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /><i /><i /></div></div> : <>
-          {reportPage === "time" && <TimeDistribution items={report?.weekdayTimeDistribution} settings={settings} />}
-          {reportPage === "rooms" && <RoomDistribution items={report?.roomWorkload} />}
-          {reportPage === "tags" && <TagComposition items={isOverall ? report?.globalTagDistribution : report?.tagDistribution} />}
-        </>}
+        <section className="report-export-panel" aria-label="CSV 导出设置"><div><strong>办件明细</strong><span>当前范围预计 {exportCount} 条，CSV 含单位内部办件信息</span></div><label><span className="sr-only">记录状态</span><select value={exportStatus} onChange={(event) => setExportStatus(event.target.value)}><option value="">全部状态</option><option value="active">仅有效</option><option value="cancelled">仅已取消</option></select></label><button type="button" disabled={exporting || state !== "ready" || exportCount > 20000} onClick={downloadCsv}>{exporting ? <><CircleNotch className="spin" size={17} />正在生成</> : <><DownloadSimple size={17} />导出{isOverall ? "全单位" : scopeLabel}的服务记录</>}</button></section>
       </section>}
       {message && <p className="report-message" role="status">{message}</p>}
     </>}

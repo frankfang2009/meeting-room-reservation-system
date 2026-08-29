@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import fnmatch
 import hashlib
 import json
 import os
@@ -81,10 +82,21 @@ def _remove_sqlite_companions(path: Path) -> None:
 
 
 def _remove_orphaned_temporary_companions(database_path: Path) -> None:
-    pattern = f".{database_path.name}.*.part-*"
-    for companion in database_path.parent.glob(pattern):
-        with contextlib.suppress(OSError):
-            companion.unlink()
+    # 本产品临时文件的真实命名规范是 `.{原名}.{随机十六进制}.part`（数据库临时件）
+    # 与 `.{原名}.json.{pid}.{随机十六进制}.part`（sidecar 临时件）。历史 glob
+    # 写成 `*.part-*`，与真实 `.part` 后缀永远失配，断电遗留件因此从未被清理。
+    # 同时保留 legacy `.{原名}.*.part-*` 形态的清理（既有回归注入的形态），
+    # 但不放宽到 `*.part*`，也不允许命中任何不以 `.` 开头的正式备份文件。
+    strict = re.compile(
+        r"^\."
+        + re.escape(database_path.name)
+        + r"(?:\.[0-9a-f]+|\.json\.\d+\.[0-9a-f]+)\.part$"
+    )
+    legacy = f".{database_path.name}.*.part-*"
+    for companion in database_path.parent.iterdir():
+        if strict.match(companion.name) or fnmatch.fnmatch(companion.name, legacy):
+            with contextlib.suppress(OSError):
+                companion.unlink()
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -732,6 +744,24 @@ def create_backup(
     return target, value
 
 
+def _filename_sequence_floor(backup_dir: Path) -> int:
+    """取备份目录文件名中的最大序列。
+
+    备份目录可能残留当前版本无法解析的 sidecar（例如失败更新回滚后
+    留下的更新版本运行时写入的备份）。无论 sidecar 能否解析，文件名
+    中的序列都已占用目标名，序列分配必须避开，否则 create_backup 会
+    因拒绝覆盖而失败。
+    """
+
+    floor = 0
+    for suffix, stem_width in ((".db", 3), (".json", 5)):
+        for path in backup_dir.glob(f"{BACKUP_PREFIX}*{suffix}"):
+            stem = path.name[len(BACKUP_PREFIX) : -stem_width]
+            if len(stem) == 8 and stem.isdigit():
+                floor = max(floor, int(stem))
+    return floor
+
+
 def reserve_backup_sequence(
     db: sqlite3.Connection,
     backup_dir: Path,
@@ -751,7 +781,7 @@ def reserve_backup_sequence(
         raise RuntimeError("数据库备份序列无效") from error
     latest = latest_backup_record(backup_dir, expected_install_id=install_id)
     sidecar_floor = latest[1]["sequence"] if latest else 0
-    sequence = max(database_floor, sidecar_floor) + 1
+    sequence = max(database_floor, sidecar_floor, _filename_sequence_floor(backup_dir)) + 1
     db.execute(
         """
         INSERT INTO app_meta (key, value) VALUES ('backup_sequence', ?)

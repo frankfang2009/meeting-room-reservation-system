@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import os
+import secrets
 import shutil
 import sqlite3
 import stat
@@ -174,11 +175,56 @@ def _pre_restore_snapshot(
     return snapshot, manifest
 
 
-def _record_restore_audit(database: Path, backup_name: str, sequence: int) -> None:
+def _session_version_high_water(database: Path) -> Optional[int]:
+    if not database.is_file():
+        return 0
+    db = sqlite3.connect(database, timeout=10)
+    try:
+        row = db.execute(
+            "SELECT COALESCE(MAX(session_version), 0) FROM users"
+        ).fetchone()
+        return int(row[0])
+    except sqlite3.DatabaseError as error:
+        error_code = getattr(error, "sqlite_errorcode", None)
+        if not isinstance(error_code, int) or error_code & 0xFF not in {
+            sqlite3.SQLITE_CORRUPT,
+            sqlite3.SQLITE_NOTADB,
+        }:
+            raise
+        return None
+    finally:
+        db.close()
+
+
+def _record_restore_audit(
+    database: Path,
+    backup_name: str,
+    sequence: int,
+    *,
+    pre_restore_session_version_high_water: Optional[int],
+) -> None:
     db = sqlite3.connect(database, timeout=10, isolation_level=None)
     try:
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("BEGIN IMMEDIATE")
+        restored_high_water = int(
+            db.execute(
+                "SELECT COALESCE(MAX(session_version), 0) FROM users"
+            ).fetchone()[0]
+        )
+        if pre_restore_session_version_high_water is None:
+            invalidation_floor = (1 << 61) | secrets.randbits(61)
+        else:
+            invalidation_floor = pre_restore_session_version_high_water
+        next_session_version = max(restored_high_water, invalidation_floor) + 1
+        db.execute(
+            """
+            UPDATE users
+            SET session_version = ?,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+            """,
+            (next_session_version,),
+        )
         db.execute(
             """
             INSERT INTO security_audit_log
@@ -234,6 +280,7 @@ def restore_backup(
         sidecar, expected_install_id=install_id, verify_hash=True
     )
     _assert_service_stopped(data_dir, install_id)
+    pre_restore_session_version_high_water = _session_version_high_water(database)
     snapshot, _manifest = _pre_restore_snapshot(database, backup_dir, install_id)
     temporary = data_dir / f".{database.name}.restore.{uuid.uuid4().hex}.part"
     old_wal = Path(str(database) + "-wal")
@@ -249,7 +296,14 @@ def restore_backup(
         state = prepare_database(database, mirror_setup_complete=True)
         if not state.ready or not state.setup_complete:
             raise RuntimeError("恢复后数据库复检失败")
-        _record_restore_audit(database, backup.name, value["sequence"])
+        _record_restore_audit(
+            database,
+            backup.name,
+            value["sequence"],
+            pre_restore_session_version_high_water=(
+                pre_restore_session_version_high_water
+            ),
+        )
         state = prepare_database(database, mirror_setup_complete=True)
         if not state.ready:
             raise RuntimeError("恢复审计写入后复检失败")

@@ -54,6 +54,7 @@ jobs:
           python -m ruff check v2/backend v2/installer v2/tests
           python -m unittest discover -s v2/installer/tests -v
           python -m unittest discover -s v2/tests -v
+          node v2/docs/help/test.mjs
           (cd v2/frontend && npm ci && npm run check)
       - name: Rebuild source-to-candidate twice
         shell: bash
@@ -148,6 +149,7 @@ jobs:
         run: |
           python -m unittest discover -s v2/installer/tests -v
           python -m unittest discover -s v2/tests -v
+          node v2/docs/help/test.mjs
       - name: Build frontend production bundle
         working-directory: v2/frontend
         run: |

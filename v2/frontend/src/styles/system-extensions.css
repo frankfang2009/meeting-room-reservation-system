@@ -32,7 +32,7 @@
   font-size: 12px;
 }
 
-.system-section-heading > button,
+.system-section-heading > .system-section-action,
 .system-audit-heading-actions button,
 .system-audit-reset {
   min-height: 38px;
@@ -46,6 +46,46 @@
   border-radius: 8px;
   background: transparent;
   cursor: pointer;
+}
+
+.system-section-disclosure {
+  min-width: 0;
+  min-height: 68px;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0;
+  color: var(--ink-secondary);
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-section-disclosure > span {
+  min-width: 0;
+}
+
+.system-section-disclosure:hover h2 {
+  color: var(--terracotta-text);
+}
+
+.system-section-disclosure > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.system-section-disclosure[aria-expanded="true"] > svg {
+  transform: rotate(90deg);
+}
+
+.system-section-disclosure:focus-visible {
+  outline: 2px solid rgba(20, 20, 19, 0.38);
+  outline-offset: 4px;
 }
 
 .system-audit-heading-actions {

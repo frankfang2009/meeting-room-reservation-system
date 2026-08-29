@@ -37,6 +37,7 @@ def run_server_once(
 ) -> bool:
     setup_completed = threading.Event()
     config = dict(app_config or {})
+    config["SERVICE_PORT"] = port
     config["SETUP_COMPLETED_EVENT"] = setup_completed
     if service_stop_event is not None:
         config["SERVICE_STOP_EVENT"] = service_stop_event

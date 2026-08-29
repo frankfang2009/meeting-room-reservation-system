@@ -40,6 +40,9 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | E85 | `V2_PYTHON=… v2/scripts/check.sh`（本机允许回环测试服务器） | Ruff、compileall、`git diff --check` 全绿；backend 128、installer 85、跨层 29、frontend 163 项测试通过；Vite 6.4.3 生产构建成功（CSS 160.88 kB，JS 501.63 kB） |
 | E86 | 隔离真实服务 + 应用内浏览器 1456×890，管理员/双员工合成账号 | 「我的预约」移除突兀交接区块，新增独立「工作交接」主导航、待我确认徽标、待我确认/我发起的两段开放台账；交接弹窗可稍后处理且不改变请求；员工选择先选中再确认；待处理详情禁用重复发起；控制台 0 error/0 warning、文档无横向溢出 |
 | E87 | 真实 pending / completed / cancelled 交接记录与后端回归 | active 历史列表分别显示“交接中 / 已交接”，普通预约仍显示标签色点；取消记录只显示“已取消”，先前交接保留在详情事件时间线。服务端对 cancelled 投影 `handoverState=null`，前端只为 active 渲染辅助状态；事件文案统一为“预约者由 A 交接给 B”，CSV 表头统一“预约者”；同时修复 handover 联表把 request id 投影为 reservation id 的缺陷并以请求/收件/发件三处 ID 断言锁定 |
+| E88 | 用户确认的方案 3 + 隔离真实服务浏览器走查，1024×720 / 1280×720 / 1440×900 / 1920×1080 | 工作交接移除概览带；空分组不渲染，单侧状态只保留对应分组，双侧保持待我确认在上，全空只留一行安静提示；操作区顺序固定，发起侧“处理中”使用产品陶土色令牌；1024 无横向溢出，详情抽屉可打开/关闭，控制台 0 error，详见 `v2/frontend/design-qa.md` |
+| E89 | `V2_PYTHON=… v2/scripts/check.sh`（临时排除并原样恢复未跟踪 `.mimosa` 本机记录） | 最终全绿：Ruff、compileall、`git diff --check`、backend 150、installer 113、跨层 32、frontend 173 项测试通过；Vite 6.4.3 生产构建成功（CSS 164.76 kB，JS 506.04 kB） |
+| E90 | 用户批准空状态 mockup + 隔离合成数据真实服务预览，1759×894 同尺寸对照与 1024×720 防御性桌面走查 | 全空状态改为 88px 陶土色柔和圆形交接图标、“暂无工作交接”标题和说明文案在剩余画布居中；不渲染卡片、操作、分组壳、零计数或概览带；1024 无裁切、控制台 0 error。完整 `check.sh` 全绿：backend 150、installer 113、跨层 32、frontend 173，Vite 产物 CSS 165.28 kB / JS 506.24 kB；详见 `v2/frontend/design-qa.md` |
 
 ## V2.3.0 变更通知身份与视觉修正证据（2026-08-18）
 

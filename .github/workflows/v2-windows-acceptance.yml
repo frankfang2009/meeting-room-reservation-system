@@ -202,7 +202,7 @@ jobs:
             --payload-root "$build/payload-current" \
             --runtime-root "$build/runtime-current" \
             --output "$build/output/会议室预约系统-V$VERSION-累计升级包.zip"
-      - name: Run real Windows V2.1.0 cumulative upgrade acceptance
+      - name: Run Windows upgrade and health-failure rollback acceptance
         shell: pwsh
         run: |
           $version = (Get-Content -LiteralPath "v2/VERSION" -Raw -Encoding UTF8).Trim()
