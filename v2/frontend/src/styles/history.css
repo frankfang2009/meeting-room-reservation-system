@@ -571,49 +571,6 @@
   cursor: pointer;
 }
 
-.history-zero-state {
-  min-height: 430px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 30px;
-  text-align: left;
-}
-
-.history-zero-state > svg {
-  flex: 0 0 auto;
-  color: #85827b;
-}
-
-.history-zero-state h2 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 23px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-.history-zero-state p {
-  margin: 10px 0 20px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.history-zero-state button {
-  min-height: 46px;
-  padding: 0 19px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 8px;
-  background: transparent;
-  font-size: 14px;
-}
-
-.history-zero-state button:hover,
-.history-zero-state button:focus-visible {
-  border-color: rgba(20, 20, 19, 0.32);
-  background: var(--paper-raised);
-}
-
 /* “预约记录”读取骨架：与记录行同构的安静灰条，无 shimmer。 */
 .history-skeleton {
   border-top: 1px solid var(--hairline);

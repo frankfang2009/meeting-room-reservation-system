@@ -1,0 +1,134 @@
+/* Shared zero-data grammar. It leaves each page's existing shell in place. */
+.idle-state {
+  width: min(460px, calc(100% - 48px));
+  display: grid;
+  place-items: center;
+  align-content: center;
+  justify-items: center;
+  color: var(--ink);
+  text-align: center;
+}
+
+.idle-state__icon {
+  margin-bottom: 24px;
+  color: #85827b;
+}
+
+.idle-state--accent .idle-state__icon {
+  color: var(--terracotta-text);
+}
+
+.idle-state__copy {
+  display: grid;
+  justify-items: center;
+}
+
+.idle-state h2 {
+  max-width: 16em;
+  margin: 0;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.idle-state p {
+  max-width: 31em;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.idle-state button.idle-state__action {
+  min-width: 156px;
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 25px;
+  padding: 0 22px;
+  color: var(--paper-raised);
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  background: var(--ink);
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.idle-state button.idle-state__action--primary {
+  color: var(--paper-raised);
+  border: 1px solid var(--ink);
+  background: var(--ink);
+}
+
+.idle-state button.idle-state__action--primary:hover,
+.idle-state button.idle-state__action--primary:focus-visible {
+  color: var(--paper-raised);
+  background: #000;
+  transform: translateY(-1px);
+}
+
+.idle-state button.idle-state__action--outline {
+  color: var(--ink);
+  border: 1px solid var(--hairline-strong);
+  background: transparent;
+}
+
+.idle-state button.idle-state__action--outline:hover,
+.idle-state button.idle-state__action--outline:focus-visible {
+  border-color: rgba(20, 20, 19, 0.32);
+  background: var(--paper-raised);
+}
+
+.handover-page-empty.idle-state {
+  min-height: clamp(320px, calc(100vh - 390px), 520px);
+  margin: 0 auto;
+}
+
+.booking-zero-state.idle-state {
+  min-height: 210px;
+  margin: 104px auto 0;
+}
+
+.calendar-zero-state.idle-state {
+  min-height: min(590px, calc(100vh - 205px));
+  margin: 0 auto;
+}
+
+.history-zero-state.idle-state {
+  min-height: 430px;
+  margin: 0 auto;
+  border-top: 1px solid var(--hairline);
+}
+
+.history-filter-empty {
+  min-height: 180px;
+}
+
+.rooms-empty.idle-state {
+  min-height: 420px;
+  margin: 80px auto 0;
+}
+
+@media (max-width: 680px) {
+  .idle-state {
+    width: min(100% - 40px, 460px);
+  }
+
+  .idle-state h2 {
+    font-size: 23px;
+  }
+
+  .booking-zero-state.idle-state,
+  .rooms-empty.idle-state {
+    margin-top: 48px;
+  }
+
+  .calendar-zero-state.idle-state,
+  .history-zero-state.idle-state {
+    min-height: 360px;
+  }
+}

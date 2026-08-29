@@ -10,6 +10,13 @@
 
 # 客户数据、凭据和运行现场永不进入版本库。
 **/data/
+# 例外：帮助中心“数据中心”分类的正式帮助文章是受控源码内容，逐篇放行。
+# 父目录 data/ 已被上面的 **/data/ 排除，必须先反向放行目录本身。
+!v2/docs/help/content/data/
+!v2/docs/help/content/data/dt-csv.md
+!v2/docs/help/content/data/dt-ended.md
+!v2/docs/help/content/data/dt-metrics.md
+!v2/docs/help/content/data/dt-search.md
 **/logs/
 **/backups/
 **/runtime/
@@ -34,6 +41,10 @@ v2/backend/v2app/runtime/**/__pycache__/
 !02_开发工作区/升级包工具/输出-待实机验收/V*-发布清单.json
 
 # 本地或 CI 临时输出。
+# .mimosa/ 是本机安全扫描器/会话记录（含绝对路径），既不入库，也不得进入
+# 可复现构建输入（v2-reproducible-build.sh 与公开仓库契约测试同样按
+# git ls-files --exclude-standard 枚举，此处排除即同时覆盖两处）。
+.mimosa/
 ci-artifacts/
 coverage.xml
 .coverage

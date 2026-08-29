@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import fnmatch
 import hashlib
 import json
 import os
@@ -81,10 +82,21 @@ def _remove_sqlite_companions(path: Path) -> None:
 
 
 def _remove_orphaned_temporary_companions(database_path: Path) -> None:
-    pattern = f".{database_path.name}.*.part-*"
-    for companion in database_path.parent.glob(pattern):
-        with contextlib.suppress(OSError):
-            companion.unlink()
+    # 本产品临时文件的真实命名规范是 `.{原名}.{随机十六进制}.part`（数据库临时件）
+    # 与 `.{原名}.json.{pid}.{随机十六进制}.part`（sidecar 临时件）。历史 glob
+    # 写成 `*.part-*`，与真实 `.part` 后缀永远失配，断电遗留件因此从未被清理。
+    # 同时保留 legacy `.{原名}.*.part-*` 形态的清理（既有回归注入的形态），
+    # 但不放宽到 `*.part*`，也不允许命中任何不以 `.` 开头的正式备份文件。
+    strict = re.compile(
+        r"^\."
+        + re.escape(database_path.name)
+        + r"(?:\.[0-9a-f]+|\.json\.\d+\.[0-9a-f]+)\.part$"
+    )
+    legacy = f".{database_path.name}.*.part-*"
+    for companion in database_path.parent.iterdir():
+        if strict.match(companion.name) or fnmatch.fnmatch(companion.name, legacy):
+            with contextlib.suppress(OSError):
+                companion.unlink()
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:

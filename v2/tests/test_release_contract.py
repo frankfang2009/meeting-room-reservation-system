@@ -17,16 +17,53 @@ def read(relative: str) -> str:
 
 
 class CrossLayerReleaseContractTests(unittest.TestCase):
+    def test_product_contract_uses_the_current_database_schema(self) -> None:
+        contract = read("docs/PRODUCT-CONTRACT.md")
+        self.assertIn("`schema_version=4`", contract)
+        self.assertNotIn("`schema_version=3`", contract)
+
+    def test_unsigned_elevation_bootstrap_risk_remains_an_explicit_release_gate(self) -> None:
+        security = read("docs/SECURITY-DEPLOYMENT.md")
+        self.assertIn("用户可写解压目录", security)
+        self.assertIn("Authenticode", security)
+        self.assertIn("不可变 bootstrap", security)
+        self.assertIn("formal_external_release_allowed=false", security)
+
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.4.0")
+        self.assertEqual(read("VERSION").strip(), "2.5.0")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.4.0")
+        self.assertEqual(package["version"], "2.5.0")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
-        self.assertEqual(package["scripts"]["build"], "vite build")
-        self.assertIn('PRODUCT_VERSION = "V2.4.0"', read("backend/v2app/__init__.py"))
+        self.assertEqual(
+            package["scripts"]["build"],
+            "vite build && node ../docs/help/build.mjs --output "
+            "dist/client/help/index.html",
+        )
+        self.assertIn("node v2/docs/help/test.mjs", read("scripts/check.sh"))
+        self.assertIn('PRODUCT_VERSION = "V2.5.0"', read("backend/v2app/__init__.py"))
         installer = read("installer/installer_core.py")
-        self.assertIn('VERSION = "2.4.0"', installer)
-        self.assertIn('RELEASE = "V2.4.0"', installer)
+        self.assertIn('VERSION = "2.5.0"', installer)
+        self.assertIn('RELEASE = "V2.5.0"', installer)
+
+    def test_help_center_gate_is_a_real_workflow_step(self) -> None:
+        # 帮助内容门禁必须在 CI 与候选车道中真实执行，不能只靠 check.sh 文本引用
+        # （曾出现三个 OS 车道都不跑该测试、删帮助文章仍全绿的缺口）。
+        command = "node v2/docs/help/test.mjs"
+        ci_workflow = (V2_ROOT.parent / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        candidate_workflow = (
+            V2_ROOT.parent / ".github/workflows/release-candidate.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            ci_workflow.count(command),
+            3,
+            "ci.yml 三个 OS 车道都必须显式执行帮助门禁",
+        )
+        self.assertIn("- name: Help center content and evidence gate", ci_workflow)
+        self.assertEqual(
+            candidate_workflow.count(command),
+            2,
+            "candidate-linux 与 candidate-macos 都必须在候选构建前显式执行帮助门禁",
+        )
 
     def test_api_schema_and_role_enum_are_shared(self) -> None:
         frontend = "\n".join(
@@ -322,7 +359,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
 
     def test_shipped_windows_guide_uses_current_product_version(self) -> None:
         guide = read("installer/payload_templates/使用说明.txt")
-        self.assertTrue(guide.startswith("会议室预约系统 V2.4.0 使用说明"))
+        self.assertTrue(guide.startswith("会议室预约系统 V2.5.0 使用说明"))
         self.assertNotIn("V2.2.0", guide)
 
     def test_public_frontend_contract_rejects_extra_fields(self) -> None:
@@ -345,7 +382,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.4.0.bat")
+        launcher = read("installer/安装V2.5.0.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
@@ -417,7 +454,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         updater = read("installer/update_core.py")
         builder = read("installer/build_update_package.py")
         entry = read("installer/update.py")
-        launcher = read("installer/升级到V2.4.0.bat")
+        launcher = read("installer/升级到V2.5.0.bat")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = True", updater)
         self.assertIn('SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})', updater)

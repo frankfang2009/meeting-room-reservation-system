@@ -44,16 +44,20 @@ class AssemblePayloadTests(unittest.TestCase):
         (runtime_code / "identity.py").write_text("# identity\n", encoding="utf-8")
         self.frontend = self.root / "frontend-dist"
         (self.frontend / "assets").mkdir(parents=True)
+        (self.frontend / "help").mkdir()
         (self.frontend / "index.html").write_text("<!doctype html>\n", encoding="utf-8")
         (self.frontend / "assets" / "app.js").write_text("// app\n", encoding="utf-8")
+        (self.frontend / "help" / "index.html").write_text(
+            "<!doctype html><title>help fixture</title>\n", encoding="utf-8"
+        )
         self.frontend_lock = self.root / "package-lock.json"
         integrity = "sha512-AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw=="
         self.frontend_lock.write_text(json.dumps({
             "name": "meeting-room-v2-frontend",
-            "version": "2.4.0",
+            "version": "2.5.0",
             "lockfileVersion": 3,
             "packages": {
-                "": {"name": "meeting-room-v2-frontend", "version": "2.4.0"},
+                "": {"name": "meeting-room-v2-frontend", "version": "2.5.0"},
                 "node_modules/react": {
                     "version": "19.2.0", "integrity": integrity,
                     "license": "MIT", "resolved": "https://registry.npmjs.org/react/-/react-19.2.0.tgz",
@@ -81,6 +85,16 @@ class AssemblePayloadTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in evidence["components"]], ["react"])
         for name in CUSTOMER_FILES:
             self.assertTrue((output / name).is_file(), name)
+
+    def test_assembly_refuses_frontend_dist_without_help_entry(self) -> None:
+        # 帮助中心入口是正式 payload 的必需件：缺件的 dist 必须在组装阶段拒绝，
+        # 不允许打出缺帮助中心的产品包再靠运行时 503 降级。
+        (self.frontend / "help" / "index.html").unlink()
+        output = self.root / "payload-no-help"
+        with self.assertRaises(PayloadAssemblyError) as raised:
+            assemble_payload(self.backend, self.frontend, self.frontend_lock, output)
+        self.assertIn("help/index.html", str(raised.exception))
+        self.assertFalse(output.exists(), "拒绝组装时不得留下成品目录")
 
     def test_assembled_payload_builds_into_reverse_verified_package(self) -> None:
         payload = assemble_payload(self.backend, self.frontend, self.frontend_lock, self.root / "payload-build")

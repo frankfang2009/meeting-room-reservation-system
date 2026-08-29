@@ -20,12 +20,14 @@ def _reservation_id_of(row: Any) -> str:
 def _request_row(db, request_id: str) -> Any:
     row = db.execute(
         """
-        SELECT hr.id, hr.reservation_id, hr.from_user_id, hr.to_user_id,
-               hr.expected_revision, hr.status, hr.created_at, hr.decided_at,
+        SELECT hr.id AS request_id, hr.reservation_id, hr.from_user_id,
+               hr.to_user_id, hr.expected_revision,
+               hr.status AS request_status,
+               hr.created_at AS request_created_at,
+               hr.decided_at AS request_decided_at,
                r.*, u.display_name AS owner_display_name,
                f.display_name AS from_display_name,
-               t.display_name AS to_display_name,
-               r.status AS reservation_status
+               t.display_name AS to_display_name
         FROM handover_requests hr
         JOIN reservations r ON r.id = hr.reservation_id
         JOIN users u ON u.id = r.owner_user_id
@@ -67,16 +69,14 @@ def load_handover_reservation(reservation_id: str, actor: dict[str, Any]) -> Any
 
 
 def serialize_handover_request(row: Any) -> dict[str, Any]:
+    # 行内的请求列已全部别名（request_*），r.* 无重复列名；
+    # serialize_reservation 因此直接输出真实预约的 id/status/createdAt。
     reservation = serialize_reservation(row, None)
-    # Joined handover rows expose both hr.id and r.id as ``id``. sqlite3.Row
-    # keeps the first duplicate column, so the generic reservation serializer
-    # otherwise leaks the handover-request id as the reservation id.
-    reservation["id"] = _reservation_id_of(row)
     return {
-        "id": row["id"],
-        "status": row["status"],
-        "createdAt": row["created_at"],
-        "decidedAt": row["decided_at"],
+        "id": row["request_id"],
+        "status": row["request_status"],
+        "createdAt": row["request_created_at"],
+        "decidedAt": row["request_decided_at"],
         "expectedRevision": row["expected_revision"],
         "fromUser": {"id": row["from_user_id"], "name": row["from_display_name"]},
         "toUser": {"id": row["to_user_id"], "name": row["to_display_name"]},
@@ -242,12 +242,12 @@ def decide_handover(request_id: str, decision: str) -> dict[str, Any]:
     with transaction(db):
         actor = locked_actor(db)
         row = _request_row(db, request_id)
-        if row["status"] != "pending":
+        if row["request_status"] != "pending":
             raise ApiError(409, "HANDOVER_REQUEST_CLOSED", "该交接请求已处理")
         if row["to_user_id"] != actor["id"]:
             raise ApiError(403, "FORBIDDEN", "只有被指定的接手人可以处理该交接请求")
 
-        if row["reservation_status"] != "active" or _started(row):
+        if row["status"] != "active" or _started(row):
             invalid_error = (
                 "HANDOVER_EXPIRED",
                 "预约已开始或已取消，交接请求作废",
@@ -319,7 +319,7 @@ def withdraw_handover(request_id: str) -> dict[str, Any]:
     with transaction(db):
         actor = locked_actor(db)
         row = _request_row(db, request_id)
-        if row["status"] != "pending":
+        if row["request_status"] != "pending":
             raise ApiError(409, "HANDOVER_REQUEST_CLOSED", "该交接请求已处理")
         if row["from_user_id"] != actor["id"] and actor["role"] != "admin":
             raise ApiError(403, "FORBIDDEN", "只有发起人或管理员可以撤回该交接请求")
@@ -359,7 +359,12 @@ def list_my_handovers() -> dict[str, Any]:
     actor = locked_actor(db)
     now = local_now().replace(tzinfo=None).strftime("%Y-%m-%d %H:%M")
     query = """
-        SELECT hr.*, r.*, u.display_name AS owner_display_name,
+        SELECT hr.id AS request_id, hr.reservation_id, hr.from_user_id,
+               hr.to_user_id, hr.expected_revision,
+               hr.status AS request_status,
+               hr.created_at AS request_created_at,
+               hr.decided_at AS request_decided_at,
+               r.*, u.display_name AS owner_display_name,
                f.display_name AS from_display_name,
                t.display_name AS to_display_name
         FROM handover_requests hr

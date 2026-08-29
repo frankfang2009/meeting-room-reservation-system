@@ -179,6 +179,7 @@ def assemble_payload(
             FRONTEND_COMPONENTS_FILE,
             "_程序文件/app/v2app/__init__.py",
             "_程序文件/app/static/index.html",
+            "_程序文件/app/static/help/index.html",
             *CUSTOMER_FILES,
         }
         missing = sorted(required - paths)

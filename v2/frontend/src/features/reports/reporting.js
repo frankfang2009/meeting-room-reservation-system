@@ -11,6 +11,25 @@ export function defaultReportFilters(serverDate) {
   };
 }
 
+export function reportAnalysisPages(isOverall) {
+  return isOverall
+    ? [{ id: "time", label: "时段分布" }, { id: "rooms", label: "笔录室" }, { id: "tags", label: "标签" }]
+    : [{ id: "time", label: "时段分布" }, { id: "tags", label: "标签" }];
+}
+
+export function defaultReportAnalysisPage(isOverall) {
+  return isOverall ? "rooms" : "time";
+}
+
+export function resetReportAnalysisFilters(filters = {}) {
+  return {
+    ...filters,
+    roomId: "",
+    tagId: "",
+    query: "",
+  };
+}
+
 export function reportScope(role, currentUserId, view) {
   if (role !== "admin") return { scope: "self" };
   if (view === "overall") return { scope: "overall" };

@@ -2668,6 +2668,49 @@ class HandoverTests(AuthenticatedReservationTestCase):
             client=client or self.employee,
         )
 
+    def test_handover_projection_keeps_request_and_reservation_fields_distinct(self):
+        # FIX-12 回归：handover_requests 与 reservations 存在同名列
+        # （id/status/created_at），sqlite3.Row 对重复列名只取第一个值，
+        # 请求字段曾遮蔽预约投影。钉住两套字段同时正确输出。
+        booking = self.create_own_booking(start="10:00")
+        created = self.request_handover(booking, self.second)
+        request = created.get_json()["request"]
+        self.assertNotEqual(request["id"], booking["id"])
+        self.assertEqual(request["status"], "pending")
+        self.assertEqual(request["reservation"]["status"], "active")
+        self.assertEqual(request["reservation"]["id"], booking["id"])
+
+        with closing(sqlite3.connect(self.database)) as db:
+            reservation_created_at = db.execute(
+                "SELECT created_at FROM reservations WHERE id = ?",
+                (booking["id"],),
+            ).fetchone()[0]
+            request_created_at = db.execute(
+                "SELECT created_at FROM handover_requests WHERE id = ?",
+                (request["id"],),
+            ).fetchone()[0]
+        self.assertEqual(request["reservation"]["createdAt"], reservation_created_at)
+        self.assertEqual(request["createdAt"], request_created_at)
+
+        listed = self.employee2.get("/api/v1/handover-requests").get_json()["incoming"][0]
+        self.assertEqual(listed["status"], "pending")
+        self.assertEqual(listed["reservation"]["status"], "active")
+        self.assertEqual(listed["reservation"]["createdAt"], reservation_created_at)
+        self.assertEqual(listed["reservation"]["id"], booking["id"])
+
+        # 拒绝后请求状态与预约状态必须不同——列遮蔽会让两者变成同一个值。
+        declined = self.write(
+            "POST",
+            f"/api/v1/handover-requests/{request['id']}/decline",
+            {},
+            client=self.employee2,
+        )
+        self.assertEqual(declined.status_code, 200, declined.get_json())
+        decided = declined.get_json()["request"]
+        self.assertEqual(decided["status"], "declined")
+        self.assertEqual(decided["reservation"]["status"], "active")
+        self.assertEqual(decided["reservation"]["createdAt"], reservation_created_at)
+
     def test_handover_accept_flips_owner_with_event_and_audit(self):
         booking = self.create_own_booking(start="10:00")
         created = self.request_handover(booking, self.second)

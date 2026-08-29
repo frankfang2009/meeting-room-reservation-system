@@ -19,5 +19,7 @@ test ! -L "$frontend_root/node_modules"
 (cd "$repo_root" && "$python_bin" -m unittest discover -s v2/installer/tests -v)
 (cd "$repo_root" && "$python_bin" -m unittest discover -s v2/tests -v)
 "$python_bin" -m compileall -q "$repo_root/v2/backend" "$repo_root/v2/installer" "$repo_root/v2/tests"
+(cd "$repo_root" && node v2/docs/help/test.mjs)
 (cd "$frontend_root" && npm run check)
+test -s "$frontend_root/dist/client/help/index.html"
 (cd "$repo_root" && git diff --check)

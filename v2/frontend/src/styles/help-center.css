@@ -1,0 +1,45 @@
+.help-reader-canvas {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.help-reader-toolbar {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 0 30px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--paper-raised);
+}
+
+.help-reader-toolbar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.help-reader-toolbar h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.help-reader-toolbar span {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.help-reader-frame {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  background: var(--paper-raised);
+}
+
+@media (max-width: 680px) {
+  .help-reader-toolbar { min-height: 56px; padding-inline: 20px; }
+}

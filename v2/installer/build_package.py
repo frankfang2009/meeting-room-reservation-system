@@ -108,19 +108,19 @@ except ImportError:
 
 
 TOOL_DIR = Path(__file__).resolve().parent
-LAUNCHER_SOURCE = TOOL_DIR / "安装V2.4.0.bat"
+LAUNCHER_SOURCE = TOOL_DIR / "安装V2.5.0.bat"
 GUIDE_SOURCE = TOOL_DIR / "安装说明.txt"
 ENTRY_SOURCE = TOOL_DIR / "install.py"
 CORE_SOURCE = TOOL_DIR / "installer_core.py"
 
-ARTIFACT_NAME = "会议室预约系统-V2.4.0-安装包.zip"
-DELIVERED_LAUNCHER = "安装V2.4.0.bat"
+ARTIFACT_NAME = "会议室预约系统-V2.5.0-安装包.zip"
+DELIVERED_LAUNCHER = "安装V2.5.0.bat"
 DELIVERED_GUIDE = "安装说明.txt"
 DELIVERED_TOOL = "_V2安装工具"
 DELIVERED_ENTRY = f"{DELIVERED_TOOL}/app/install.py"
 DELIVERED_CORE = f"{DELIVERED_TOOL}/app/installer_core.py"
 DELIVERED_MANIFEST = f"{DELIVERED_TOOL}/manifest.json"
-PAYLOAD_NAME = "payload-v2.4.0.zip"
+PAYLOAD_NAME = "payload-v2.5.0.zip"
 DELIVERED_PAYLOAD = f"{DELIVERED_TOOL}/{PAYLOAD_NAME}"
 PAYLOAD_RUNTIME_LOCK = "_程序文件/app/requirements-win-amd64.lock"
 

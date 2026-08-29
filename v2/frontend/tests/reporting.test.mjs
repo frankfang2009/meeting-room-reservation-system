@@ -7,7 +7,10 @@ import {
   formatCancellationRate,
   formatReportDuration,
   reportComposition,
+  reportAnalysisPages,
+  defaultReportAnalysisPage,
   reportExportCount,
+  resetReportAnalysisFilters,
   reportScope,
   reportTagOptions,
   reportTrendModel,
@@ -45,6 +48,33 @@ test("report presentation keeps duration and cancellation semantics explicit", (
   assert.deepEqual(formatReportDuration(90), { value: "1.5", unit: "小时" });
   assert.equal(formatCancellationRate(null), "—");
   assert.equal(formatCancellationRate(0.126), "12.6%");
+});
+
+test("analysis stays progressively revealed and keeps the global date range", () => {
+  assert.deepEqual(reportAnalysisPages(true), [
+    { id: "time", label: "时段分布" },
+    { id: "rooms", label: "笔录室" },
+    { id: "tags", label: "标签" },
+  ]);
+  assert.deepEqual(reportAnalysisPages(false), [
+    { id: "time", label: "时段分布" },
+    { id: "tags", label: "标签" },
+  ]);
+  assert.equal(defaultReportAnalysisPage(true), "rooms");
+  assert.equal(defaultReportAnalysisPage(false), "time");
+  assert.deepEqual(resetReportAnalysisFilters({
+    dateFrom: "2026-08-01",
+    dateTo: "2026-08-16",
+    roomId: "room-1",
+    tagId: "tag-2",
+    query: "王某",
+  }), {
+    dateFrom: "2026-08-01",
+    dateTo: "2026-08-16",
+    roomId: "",
+    tagId: "",
+    query: "",
+  });
 });
 
 test("trend model keeps short ranges weekly and exposes exact clipped intervals", () => {

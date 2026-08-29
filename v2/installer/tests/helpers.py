@@ -43,6 +43,7 @@ def create_inputs(root: Path) -> Tuple[Path, Path]:
     app = program / "app"
     (app / "v2app").mkdir(parents=True)
     (app / "static" / "assets").mkdir(parents=True)
+    (app / "static" / "help").mkdir(parents=True)
     (app / "service.py").write_text(
         "# synthetic service fixture\n",
         encoding="utf-8",
@@ -50,6 +51,10 @@ def create_inputs(root: Path) -> Tuple[Path, Path]:
     (app / "v2app" / "__init__.py").write_text("# fixture\n", encoding="utf-8")
     (app / "static" / "index.html").write_text(
         "<!doctype html><title>V2 fixture</title>\n",
+        encoding="utf-8",
+    )
+    (app / "static" / "help" / "index.html").write_text(
+        "<!doctype html><title>V2 help fixture</title>\n",
         encoding="utf-8",
     )
     (app / "static" / "assets" / "app.js").write_text(
@@ -61,7 +66,7 @@ def create_inputs(root: Path) -> Tuple[Path, Path]:
         json.dumps(
             {
                 "schema": 1,
-                "application": {"name": "meeting-room-v2-frontend", "version": "2.4.0"},
+                "application": {"name": "meeting-room-v2-frontend", "version": "2.5.0"},
                 "packageLock": {"file": "package-lock.json", "sha256": "3" * 64},
                 "components": [
                     {

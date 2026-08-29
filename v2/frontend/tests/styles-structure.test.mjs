@@ -14,6 +14,7 @@ const expectedFiles = [
   "login.css",
   "setup.css",
   "shell.css",
+  "help-center.css",
   "dashboard.css",
   "history.css",
   "rooms.css",
@@ -29,6 +30,7 @@ const expectedFiles = [
   "responsive.css",
   "production-flows.css",
   "system-extensions.css",
+  "idle-states.css",
   "accessibility.css",
 ];
 // V2.2.0 评审修复：数据中心标签四槽位改为与 ui/presentation.js 的 TAG_COLORS
@@ -44,7 +46,11 @@ const expectedFiles = [
 // V2.4.1：通知弹窗层级高于普通到达提醒（production-flows.css）。
 // V2.4.1：交接页隐藏空分组并改为紧凑三列操作区（dashboard.css）。
 // V2.4.1：交接页全空状态使用居中的图标、标题与说明（dashboard.css）。
-const frozenSourceSha256 = "0fa879562d0095d58bd6f80188babe35bba34782f5613ee4c9d4c42fdcafde16";
+// V2.5.0：管理员与员工共用紧凑单列导航节奏，业务/帮助/个人入口统一图标系统（shell.css / responsive.css）。
+// V2.5.0：数据中心默认态收束为指标与趋势，分析/筛选/导出渐进展开（reports.css / responsive.css）。
+// V2.5.0：帮助入口合一；个人偏好与系统安全能力按需展开（help-center/settings/system-extensions.css）。
+// V2.5.0：所有真实空状态共用克制的居中图标、说明和单一恢复动作（idle-states.css）。
+const frozenSourceSha256 = "d515b0c489d711dc3823b1f3df130df828331af7c06077882aa5463df8e83c3c";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);
@@ -115,14 +121,25 @@ test("compact production actions retain at least a 44px hit target", () => {
 
 test("handover rows use a stable three-column action grid and a themed pending status", () => {
   const dashboard = fs.readFileSync(path.join(stylesRoot, "dashboard.css"), "utf8");
+  const idleStates = fs.readFileSync(path.join(stylesRoot, "idle-states.css"), "utf8");
   assert.match(dashboard, /\.handover-ledger-actions \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: 88px 96px 120px;/);
   assert.match(dashboard, /\.handover-waiting \{[\s\S]*?color: var\(--terracotta-text\);[\s\S]*?background: var\(--terracotta-soft\);[\s\S]*?border: 1px solid var\(--terracotta-line\);/);
-  assert.match(dashboard, /\.handover-page-empty \{[\s\S]*?min-height: clamp\(320px, calc\(100vh - 390px\), 520px\);[\s\S]*?display: flex;[\s\S]*?align-items: center;[\s\S]*?text-align: center;/);
-  assert.match(dashboard, /\.handover-page-empty-icon \{[\s\S]*?width: 88px;[\s\S]*?height: 88px;[\s\S]*?color: var\(--terracotta-text\);[\s\S]*?background: var\(--terracotta-soft\);[\s\S]*?border-radius: 50%;/);
-  assert.match(dashboard, /\.handover-page-empty h2 \{[\s\S]*?font-size: 24px;[\s\S]*?font-weight: 600;/);
-  assert.match(dashboard, /\.handover-page-empty p \{[\s\S]*?color: var\(--muted\);[\s\S]*?font-size: 14px;/);
+  assert.match(idleStates, /\.idle-state \{[\s\S]*?display: grid;[\s\S]*?place-items: center;[\s\S]*?text-align: center;/);
+  assert.match(idleStates, /\.handover-page-empty\.idle-state \{[\s\S]*?min-height: clamp\(320px, calc\(100vh - 390px\), 520px\);/);
+  assert.match(idleStates, /\.idle-state--accent \.idle-state__icon \{[\s\S]*?color: var\(--terracotta-text\);/);
+  assert.match(idleStates, /\.idle-state__action \{[\s\S]*?min-height: 46px;/);
   assert.doesNotMatch(dashboard, /\.handover-summary/);
   assert.doesNotMatch(dashboard, /\.handover-ledger-empty/);
+});
+
+test("a primary idle action keeps its button treatment inside page-specific empty shells", () => {
+  const idleStates = fs.readFileSync(path.join(stylesRoot, "idle-states.css"), "utf8");
+  assert.match(idleStates, /\.idle-state button\.idle-state__action \{[\s\S]*?color: var\(--paper-raised\);[\s\S]*?border: 1px solid var\(--ink\);[\s\S]*?background: var\(--ink\);/);
+});
+
+test("the handover empty state is centered within its full-width ledger canvas", () => {
+  const idleStates = fs.readFileSync(path.join(stylesRoot, "idle-states.css"), "utf8");
+  assert.match(idleStates, /\.handover-page-empty\.idle-state \{[^}]*margin: 0 auto;/);
 });
 
 test("stacked notices use one bounded scroll body and a responsive combined footer", () => {
