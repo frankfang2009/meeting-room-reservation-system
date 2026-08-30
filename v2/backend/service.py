@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import datetime as dt
 import errno
-import ipaddress
 import json
 import logging
 import os
 import re
 import secrets
-import socket
 import subprocess
 import sys
 import threading
@@ -262,59 +260,6 @@ def _allowed_service_executables() -> set[str]:
         }
     # Development-only fallback. Production packages always contain runtime.
     return {_normalized_path(Path(sys.executable).resolve())}
-
-
-def _private_lan_url(candidates: set[str], port: int) -> Optional[str]:
-    private_networks = (
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-    )
-    accepted = []
-    for value in candidates:
-        try:
-            address = ipaddress.ip_address(value)
-        except ValueError:
-            continue
-        if address.version != 4 or not any(
-            address in network for network in private_networks
-        ):
-            continue
-        if (
-            address.is_loopback
-            or address.is_link_local
-            or address.is_multicast
-            or address.is_unspecified
-        ):
-            continue
-        accepted.append(address)
-    if not accepted:
-        return None
-    selected = min(accepted, key=int)
-    return f"http://{selected}:{port}"
-
-
-def discover_lan_address(port: int = SERVICE_PORT) -> Optional[str]:
-    candidates: set[str] = set()
-    for host in {socket.gethostname(), socket.getfqdn()}:
-        try:
-            for item in socket.getaddrinfo(host, None, socket.AF_INET):
-                candidates.add(item[4][0])
-        except OSError:
-            continue
-    # UDP connect determines the selected local interface without transmitting
-    # application data. Multiple RFC1918 destinations cover disconnected LANs
-    # whose hostname is not registered in local DNS.
-    for target in ("10.0.0.1", "172.16.0.1", "192.168.0.1"):
-        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            probe.connect((target, 9))
-            candidates.add(probe.getsockname()[0])
-        except OSError:
-            pass
-        finally:
-            probe.close()
-    return _private_lan_url(candidates, port)
 
 
 def _assert_current_executable_allowed() -> str:
@@ -639,7 +584,6 @@ def run_service(identity: dict[str, Any]) -> None:
         "DATA_DIR": str(DATA_DIR),
         "SERVICE_PORT": SERVICE_PORT,
         "STATIC_DIR": str(APP_DIR / "static"),
-        "LAN_ADDRESS": discover_lan_address(SERVICE_PORT),
         "SERVICE_CONTROL": record,
         "SERVICE_STOP_EVENT": stop_event,
         "UPDATE_CHECK_ENABLED": _edition_is_macos(),

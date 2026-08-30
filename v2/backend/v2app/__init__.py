@@ -143,7 +143,6 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         SESSION_REFRESH_EACH_REQUEST=False,
         MAX_CONTENT_LENGTH=256 * 1024,
         JSON_AS_ASCII=False,
-        LAN_ADDRESS=None,
         SERVICE_PORT=8080,
         ACTIVE_BIND_MODE=None,
         UPDATE_CHECK_ENABLED=False,

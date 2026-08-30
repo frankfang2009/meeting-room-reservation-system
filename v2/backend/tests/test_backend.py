@@ -18,8 +18,14 @@ from unittest import mock
 import service as service_entrypoint
 import server as server_entrypoint
 import v2app.db as db_module
+import v2app.services.lan_address as lan_address_module
 from v2app import create_app
 from v2app.services import reservations as reservation_service
+from v2app.services.lan_address import (
+    _private_lan_url,
+    current_lan_address,
+    reset_lan_address_cache,
+)
 from server import determine_bind_host
 
 
@@ -34,6 +40,15 @@ class BackendTestCase(unittest.TestCase):
         self.database = self.data_dir / "reservation.db"
         self.now = datetime(2026, 8, 9, 8, 0, tzinfo=timezone(timedelta(hours=8)))
         self.restart_event = threading.Event()
+        # 管理端点现在按需探测局域网地址；统一钉住探测结果，保证测试
+        # 不依赖宿主机网络，需要真实探测行为的测试自行覆盖此桩。
+        lan_stub = mock.patch.object(
+            lan_address_module, "discover_lan_address", return_value=None
+        )
+        lan_stub.start()
+        self.addCleanup(lan_stub.stop)
+        reset_lan_address_cache()
+        self.addCleanup(reset_lan_address_cache)
         self.app = create_app(
             {
                 "TESTING": True,
@@ -1703,10 +1718,6 @@ class ServiceEntrypointTests(BackendTestCase):
             service_entrypoint, "_remove_pid_if_token", return_value=True
         ), mock.patch.object(
             service_entrypoint,
-            "discover_lan_address",
-            return_value="http://192.168.1.20:8080",
-        ), mock.patch.object(
-            service_entrypoint,
             "_launch_backup_catch_up",
         ) as catch_up, mock.patch.object(
             service_entrypoint.threading, "Thread"
@@ -1716,7 +1727,7 @@ class ServiceEntrypointTests(BackendTestCase):
             service_entrypoint.run_service(identity)
         config = run_once.call_args.kwargs["app_config"]
         self.assertEqual(config["STATIC_DIR"], str(service_entrypoint.SERVICE_DIR / "static"))
-        self.assertEqual(config["LAN_ADDRESS"], "http://192.168.1.20:8080")
+        self.assertNotIn("LAN_ADDRESS", config)
         self.assertEqual(run_once.call_args.args, (8080,))
         catch_up.assert_called_once_with(identity)
         thread_type.assert_called_once()
@@ -1732,7 +1743,7 @@ class ServiceEntrypointTests(BackendTestCase):
 
     def test_lan_address_accepts_only_rfc1918_ipv4(self):
         self.assertEqual(
-            service_entrypoint._private_lan_url(
+            _private_lan_url(
                 {
                     "127.0.0.1",
                     "169.254.1.1",
@@ -1745,7 +1756,7 @@ class ServiceEntrypointTests(BackendTestCase):
             "http://192.168.50.7:8080",
         )
         self.assertIsNone(
-            service_entrypoint._private_lan_url(
+            _private_lan_url(
                 {"127.0.0.1", "169.254.1.1", "8.8.8.8"}, 8080
             )
         )
@@ -1776,6 +1787,80 @@ class ServiceEntrypointTests(BackendTestCase):
             if getattr(handler, "_meeting_room_v2_service", False):
                 root_logger.removeHandler(handler)
                 handler.close()
+
+
+class LanAddressResolutionTests(unittest.TestCase):
+    """局域网地址解析缓存：修复启动竞态把 None 永久冻结的回归边界。"""
+
+    def setUp(self) -> None:
+        reset_lan_address_cache()
+        self.addCleanup(reset_lan_address_cache)
+
+    def expire_cache(self, seconds: float) -> None:
+        with lan_address_module._CACHE_LOCK:
+            lan_address_module._CACHE["checked_at"] = (
+                lan_address_module._CACHE["checked_at"] - seconds
+            )
+
+    def test_missing_address_retries_until_network_is_ready(self):
+        with mock.patch.object(
+            lan_address_module, "discover_lan_address", return_value=None
+        ) as probe:
+            self.assertIsNone(current_lan_address(8080))
+            self.assertIsNone(current_lan_address(8080))
+        self.assertEqual(probe.call_count, 1)
+        # 短 TTL 到期后再探测：对应开机后 Wi-Fi 稍后才就绪的真实时序。
+        self.expire_cache(lan_address_module.MISSING_RETRY_SECONDS)
+        with mock.patch.object(
+            lan_address_module,
+            "discover_lan_address",
+            return_value="http://192.168.2.114:8080",
+        ) as probe:
+            self.assertEqual(
+                current_lan_address(8080), "http://192.168.2.114:8080"
+            )
+        self.assertEqual(probe.call_count, 1)
+
+    def test_resolved_address_is_reused_until_long_ttl_expires(self):
+        with mock.patch.object(
+            lan_address_module,
+            "discover_lan_address",
+            return_value="http://192.168.2.114:8080",
+        ) as probe:
+            self.assertEqual(
+                current_lan_address(8080), "http://192.168.2.114:8080"
+            )
+            self.assertEqual(
+                current_lan_address(8080), "http://192.168.2.114:8080"
+            )
+        self.assertEqual(probe.call_count, 1)
+        self.expire_cache(lan_address_module.RESOLVED_REFRESH_SECONDS + 1)
+        with mock.patch.object(
+            lan_address_module,
+            "discover_lan_address",
+            return_value="http://192.168.2.115:8080",
+        ) as probe:
+            self.assertEqual(
+                current_lan_address(8080), "http://192.168.2.115:8080"
+            )
+        self.assertEqual(probe.call_count, 1)
+
+    def test_port_change_discards_cached_address(self):
+        with mock.patch.object(
+            lan_address_module,
+            "discover_lan_address",
+            side_effect=[
+                "http://192.168.2.114:8080",
+                "http://192.168.2.114:9000",
+            ],
+        ) as probe:
+            self.assertEqual(
+                current_lan_address(8080), "http://192.168.2.114:8080"
+            )
+            self.assertEqual(
+                current_lan_address(9000), "http://192.168.2.114:9000"
+            )
+        self.assertEqual(probe.call_count, 2)
 
 
 class AuthenticatedReservationTestCase(BackendTestCase):
@@ -2632,6 +2717,20 @@ class PublicSystemAndStaticTests(AuthenticatedReservationTestCase):
         api_missing = self.client.get("/api/v1/not-real")
         self.assertEqual(api_missing.status_code, 404)
         self.assertTrue(api_missing.is_json)
+
+    def test_system_endpoints_report_live_lan_address(self):
+        # 局域网地址按请求经解析器现取，不再读启动时冻结的 config 快照。
+        with mock.patch(
+            "v2app.api.system.current_lan_address",
+            return_value="http://192.168.2.114:8080",
+        ) as resolver:
+            status = self.client.get("/api/v1/admin/system").get_json()
+            self.assertEqual(status["lanAddress"], "http://192.168.2.114:8080")
+            diagnostics = self.client.get("/api/v1/admin/diagnostics").get_json()
+            self.assertEqual(
+                diagnostics["lanAddress"], "http://192.168.2.114:8080"
+            )
+        self.assertEqual(resolver.call_args.kwargs["port"], 8080)
 
 
 if __name__ == "__main__":
