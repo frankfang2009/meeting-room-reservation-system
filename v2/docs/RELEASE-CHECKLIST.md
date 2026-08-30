@@ -1,4 +1,4 @@
-# V2.2.3 发布门禁
+# V2 发布门禁与证据
 
 状态说明：`[x]` 只表示下方“本轮可复跑证据”已经通过；`[ ]` 表示仍需 CI、
 Windows 实机或人工验收。自动化通过不等于客户环境通过。只有全部正式外发必需项
@@ -18,6 +18,13 @@ V2 Linux、V2 Windows 与 V2 macOS 门禁，但不制作或上传安装包；`v2
 main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一提交构建全新安装与
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
+
+## V2.5.0 Windows 自动化测试证据（2026-08-29）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E103 | PR #40 最终提交的 [Windows acceptance run 33243388757](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33243388757) | `2d8149c4` 的全新安装 job `99076473165` 与 V2.1.0→V2.5.0 累计升级/健康失败回滚 job `99076473228` 均通过，分别输出 `MRV2_T1=PASS`、`MRV2_T1U=PASS`；该提交与合并/标签 `32a0bbbd` 的 Git tree 同为 `b24daa83…1aa04`。较早的 `3999505b` 升级验收曾在回滚块失败，最终提交加入脱敏 checkpoint 后完整复验通过；失败历史与限制未隐去，详见 [`V2.5.0-WINDOWS-TEST-EVIDENCE.md`](V2.5.0-WINDOWS-TEST-EVIDENCE.md) |
+| E104 | `v2.5.0` 标签 [candidate run 33244067191](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33244067191)（`32a0bbbdbec26c250f02660db5b7aac37a31239b`） | 三车道全绿；Windows 双候选两次独立构建字节一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`，安装包 SHA-256 `4e8a3288…151f5`、累计升级包 `f26ae373…0c22e`；candidate-windows 零参数安装与升级门禁通过。内部 artifact 仅保留 7 天，未上传 GitHub Release；普通用户 Win10/11、UAC/SmartScreen/EDR、真重启、第二台设备与 Authenticode 仍未完成，`formal_external_release_allowed=false` |
 
 ## V2.4.0 发布与最终真机收口证据（2026-08-19）
 
