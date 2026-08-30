@@ -1,8 +1,9 @@
 # 会议室预约系统 V2.5.1
 
 V2 是一个全新安装基准，不读取或迁移 V1 数据库。它由同源部署的 React 前端、
-Flask JSON API 和 SQLite 数据库组成。Windows 版面向单位 Domain/Private 局域网
-主机与桌面浏览器；macOS 自托管版支持 macOS 13 及以上 Apple Silicon，建议本机使用。
+Flask JSON API 和 SQLite 数据库组成。Windows 版支持 Windows 10/11 64 位 x86-64
+（AMD64）主机的 Domain/Private 局域网部署；Windows ARM64 与 32 位不在当前支持矩阵。
+macOS 自托管版支持 macOS 13 及以上 Apple Silicon，建议本机使用。
 生产包自带 Python 3.13.14、Flask 3.1.3 与 Waitress 3.0.2；客户机器不需安装 Python
 或 Node.js。开发与完整门禁另固定 Node.js 22.17.1。
 
@@ -22,7 +23,7 @@ Flask JSON API 和 SQLite 数据库组成。Windows 版面向单位 Domain/Priva
 - 员工数据中心与 CSV 导出仅限本人；管理员可查看全单位或指定人员，并按当前范围导出办件明细。
 - 公开大屏只使用服务端白名单投影，绝不返回案号、备注、标签、部门或工作人员身份。
 - 首次设置完成前只允许回环地址访问，完成后才可开放局域网服务。
-- 正式安装固定在 `%ProgramFiles%\会议室预约系统V2`；普通用户不能写程序，也不能
+- Windows 候选安装固定在 `%ProgramFiles%\会议室预约系统V2` 并使用 UAC；普通用户不能写程序，也不能
   读取数据库、secret、PID、日志或备份。
 - 已完成设置后数据库缺失、为空或损坏时必须 fail-closed，不得创建空库或重新开放
   首次设置；恢复只通过本机 UAC 工具执行。

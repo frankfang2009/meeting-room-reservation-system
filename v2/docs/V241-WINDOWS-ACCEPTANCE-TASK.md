@@ -3,8 +3,9 @@
 > **已完成并被 V2.5 流程取代的历史任务书，禁止作为当前执行入口。** 本文保留
 > V2.4.1 hardening 复验范围与旧证据要求。文中的分支、产品锚点、SHA、候选文件名、
 > 测试计数和 PowerShell 步骤不得用于 V2.5 当前候选，也不得作为当前放行证据。
-> 当前 Windows 普通用户实机验收唯一入口是
-> `V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md`，当前发布判定以
+> 当前 V2.5 全新安装实机验收入口是
+> `V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md`；累计升级实机门禁仍未被该指南覆盖，
+> 需要另建当前任务书，不得复用本文。当前发布判定以
 > `RELEASE-CHECKLIST.md` 为准；`formal_external_release_allowed=false` 继续有效。
 >
 > 本任务书用于真实 Windows 测试机复核 V2.4.1 hardening 分支。执行者只做验收和

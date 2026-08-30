@@ -6,7 +6,7 @@
 
 A self-hosted meeting and interview room reservation system for trusted local networks. The current V2.5.0 line uses React, Flask, and SQLite and includes a shared calendar, reservation workflows and handovers, a Data Center with scoped CSV exports, a privacy-minimized public display, administration, backup and recovery, a complete offline help center, Windows fresh-install/offline-update tooling, and a downloadable macOS self-host edition.
 
-> This repository publishes source code, not a production Windows installer. V2.5.0 Windows installers and update packages have not completed ordinary-user Windows 10/11 acceptance or Authenticode signing; automated Windows artifacts are internal candidates only. The macOS arm64 self-host edition is formally distributed through [GitHub Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) (unsigned; first launch requires macOS' per-app approval flow).
+> This repository publishes source code, not a production Windows installer. V2.5.0 Windows installers and update packages target 64-bit Windows 10/11 on x86-64 (AMD64); Windows ARM64 and 32-bit systems are outside the current support matrix. They have not completed ordinary-user physical acceptance or Authenticode signing, so automated Windows artifacts are internal candidates only. The macOS arm64 self-host edition is formally distributed through [GitHub Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) (unsigned; first launch requires macOS' per-app approval flow).
 
 ## Highlights
 

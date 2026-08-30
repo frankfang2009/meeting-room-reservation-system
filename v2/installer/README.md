@@ -3,7 +3,7 @@
 本目录实现 V2.5.1 全新安装、V2.1.0 起源离线累计升级与 macOS 自托管便携包，
 不包含 V1 迁移、导入、目录搜索或自动删除。
 
-正式 Windows 与 macOS 包固定携带 Python 3.13.14、Flask 3.1.3、Waitress 3.0.2；
+Windows 内部候选包与 macOS 正式发布包均固定携带 Python 3.13.14、Flask 3.1.3、Waitress 3.0.2；
 构建与完整门禁固定使用 Node.js 22.17.1。客户机器不依赖系统 Python/Flask/Node。
 
 ## 先组装客户 payload
