@@ -1,5 +1,11 @@
 # T2 Windows 实机测试任务书（测试机代理执行版，2026-08-18）
 
+> **已取代的历史任务书，禁止作为当前执行入口。** 本文只保留 V2.3.0 阶段的测试
+> 设计与当时证据线索。文中的 run id、过期 artifact、分支、SHA、候选文件名、下载命令
+> 和清理步骤都不得用于 V2.5 当前候选。当前 Windows 普通用户实机验收唯一入口是
+> `V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md`，当前发布判定以
+> `RELEASE-CHECKLIST.md` 为准；`formal_external_release_allowed=false` 继续有效。
+>
 > 本文件是给运行在真实 Windows 测试机上的编码代理（ZCode / Z.ai / Codex）的完整任务书。
 > 你应当已经把本仓库克隆到 `D:\mrv2-t2\repo` 并 checkout 到分支 `codex/t2-windows-task`
 > （基于 main `d4fb9adc` = V2.3.0，已合并未打标签）。先读完本文件再动手。
