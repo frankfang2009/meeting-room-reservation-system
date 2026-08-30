@@ -30,7 +30,7 @@
 
 使用 Apple Silicon（M 系列）Mac 的用户无需安装 Python 或 Node：
 
-1. 从 [Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) 下载 `会议室预约系统-V*-macOS-arm64.dmg`，并核对发布说明中的 SHA-256。
+1. 从 [Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) 下载 `meeting-room-v2-<版本>-macOS-arm64.dmg`，并核对发布说明中的 SHA-256。
 2. 双击挂载 DMG，把 `会议室预约系统V2-macOS` 文件夹拖到「应用程序」或任意可写位置（不要在 DMG 里直接运行），然后推出 DMG。
 3. 首次双击 `启动.command` 时 macOS 会拦截：右键 →「打开」→ 再点「打开」放行（只需一次）。
 4. 浏览器自动打开 `http://127.0.0.1:8080`，按向导创建首名管理员、笔录室和工作时间即可使用。
@@ -40,7 +40,9 @@
 
 ## 快速开始（开发环境）
 
-完整本地门禁固定使用 Python 3.13.14、Node.js 22.17.1、npm 和 [uv](https://docs.astral.sh/uv/)。
+完整本地门禁固定使用 Python 3.13.14、Node.js 22.17.1、npm 和 [uv](https://docs.astral.sh/uv/)；
+后端直接依赖固定为 Flask 3.1.3 与 Waitress 3.0.2。生产包自带冻结运行时，普通用户
+无需另装 Python 或 Node.js。
 
 ```bash
 v2/scripts/bootstrap-dev.sh
@@ -67,7 +69,7 @@ cd ../backend && .venv/bin/python server.py
 
 - `v2/frontend/`：React/Vite 正式前端。
 - `v2/backend/`：Flask API、认证权限、SQLite 数据、备份和运行服务。
-- `v2/installer/`：V2 全新安装、可复现候选包和未来 V2-only 更新安全基础。
+- `v2/installer/`：Windows 全新安装、离线累计升级候选工具和 macOS 自托管打包。
 - `v2/docs/`：产品、API、架构、安全和发布契约。
 - `02_开发工作区/`：V1 历史源码与升级验证材料，仅作兼容维护和审计证据，不接受新功能。
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从已验收后端与前端 dist 组装 V2.2.0 客户程序负载。"""
+"""从已验收后端与前端 dist 组装当前 V2 客户程序负载。"""
 
 from __future__ import annotations
 
@@ -205,7 +205,7 @@ def assemble_payload(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="组装 V2.2.0 客户程序 payload")
+    parser = argparse.ArgumentParser(description="组装当前 V2 客户程序 payload")
     parser.add_argument("--backend-root", type=Path, required=True)
     parser.add_argument("--frontend-dist", type=Path, required=True)
     parser.add_argument("--frontend-lock", type=Path, required=True)

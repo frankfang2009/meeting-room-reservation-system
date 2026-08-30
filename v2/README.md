@@ -1,7 +1,10 @@
 # 会议室预约系统 V2.5.1
 
 V2 是一个全新安装基准，不读取或迁移 V1 数据库。它由同源部署的 React 前端、
-Flask JSON API 和 SQLite 数据库组成，面向单位 Windows 主机及局域网桌面浏览器。
+Flask JSON API 和 SQLite 数据库组成。Windows 版面向单位 Domain/Private 局域网
+主机与桌面浏览器；macOS 自托管版支持 macOS 13 及以上 Apple Silicon，建议本机使用。
+生产包自带 Python 3.13.14、Flask 3.1.3 与 Waitress 3.0.2；客户机器不需安装 Python
+或 Node.js。开发与完整门禁另固定 Node.js 22.17.1。
 
 ## 目录
 
@@ -31,7 +34,9 @@ Flask JSON API 和 SQLite 数据库组成，面向单位 Windows 主机及局域
 ## 发布边界
 
 自动化测试不能替代普通用户 Windows 10/11 的 UAC、DACL、SmartScreen/EDR、计划
-任务、备份恢复、V2.1.0→当前版本离线升级、重启和第二台局域网电脑验收。V2 仍使用可信内网 HTTP，且
-当前没有 Authenticode 证书；完成实机与签名门禁前，任何产物都只能标记为候选版。
+任务、备份恢复、V2.1.0→当前版本离线升级、重启和第二台局域网电脑验收。V2 仍使用
+可信内网 HTTP，且当前没有 Authenticode 证书；完成实机与签名门禁前，Windows 安装包
+与累计升级包只能标记为内部候选。macOS arm64 自托管版以项目 GitHub Release 为正式
+分发渠道，未签名首启边界与 SHA-256 核验要求见发布说明。
 
 部署前必须阅读 [`docs/SECURITY-DEPLOYMENT.md`](docs/SECURITY-DEPLOYMENT.md)。

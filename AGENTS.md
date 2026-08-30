@@ -1,6 +1,6 @@
 # Repository working rules
 
-- `v2/` is the active Meeting Room Reservation System V2.1.0 codebase.
+- `v2/` is the active Meeting Room Reservation System V2.5.0 codebase.
 - The repository is prepared for public source collaboration under Apache-2.0. Never commit
   customer databases, backups, logs, credentials, private screenshots, or real personal data.
 - Public source availability does not authorize publishing an unsigned Windows installer. Keep
