@@ -116,5 +116,5 @@
 - [x] Run the full `check.sh`, help-center tests, reproducible help build, targeted
   stale-claim searches, and `git diff --check`.
 - [x] Obtain a fresh read-only subagent final review and resolve any validated findings.
-- [ ] Push the rebased documentation branch, merge its green PR, and delete the merged
-  remote branch.
+- [x] Push the rebased documentation branch, merge its green PR #50, and delete the
+  merged remote branch.
