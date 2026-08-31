@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import types
 import unittest
@@ -727,19 +728,137 @@ class UpdateCoreTests(unittest.TestCase):
             "-TaskName $env:MRV2_BACKUP_TASK_NAME -ErrorAction Stop"
         )
         stopped_assertion = (
-            "if ([string]$stoppedMain.State -eq 'Running' -or "
-            "[string]$stoppedBackup.State -eq 'Running')"
+            "if ([string]$stoppedMain.State -ne 'Disabled' -or "
+            "[string]$stoppedBackup.State -ne 'Disabled' -or "
+            "$runningTaskPaths -contains $mainTaskPath -or "
+            "$runningTaskPaths -contains $backupTaskPath)"
         )
+        stopped_success = (
+            "if ([string]$stoppedMain.State -eq 'Disabled' -and "
+            "[string]$stoppedBackup.State -eq 'Disabled' -and "
+            "$runningTaskPaths -notcontains $mainTaskPath -and "
+            "$runningTaskPaths -notcontains $backupTaskPath)"
+        )
+        running_instances = (
+            "$runningTaskPaths=@($scheduler.GetRunningTasks(1) | "
+            "ForEach-Object { [string]$_.Path })"
+        )
+        bounded_wait = "$stopWatch=[Diagnostics.Stopwatch]::StartNew()"
+        bounded_condition = "while ($stopWatch.Elapsed.TotalSeconds -lt 30)"
+        bounded_attempts = "if ($stopAttempts -ge 120) { break }"
+        retry_pause = "Start-Sleep -Milliseconds 250"
         self.assertIn(strict_stop, script)
         self.assertIn(strict_disable, script)
+        self.assertIn(bounded_wait, script)
+        self.assertIn(bounded_condition, script)
+        self.assertIn(bounded_attempts, script)
+        self.assertIn(retry_pause, script)
         self.assertEqual(script.count(main_postcondition), 1)
         self.assertEqual(script.count(backup_postcondition), 1)
         self.assertIn(stopped_assertion, script)
+        self.assertIn(stopped_success, script)
+        self.assertIn("New-Object -ComObject 'Schedule.Service'", script)
+        self.assertIn(running_instances, script)
         self.assertLess(script.index(strict_stop), script.index(strict_disable))
-        self.assertLess(script.index(strict_disable), script.index(main_postcondition))
+        self.assertLess(script.index(strict_disable), script.index(bounded_wait))
+        self.assertLess(script.index(bounded_wait), script.index(main_postcondition))
         self.assertLess(script.index(main_postcondition), script.index(backup_postcondition))
-        self.assertLess(script.index(backup_postcondition), script.index(stopped_assertion))
+        self.assertLess(script.index(backup_postcondition), script.index(retry_pause))
+        self.assertLess(script.index(retry_pause), script.index(stopped_assertion))
         self.assertLess(script.index(stopped_assertion), script.index("ConvertTo-Json"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell state-machine test")
+    def test_windows_fail_closed_stop_executes_transition_and_timeout_states(self) -> None:
+        controller = WindowsUpdateSystemController()
+        captured: dict[str, object] = {}
+
+        def capture(script, environment):
+            captured["script"] = script
+            captured["environment"] = environment
+            raise OSError("capture production PowerShell")
+
+        controller.base._run_powershell = capture  # type: ignore[method-assign]
+        with self.assertRaisesRegex(OSError, "capture production PowerShell"):
+            controller.capture_and_stop_fail_closed(load_v2_identity(self.install_root))
+
+        harness = r"""
+$script:taskReads=@{}
+$script:schedulerReads=0
+function Get-ItemProperty {
+  param([string]$LiteralPath,[object]$ErrorAction)
+  [pscustomobject]@{InstallRoot=$env:MRV2_ROOT;InstallId=$env:MRV2_INSTALL_ID;SecurityInstallId=$env:MRV2_INSTALL_ID}
+}
+function Get-ScheduledTask {
+  param([string]$TaskPath,[string]$TaskName,[object]$ErrorAction)
+  $reads=1
+  if ($script:taskReads.ContainsKey($TaskName)) { $reads=[int]$script:taskReads[$TaskName]+1 }
+  $script:taskReads[$TaskName]=$reads
+  $state=if ($reads -eq 1) { 'Running' } else { 'Disabled' }
+  [pscustomobject]@{Description=('MeetingRoomReservationV2:'+$env:MRV2_INSTALL_ID);Principal=[pscustomobject]@{UserId='SYSTEM'};State=$state}
+}
+function Get-NetFirewallRule {
+  param([string]$DisplayName,[object]$ErrorAction)
+  [pscustomobject]@{Description=('MeetingRoomReservationV2:'+$env:MRV2_INSTALL_ID);Enabled='True'}
+}
+function Stop-ScheduledTask { param([object]$InputObject,[object]$ErrorAction) }
+function Disable-ScheduledTask { param([object]$InputObject,[object]$ErrorAction) }
+function Disable-NetFirewallRule { param([object]$InputObject,[object]$ErrorAction) }
+function Start-Sleep { param([int]$Milliseconds) }
+function New-Object {
+  param([string]$ComObject)
+  $scheduler=[pscustomobject]@{}
+  $scheduler | Add-Member -MemberType ScriptMethod -Name Connect -Value { }
+  $scheduler | Add-Member -MemberType ScriptMethod -Name GetRunningTasks -Value {
+    param([int]$Flags)
+    if ($Flags -ne 1) { throw 'RUNNING_TASK_FLAGS_MUST_INCLUDE_HIDDEN' }
+    $script:schedulerReads += 1
+    if ($env:MRV2_TEST_MODE -eq 'persistent-running' -or $script:schedulerReads -eq 1) {
+      return @([pscustomobject]@{Path=($env:MRV2_TASK_PATH.TrimEnd('\')+'\'+$env:MRV2_TASK_NAME)})
+    }
+    return @()
+  }
+  return $scheduler
+}
+try {
+""" + str(captured["script"]) + r"""
+} catch {
+  [Console]::Error.WriteLine('STATE_MACHINE_BLOCKED')
+  exit 17
+}
+"""
+        powershell = shutil.which("powershell.exe")
+        self.assertIsNotNone(powershell)
+        environment = os.environ.copy()
+        environment.update(captured["environment"])  # type: ignore[arg-type]
+
+        def run_state_machine(mode: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    harness,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment | {"MRV2_TEST_MODE": mode},
+                timeout=10,
+            )
+
+        transition = run_state_machine("transition")
+        self.assertEqual(transition.returncode, 0, transition.stderr)
+        state = json.loads(transition.stdout.strip().splitlines()[-1])
+        self.assertTrue(state["service_running"])
+
+        timed_out = run_state_machine("persistent-running")
+        self.assertEqual(timed_out.returncode, 17, timed_out.stderr)
+        self.assertIn("STATE_MACHINE_BLOCKED", timed_out.stderr)
 
     def test_precommit_failure_restores_program_data_version_and_running_state(self) -> None:
         service = self.install_root / "_程序文件" / "app" / "service.py"
