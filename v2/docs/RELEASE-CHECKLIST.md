@@ -223,7 +223,7 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 
 - [x] 历史 `v2.5.0` 标签已在 GitHub Actions 完成 Linux 双构建、Windows hosted candidate gate 与 macOS 候选验收并归档 artifact。（E104）
 - [x] V2.5.1 合并前 CI 已覆盖 Linux/macOS/Windows、Windows 全新安装以及 V2.1.0→V2.5.1 累计升级与健康失败回滚；其中 PR #51 的 [run 33369760223](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33369760223) 验证了回滚前任务定义为 `Disabled` 且活动实例归零的 fail-closed 修复；正式标签候选 SHA 与制品摘要已登记为 E106。
-- [ ] 按当前 [`V2.5.1 Windows 内部复测清单`](V2.5.1-WINDOWS-INTERNAL-RETEST-CHECKLIST.md) 在无客户数据的专用测试机复测安装、核心业务、权限、备份恢复、真实重启与局域网地址；若发现产品 Bug，保留 V2.5.1 标签/SHA 不变并以 V2.5.2 修复发布。
+- [ ] 按当前 [`V2.5.1 Windows 内部快速复测清单`](V2.5.1-WINDOWS-INTERNAL-RETEST-CHECKLIST.md) 在无客户数据的专用测试机完成 8 项关键复测；若发现产品 Bug，保留 V2.5.1 标签/SHA 不变并以 V2.5.2 修复发布。
 - [ ] 普通用户在 Windows 10 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 普通用户在 Windows 11 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 从最终冻结 V2.1.0 实机安装执行 V2.5.1 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
