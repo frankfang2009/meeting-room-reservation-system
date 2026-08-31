@@ -30,9 +30,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn("formal_external_release_allowed=false", security)
 
     def test_product_and_frontend_versions_are_v2(self) -> None:
-        self.assertEqual(read("VERSION").strip(), "2.5.0")
+        self.assertEqual(read("VERSION").strip(), "2.5.1")
         package = json.loads(read("frontend/package.json"))
-        self.assertEqual(package["version"], "2.5.0")
+        self.assertEqual(package["version"], "2.5.1")
         self.assertEqual(package["name"], "meeting-room-v2-frontend")
         self.assertEqual(
             package["scripts"]["build"],
@@ -40,10 +40,10 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
             "dist/client/help/index.html",
         )
         self.assertIn("node v2/docs/help/test.mjs", read("scripts/check.sh"))
-        self.assertIn('PRODUCT_VERSION = "V2.5.0"', read("backend/v2app/__init__.py"))
+        self.assertIn('PRODUCT_VERSION = "V2.5.1"', read("backend/v2app/__init__.py"))
         installer = read("installer/installer_core.py")
-        self.assertIn('VERSION = "2.5.0"', installer)
-        self.assertIn('RELEASE = "V2.5.0"', installer)
+        self.assertIn('VERSION = "2.5.1"', installer)
+        self.assertIn('RELEASE = "V2.5.1"', installer)
 
     def test_help_center_gate_is_a_real_workflow_step(self) -> None:
         # 帮助内容门禁必须在 CI 与候选车道中真实执行，不能只靠 check.sh 文本引用
@@ -359,7 +359,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
 
     def test_shipped_windows_guide_uses_current_product_version(self) -> None:
         guide = read("installer/payload_templates/使用说明.txt")
-        self.assertTrue(guide.startswith("会议室预约系统 V2.5.0 使用说明"))
+        self.assertTrue(guide.startswith("会议室预约系统 V2.5.1 使用说明"))
         self.assertNotIn("V2.2.0", guide)
 
     def test_public_frontend_contract_rejects_extra_fields(self) -> None:
@@ -382,7 +382,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertNotIn("rglob(\"reservation.db\")", core)
 
     def test_windows_candidate_gate_distinguishes_infrastructure_failures(self) -> None:
-        launcher = read("installer/安装V2.5.0.bat")
+        launcher = read("installer/安装V2.5.1.bat")
         workflow = (V2_ROOT.parent / ".github/workflows/release-candidate.yml").read_text(
             encoding="utf-8"
         )
@@ -454,7 +454,7 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         updater = read("installer/update_core.py")
         builder = read("installer/build_update_package.py")
         entry = read("installer/update.py")
-        launcher = read("installer/升级到V2.5.0.bat")
+        launcher = read("installer/升级到V2.5.1.bat")
         installer_readme = read("installer/README.md")
         self.assertIn("PRODUCTION_UPDATE_SUPPORTED = True", updater)
         self.assertIn('SUPPORTED_SOURCE_VERSIONS = frozenset({"2.1.0"})', updater)
