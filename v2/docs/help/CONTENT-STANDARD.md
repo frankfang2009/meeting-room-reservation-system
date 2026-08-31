@@ -29,7 +29,7 @@
 代码静态阅读也不是终点：权限、配置、当前时间、预约状态、平台和数据迁移都可能改变运行结果。复核时至少记录：
 
 ```yaml
-verified_version: V2.5.0
+verified_version: V2.5.1
 verified_at: 2026-08-20
 verified_scenario: employee / 未开始预约 / 时段冲突
 source_code: [前端文件#函数, 后端文件#函数]

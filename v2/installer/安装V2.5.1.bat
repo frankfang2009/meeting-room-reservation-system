@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-title 会议室预约系统 V2.5.0 全新安装
+title 会议室预约系统 V2.5.1 全新安装
 
 set "INSTALL_TOOL=%~dp0_V2安装工具"
 set "PYTHONUTF8=1"
@@ -29,7 +29,7 @@ if not "%INSTALL_RC%"=="0" if not "%INSTALL_RC%"=="1" if not "%INSTALL_RC%"=="3"
 echo.
 if "%INSTALL_RC%"=="0" (
     echo MRV2_GATE=PRODUCT_RC_0
-    echo V2.5.0 安装已经完成，请按浏览器提示完成首次设置。
+    echo V2.5.1 安装已经完成，请按浏览器提示完成首次设置。
 ) else if "%INSTALL_RC%"=="1" (
     echo MRV2_GATE=PRODUCT_RC_1
     echo 安装包或安装环境未通过产品安全校验，请保留当前输出和安装日志。
@@ -59,7 +59,7 @@ exit /b %INSTALL_RC%
 echo.
 echo MRV2_GATE=MISSING_TOOL_DIR
 echo V2 安装工具目录缺失，请先完整解压收到的 ZIP 后再双击安装。
-echo 不要单独复制“安装V2.5.0.bat”。
+echo 不要单独复制“安装V2.5.1.bat”。
 echo.
 if not "%MEETING_ROOM_V2_INSTALL_NO_PAUSE%"=="1" pause
 exit /b 11

@@ -574,6 +574,21 @@ try {
         $rollbackCheckpoint = "candidate-returned"
         $failedUpgrade = Invoke-CandidateBat $faultedUpdate "升级到V$Script:TargetVersion.bat" "YES"
         $rollbackCheckpoint = "candidate-exit-code"
+        # 健康失败段禁止输出候选 stdout/stderr（可能含现场路径），但需要留下
+        # 足以区分普通回滚、回滚未安全收尾和误成功的脱敏状态，避免把真实回归
+        # 当作 hosted runner 偶发失败反复重跑。
+        $updaterResult1 = $failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=1")
+        $updaterResult6 = $failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=6")
+        $versionIsBaseline = (Get-Content -LiteralPath $Script:VersionFile -Raw -Encoding UTF8).Trim() -ceq $Script:BaselineVersion
+        $transactionPresent = Test-Path -LiteralPath (Join-Path $Script:ProgramDir "update-transaction.json") -PathType Leaf
+        $healthAfterCandidate = Get-HealthJson
+        $healthRestored = ($null -ne $healthAfterCandidate) -and ($healthAfterCandidate.ok -eq $true)
+        Write-Host "MRV2_T1U=ROLLBACK_CANDIDATE_EXIT_CODE:$($failedUpgrade.Code)"
+        Write-Host "MRV2_T1U=ROLLBACK_UPDATER_RESULT_1:$updaterResult1"
+        Write-Host "MRV2_T1U=ROLLBACK_UPDATER_RESULT_6:$updaterResult6"
+        Write-Host "MRV2_T1U=ROLLBACK_VERSION_IS_BASELINE:$versionIsBaseline"
+        Write-Host "MRV2_T1U=ROLLBACK_TRANSACTION_PRESENT:$transactionPresent"
+        Write-Host "MRV2_T1U=ROLLBACK_HEALTH_RESTORED:$healthRestored"
         Assert-True ($failedUpgrade.Code -eq 1) "health-failure update returned $($failedUpgrade.Code) instead of 1"
         $rollbackCheckpoint = "updater-result-marker"
         Assert-True ($failedUpgrade.Output -match [regex]::Escape("MRV2_UPDATER_RESULT=1")) "health-failure update missed updater result marker"
