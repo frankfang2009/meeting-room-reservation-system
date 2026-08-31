@@ -7,8 +7,9 @@
 当前产品代码位于 v2/，产品版本为 V2.5.1。V2 是全新安装产品，不导入、不读取、
 不删除或覆盖 V1 的账号、笔录室、预约、配置和数据库。
 
-macOS 13 及以上、Apple Silicon（arm64）使用 GitHub Release 中的当前 macOS
-自托管包；这是当前正式分发渠道。Windows 10/11 64 位 x86-64（AMD64）安装包和累计
+macOS 13 及以上、Apple Silicon（arm64）使用 GitHub Release 中的 macOS
+自托管包；这是正式分发渠道。在 V2.5.1 标签与 Release 完成前，latest 正式二进制仍是
+历史 V2.5.0，V2.5.1 是已实现、待发布的源码主线。Windows 10/11 64 位 x86-64（AMD64）安装包和累计
 升级包仍是内部候选；Windows ARM64 与 32 位不在当前支持矩阵，
 在普通用户实机验收与 Authenticode 签名完成前不得正式外发，且
 formal_external_release_allowed=false。
