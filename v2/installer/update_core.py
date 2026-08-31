@@ -823,9 +823,22 @@ try {
 foreach ($task in @($main,$backup)) { Stop-ScheduledTask -InputObject $task -ErrorAction Stop }
 foreach ($task in @($main,$backup)) { Disable-ScheduledTask -InputObject $task -ErrorAction Stop | Out-Null }
 foreach ($rule in @($manual,$background)) { Disable-NetFirewallRule -InputObject $rule -ErrorAction Stop }
-$stoppedMain=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
-$stoppedBackup=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_BACKUP_TASK_NAME -ErrorAction Stop
-if ([string]$stoppedMain.State -eq 'Running' -or [string]$stoppedBackup.State -eq 'Running') { throw 'V2 任务停止状态无法验证。' }
+$scheduler=New-Object -ComObject 'Schedule.Service'
+$scheduler.Connect()
+$mainTaskPath=$env:MRV2_TASK_PATH.TrimEnd('\')+'\'+$env:MRV2_TASK_NAME
+$backupTaskPath=$env:MRV2_TASK_PATH.TrimEnd('\')+'\'+$env:MRV2_BACKUP_TASK_NAME
+$stopWatch=[Diagnostics.Stopwatch]::StartNew()
+$stopAttempts=0
+do {
+  $stoppedMain=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_TASK_NAME -ErrorAction Stop
+  $stoppedBackup=Get-ScheduledTask -TaskPath $env:MRV2_TASK_PATH -TaskName $env:MRV2_BACKUP_TASK_NAME -ErrorAction Stop
+  $runningTaskPaths=@($scheduler.GetRunningTasks(1) | ForEach-Object { [string]$_.Path })
+  if ([string]$stoppedMain.State -eq 'Disabled' -and [string]$stoppedBackup.State -eq 'Disabled' -and $runningTaskPaths -notcontains $mainTaskPath -and $runningTaskPaths -notcontains $backupTaskPath) { break }
+  $stopAttempts += 1
+  if ($stopAttempts -ge 120) { break }
+  Start-Sleep -Milliseconds 250
+} while ($stopWatch.Elapsed.TotalSeconds -lt 30)
+if ([string]$stoppedMain.State -ne 'Disabled' -or [string]$stoppedBackup.State -ne 'Disabled' -or $runningTaskPaths -contains $mainTaskPath -or $runningTaskPaths -contains $backupTaskPath) { throw 'V2 任务停止状态无法验证。' }
 """
         script += r"""
 $state | ConvertTo-Json -Compress
