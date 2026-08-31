@@ -5,6 +5,7 @@
 | 版本 | 状态 |
 | --- | --- |
 | `main` 上的 V2.5.1 源码 | 接受安全报告 |
+| V2.5.1 macOS arm64 GitHub Release | 当前正式公开发布；未签名，须核对 Release SHA-256 |
 | V2.5.0 macOS arm64 GitHub Release（历史正式版） | 正式公开发布；未签名，须核对 Release SHA-256 |
 | V2.5.1 Windows 安装/升级候选 | 非正式发布，仅用于内部验证 |
 | V1.x | 历史兼容维护，不接受新功能 |

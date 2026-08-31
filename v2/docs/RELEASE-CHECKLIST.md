@@ -5,8 +5,8 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
 自 V2.2.1 起 `formal_external_release_allowed` 按交付物分类适用：Windows 安装包与
 累计升级包继续适用上述全部门禁；macOS 自托管版适用独立 macOS 门禁（基础验收见
-“V2.2.1 macOS 自托管版证据”；V2.5.0 最近一次发布证据保留为历史），其正式
-分发渠道是 GitHub Release。V2.5.1 的正式发布证据须在标签候选与 Release 完成后另行登记。
+“V2.2.1 macOS 自托管版证据”；V2.5.0 发布证据保留为历史），其正式
+分发渠道是 GitHub Release。V2.5.1 的标签候选与正式发布证据见 E106、E107。
 
 仓库公开仅表示 Apache-2.0 源代码可访问，不代表任何 GitHub Actions 产物或未签名
 候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件；Windows 候选不得自动
@@ -37,6 +37,13 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | 编号 | 命令或证据 | 实际结果 |
 | --- | --- | --- |
 | E105 | GitHub Release [v2.5.0](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.5.0) 与 latest 状态复核 | 正式发布（非草稿、非预发）并设为 latest；仅附四项 macOS arm64 资产。`meeting-room-v2-2.5.0-macOS-arm64.dmg` SHA-256 为 `b00679ebd990cd741fb7650bfd810f406725ac0408082b4b4b1ba72b24dd2094`，ZIP SHA-256 为 `65bf07132d7706d21601adc22c24556bc9bc887057a26f9bd21f6fee6dd14928`；ZIP 校验侧车 GitHub digest 为 `1cb812866bab168a8e4dddf8fab2102a6d782fdc5a5815b6eabef882e120516d`，`latest-macos.json` digest 为 `6146dee42e4df4754b2061f45b721253167a53dab9ee098070867630abbee4e8`。Windows 双候选未上传 Release，仍保持 `formal_external_release_allowed=false` |
+
+## V2.5.1 标签候选与正式发布证据（2026-08-31）
+
+| 编号 | 命令或证据 | 实际结果 |
+| --- | --- | --- |
+| E106 | `v2.5.1` 轻量标签 [candidate run 33372046159](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33372046159)（`c6947d2578bd8fa9c6a01dbfbf307a8f4ab4911a`） | candidate-linux `99425137684`、candidate-windows `99425476870`、candidate-macos `99425137851` 三车道全绿；Windows 双候选独立双构建字节一致，零参数安装/累计升级入口门禁通过。下载标签产物后重新计算并与侧车一致：安装包 SHA-256 `b2ee65a0eb84867c73e9dd90d53a74bee3bca49e182c3fe46023525e10316c23`，累计升级包 `4ac771cd48dc4fed836170e2e6b35a9fa230b7f2a003e456789082b2188adce0`，macOS ZIP `1d256d686a77463c0b95dea2b8b6b3f32bc7c2141df21faedddf2213d1b64853`，DMG `f2c0024eaf05226c640be2d9e301e97375294f4557e4c04bc5bae0b8ebdb4895`；三个 ZIP 均通过反向完整性检查。Windows artifact 只保留 7 天并复制到本地受控内部目录，不上传 GitHub Release，`formal_external_release_allowed=false` |
+| E107 | GitHub Release [v2.5.1](https://github.com/frankfang2009/meeting-room-reservation-system/releases/tag/v2.5.1)、latest API 与 `releases/latest/download/latest-macos.json` 复核 | 正式发布（非草稿、非预发）并设为 latest；仅附四项 macOS arm64 资产。DMG/ZIP SHA-256 分别为 `f2c0024eaf05226c640be2d9e301e97375294f4557e4c04bc5bae0b8ebdb4895` / `1d256d686a77463c0b95dea2b8b6b3f32bc7c2141df21faedddf2213d1b64853`；ZIP 校验侧车 GitHub digest 为 `c3cc6a1b66706d307013ce9004dd2011b3dcdc448aa58003d978f5495f5b2d7c`，`latest-macos.json` digest 为 `1d0c9454f6c1fb63d02c39bc0616d0131991a387fd5a2b10bcfcd0b5f3abb0e5`，公开 latest JSON 返回 version/tag `2.5.1`/`v2.5.1`。Windows 双候选未上传 Release，仅在发布说明和本证据表登记 SHA，未签名且继续受 `formal_external_release_allowed=false` 约束 |
 
 ## V2.4.0 发布与最终真机收口证据（2026-08-19）
 
@@ -198,7 +205,7 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [x] 普通用户错误提示覆盖服务未启动、非 JSON、权限不足、session 失效、数据库恢复、端口冲突及备份/恢复失败，详细异常只写日志。（E1、E3、E4）
 - [x] 正式 Runtime 钉死 CPython 3.13.14 官方 `embed-amd64` URL/SHA、requirements lock 摘要和完整 runtime 树；伪 PE、替换身份和合成 fixture 不能进入正式 `Bundle.load`。（E2、E3、E6、E9）
 - [x] 制品级 CycloneDX SBOM 与许可证侧车生成逻辑覆盖 CPython/Python runtime 和 package-lock 中的前端生产依赖；开发构建工具不冒充运行时依赖，内外 manifest 绑定正式 lock 摘要。（E2、E3、E6、E9）
-- [x] 候选构建脚本在两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload、全新安装包与累计升级包，并比较每层结果；历史 V2.5.0 标签已取得同源 CI 证据。（E104）
+- [x] 候选构建脚本在两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload、全新安装包与累计升级包，并比较每层结果；V2.5.1 标签已取得同源 CI 证据。（E106）
 - [x] Windows BAT 与候选门禁对 launcher 缺失、工具目录缺失、runtime Python 缺失/启动失败、产品拒绝和产品成功使用独立码或精确 marker。（E2、E3）
 - [x] 未使用的 `getReservation/getUsers/getPreferences` 已删除；`getRooms` 作为预约变更后的房间统计刷新接口保留并有调用；变更记录、审计和提醒接口保留。（E4）
 - [x] 个人中心简化为纯偏好设置页（移除“我的活动”统计页），个人统计唯一入口是数据中心本人视角；全应用只有一套 reports 统计口径。（E38、E39）
@@ -212,10 +219,10 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [x] 项目本地 Python/Node 版本、隔离依赖、Ruff/ESLint 及一键 bootstrap/check 命令已经固定；V2 不再复用视觉原型的 `node_modules`。（E4、E5）
 - [x] 全局 CSS 继续按功能域拆分；入口顺序和更新后的源码 SHA 由测试锁定，滑块、日历、房间和安全审计规则只落在对应功能域。（E4、E6、E9）
 
-## 当前 V2.5.1 发布前门禁：自动化通过，Windows 实机与签名仍未完成
+## 当前 V2.5.1 Windows 门禁：自动化通过，实机与签名仍未完成
 
 - [x] 历史 `v2.5.0` 标签已在 GitHub Actions 完成 Linux 双构建、Windows hosted candidate gate 与 macOS 候选验收并归档 artifact。（E104）
-- [x] V2.5.1 合并前 CI 已覆盖 Linux/macOS/Windows、Windows 全新安装以及 V2.1.0→V2.5.1 累计升级与健康失败回滚；其中 PR #51 的 [run 33369760223](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33369760223) 验证了回滚前任务定义为 `Disabled` 且活动实例归零的 fail-closed 修复，正式标签候选 SHA 与制品摘要仍须在标签 run 后登记。
+- [x] V2.5.1 合并前 CI 已覆盖 Linux/macOS/Windows、Windows 全新安装以及 V2.1.0→V2.5.1 累计升级与健康失败回滚；其中 PR #51 的 [run 33369760223](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33369760223) 验证了回滚前任务定义为 `Disabled` 且活动实例归零的 fail-closed 修复；正式标签候选 SHA 与制品摘要已登记为 E106。
 - [ ] 普通用户在 Windows 10 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 普通用户在 Windows 11 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 从最终冻结 V2.1.0 实机安装执行 V2.5.1 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
@@ -238,13 +245,13 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 
 ## 发布物
 
-- [ ] 为 V2.5.1 标签源码生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并完成反向加载。
-- [ ] 正式标签 workflow 对两套 Windows 候选与 macOS 便携包完成独立双构建及字节一致性门禁。
-- [ ] V2.5.1 标签候选确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。
+- [x] 为 V2.5.1 标签源码生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并完成反向加载。（E106）
+- [x] 正式标签 workflow 对两套 Windows 候选与 macOS 便携包完成独立双构建及字节一致性门禁。（E106）
+- [x] V2.5.1 标签候选确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。（E106）
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 两套候选及侧车移入受控发布归档。
 - [x] macOS 历史证据：`v2.5.0` 标签 run 的候选 ZIP/DMG/清单已作为正式发布物；GitHub Release 仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。（E104、E105）
-- [ ] macOS：以 `v2.5.1` 标签 run 的候选 ZIP/DMG/清单发布 GitHub Release，仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。
+- [x] macOS：以 `v2.5.1` 标签 run 的候选 ZIP/DMG/清单发布 GitHub Release，仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。（E106、E107）
 - [ ] macOS 团队 Apple Silicon 真机抽验：从当前 GitHub Release 下载正式 DMG 核对 SHA 并复跑 9 步验收，补记独立于 CI 的实体设备证据。
 - [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
