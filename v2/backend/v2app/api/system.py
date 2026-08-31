@@ -37,6 +37,7 @@ from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor
 from ..services import update_check
 from ..services.audit import write_security_audit
+from ..services.lan_address import current_lan_address
 
 
 bp = Blueprint("system_api", __name__, url_prefix="/api/v1")
@@ -118,7 +119,9 @@ def system_status():
             "workStart": settings["work_start"],
             "workEnd": settings["work_end"],
             "setupComplete": is_setup_complete(),
-            "lanAddress": current_app.config.get("LAN_ADDRESS"),
+            "lanAddress": current_lan_address(
+                port=int(current_app.config["SERVICE_PORT"])
+            ),
             "lastBackupAt": (
                 backup[1]["createdAtUtc"]
                 if backup else None
@@ -273,7 +276,9 @@ def diagnostics():
             "latestBackupSequence": backup[1]["sequence"] if backup else None,
             "servicePort": current_app.config["SERVICE_PORT"],
             "bindMode": "lan" if is_setup_complete(db) else "loopback",
-            "lanAddress": current_app.config.get("LAN_ADDRESS"),
+            "lanAddress": current_lan_address(
+                port=int(current_app.config["SERVICE_PORT"])
+            ),
             "generatedAtUtc": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         }
     )
