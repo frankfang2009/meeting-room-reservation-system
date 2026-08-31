@@ -1,25 +1,25 @@
 # Frozen V2 UI reference
 
-> **V2.5 current authority.** This file preserves both current visual constraints and
+> **V2.5.1 current authority.** This file preserves both current visual constraints and
 > dated prototype evidence. For production behavior, the source of truth is
 > `src/App.jsx`, the ordered styles under `src/styles/`, the current executable tests
 > under `tests/`, `../docs/API-CONTRACT.md`, `../docs/PRODUCT-CONTRACT.md`, and
 > `design-qa.md`. Use `npm run check` for the current front-end gate.
 >
-> The prototype-era sections below are historical inputs, not runnable V2.5 setup or
+> The prototype-era sections below are historical inputs, not runnable V2.5.1 setup or
 > packaging instructions. Query-string demos and synthetic-memory behavior described
 > there do not exist in the production entry, which consumes the same-origin Flask
-> `/api/v1` contract. The V2.5 rail refinement and the dated production addenda from
+> `/api/v1` contract. The V2.5-era rail refinement and the dated production addenda from
 > 2026-08-17 onward remain current visual constraints where they agree with the
 > production sources and current product/API contracts.
 
-## Prototype-era source instructions (historical; do not execute for V2.5)
+## Prototype-era source instructions (historical; do not execute for V2.5.1)
 
 The following paragraphs record how the earlier synthetic prototype was operated and
 reviewed. They are retained to explain design decisions, not to direct current work.
 
 The former Sites handoff files `.openai/hosting.json`, `worker/index.js`,
-`scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` are not V2.5
+`scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` are not V2.5.1
 requirements. Do not recreate or preserve them for current packaging. Likewise,
 `src/prototype-model.js`, `npm run test:prototype`, and `npm run test:sites` are
 historical references, not current source paths or commands. Current work uses the
@@ -79,7 +79,7 @@ screenshots below; they do not override the current production sources.
 - If the server returns `rooms: []` because every room is excluded from public display, retain the public-display shell, clock, health and footer while showing one calm empty state; do not synthesize or recover hidden room data in the browser.
 - Public-display rows must be derived from the same synthetic `rooms + bookings` memory as the calendar, then passed through an explicit public-field selector and name-masking function. Room rename/deactivation and synthetic schedule changes therefore affect the projected public rows. The prototype still does not expose a real public endpoint, poll Flask, read SQLite, or access customer/production records. Formal integration must repeat the allowlist and masking on the server; the client projection is a testable UI contract, not a production privacy boundary.
 - Keep the established qualities: warm ivory canvas, narrow icon-only rail, restrained labels, generous whitespace, graphite hairlines, and terracotta as a rare interaction accent.
-- The V2.5 rail refinement keeps the existing 80px icon-only plane and one continuous role-filtered column. Every business, Help Center, and Personal Center icon uses the same Phosphor regular 24px optical box inside a 46px target; the account icon is no longer an oversized thin outline. Administrators see all eight permitted business entries and employees see the five shared entries, with the shorter employee list ending naturally rather than reserving empty administrator slots. Business entries share one top anchor, 12px normal-height rhythm (8px at the compact height), while Help Center and Personal Center remain bottom anchored. Active business, Help Center, and Personal Center actions use the same left terracotta marker and quiet terracotta-soft surface.
+- The V2.5-era rail refinement keeps the existing 80px icon-only plane and one continuous role-filtered column. Every business, Help Center, and Personal Center icon uses the same Phosphor regular 24px optical box inside a 46px target; the account icon is no longer an oversized thin outline. Administrators see all eight permitted business entries and employees see the five shared entries, with the shorter employee list ending naturally rather than reserving empty administrator slots. Business entries share one top anchor, 12px normal-height rhythm (8px at the compact height), while Help Center and Personal Center remain bottom anchored. Active business, Help Center, and Personal Center actions use the same left terracotta marker and quiet terracotta-soft surface.
 - Data Center weekday-by-time analysis uses one continuous half-hour dot plot rather than separate morning/afternoon progress bars. Keep seven weekday rows, a truthful continuous work-time axis without an invented lunch break, restrained time labels, dot size plus opacity for volume, one exact peak annotation, hover/focus details, and a small low/medium/high legend. Empty slots remain faint so users can see when work is quiet; do not turn this view into a rectangular rainbow heatmap or a utilization percentage.
 - The schedule is an open time canvas, not a boxed table: no outer table card, no vertical grid, no repeated availability dots or labels. Blank time slots mean available.
 - The seeded calendar covers the full 08:30–17:30 working range in half-hour slots, including afternoon availability. A completed first-run setup may replace that range in synthetic memory with the configured start/end times, still at 30-minute granularity.
@@ -148,7 +148,7 @@ screenshots below; they do not override the current production sources.
   the now-retired `src/prototype-model.js`, the unaffected numbered screenshots in
   `qa/v2-ui-refreeze-2026-08-09/`, and the four shared-calendar amendment screenshots
   in `qa/v2-calendar-shared-details-2026-08-09/`. The old calendar-visibility
-  screenshots `24`–`26` are historical only. Current V2.5 production authority is
+  screenshots `24`–`26` are historical only. Current V2.5.1 production authority is
   defined at the top of this document; this snapshot remains design rationale.
 - The frozen page set includes login and five login outcomes; the continuous first-run setup flow; user management; system status; the unauthenticated LAN public display; appointment calendar, personal bookings, history, room management, and personal settings; plus loading, empty, saving, validation, success, conflict, offline, expired-session, and unauthorized states.
 - Personal settings are limited to name, department, default duration, default recording room, default tag, personal tags, booking-change notification, booking reminder, browser-scoped default landing view, and the personal external-reminder template defined above. Saving updates the current-user profile and server-backed preferences; default duration, room, and tag are consumed only by eligible blank create flows. Phone, email, avatar upload/camera, and password actions are absent. Both web reminders explicitly say they work only while the page is open; external reminder copy remains a manual clipboard action.
@@ -162,7 +162,7 @@ screenshots below; they do not override the current production sources.
 - Informational text tokens meet at least 4.5:1 on the main warm canvas; meaningful status/tag/health dots have a contrasting outline. At 1024×720, an open user drawer preserves the selected user's role/status preview; 720px-high booking controls remain at least 44px; a three-room calendar fits the 852px schedule viewport without an 8px horizontal scrollbar or document overflow. Calendars with more rooms may scroll inside the schedule viewport while the document itself remains fixed to the viewport.
 - The frozen desktop support set is 1024×720, 1280×720, 1440×900, and 1920×1080. The existing 960px, 720px, and 620px rules are defensive fallbacks that prevent severe clipping when a desktop window is narrowed; they are not acceptance targets and do not establish mobile or tablet support. Mobile product redesign remains outside this contract.
 - The retired prototype used `npm run test:prototype` for its synthetic contracts and
-  `npm run test:sites` for a Sites handoff. Neither command is a current V2.5 gate;
+  `npm run test:sites` for a Sites handoff. Neither command is a current V2.5.1 gate;
   use `npm run check` (which includes the current tests and production build).
 - All content and state remain synthetic React memory. This snapshot authorizes no deployment and no connection to Flask, API, SQLite, production/customer data, secrets, backup services, notification services, or an AI experiment area. Final audit evidence and verification details are recorded in `design-qa.md`; do not claim backend, authentication, authorization, real concurrency, real networking, TV hardware, or customer-data acceptance from this prototype.
 

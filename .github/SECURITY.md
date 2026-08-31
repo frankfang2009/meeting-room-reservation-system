@@ -4,9 +4,9 @@
 
 | 版本 | 状态 |
 | --- | --- |
-| `main` 上的 V2.5 源码 | 接受安全报告 |
-| V2.5.0 macOS arm64 GitHub Release | 正式公开发布；未签名，须核对 Release SHA-256 |
-| V2.5.0 Windows 安装/升级候选 | 非正式发布，仅用于内部验证 |
+| `main` 上的 V2.5.1 源码 | 接受安全报告 |
+| V2.5.0 macOS arm64 GitHub Release（历史正式版） | 正式公开发布；未签名，须核对 Release SHA-256 |
+| V2.5.1 Windows 安装/升级候选 | 非正式发布，仅用于内部验证 |
 | V1.x | 历史兼容维护，不接受新功能 |
 
 当前没有完成签名和普通用户 Windows 10/11 验收的正式 V2 Windows 安装包。

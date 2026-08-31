@@ -5,8 +5,8 @@ Windows 实机或人工验收。自动化通过不等于客户环境通过。只
 完成后，才可把候选清单中的 `formal_external_release_allowed` 改为 `true`。
 自 V2.2.1 起 `formal_external_release_allowed` 按交付物分类适用：Windows 安装包与
 累计升级包继续适用上述全部门禁；macOS 自托管版适用独立 macOS 门禁（基础验收见
-“V2.2.1 macOS 自托管版证据”，当前发布见“V2.5.0 macOS 正式发布证据”），其正式
-分发渠道是 GitHub Release。
+“V2.2.1 macOS 自托管版证据”；V2.5.0 最近一次发布证据保留为历史），其正式
+分发渠道是 GitHub Release。V2.5.1 的正式发布证据须在标签候选与 Release 完成后另行登记。
 
 仓库公开仅表示 Apache-2.0 源代码可访问，不代表任何 GitHub Actions 产物或未签名
 候选包可正式外发。公开仓库不得托管已撤销的 V1 可执行附件；Windows 候选不得自动
@@ -20,9 +20,9 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
-## V2.5.0 Windows 自动化测试证据（2026-08-29）
+## V2.5.0 Windows 自动化测试证据（历史，2026-08-29）
 
-实体 Windows 10/11 验收按
+当时的实体 Windows 10/11 验收按
 [`V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md`](V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md)
 执行；指南固定候选 run、SHA、首次安装范围、人工步骤和脱敏证据模板，不授权公开 Windows
 二进制。
@@ -32,7 +32,7 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 | E103 | PR #40 最终提交的 [Windows acceptance run 33243388757](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33243388757) | `2d8149c4` 的全新安装 job `99076473165` 与 V2.1.0→V2.5.0 累计升级/健康失败回滚 job `99076473228` 均通过，分别输出 `MRV2_T1=PASS`、`MRV2_T1U=PASS`；该提交与合并/标签 `32a0bbbd` 的 Git tree 同为 `b24daa83…1aa04`。较早的 `3999505b` 升级验收曾在回滚块失败，最终提交加入脱敏 checkpoint 后完整复验通过；失败历史与限制未隐去，详见 [`V2.5.0-WINDOWS-TEST-EVIDENCE.md`](V2.5.0-WINDOWS-TEST-EVIDENCE.md) |
 | E104 | `v2.5.0` 标签 [candidate run 33244067191](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33244067191)（`32a0bbbdbec26c250f02660db5b7aac37a31239b`） | 三车道全绿；Windows 双候选两次独立构建字节一致并输出 `MRV2_REPRODUCIBLE_BUILD=PASS`，安装包 SHA-256 `4e8a3288…151f5`、累计升级包 `f26ae373…0c22e`；candidate-windows 零参数安装与升级门禁通过。内部 artifact 仅保留 7 天，未上传 GitHub Release；普通用户 Win10/11、UAC/SmartScreen/EDR、真重启、第二台设备与 Authenticode 仍未完成，`formal_external_release_allowed=false` |
 
-## V2.5.0 macOS 正式发布证据（2026-08-29）
+## V2.5.0 macOS 正式发布证据（历史，2026-08-29）
 
 | 编号 | 命令或证据 | 实际结果 |
 | --- | --- | --- |
@@ -198,7 +198,7 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [x] 普通用户错误提示覆盖服务未启动、非 JSON、权限不足、session 失效、数据库恢复、端口冲突及备份/恢复失败，详细异常只写日志。（E1、E3、E4）
 - [x] 正式 Runtime 钉死 CPython 3.13.14 官方 `embed-amd64` URL/SHA、requirements lock 摘要和完整 runtime 树；伪 PE、替换身份和合成 fixture 不能进入正式 `Bundle.load`。（E2、E3、E6、E9）
 - [x] 制品级 CycloneDX SBOM 与许可证侧车生成逻辑覆盖 CPython/Python runtime 和 package-lock 中的前端生产依赖；开发构建工具不冒充运行时依赖，内外 manifest 绑定正式 lock 摘要。（E2、E3、E6、E9）
-- [x] 候选构建脚本在两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload、全新安装包与累计升级包，并比较每层结果；当前 V2.5.0 标签已取得同源 CI 证据。（E104）
+- [x] 候选构建脚本在两个独立源码目录分别构建 frontend、wheelhouse、runtime、payload、全新安装包与累计升级包，并比较每层结果；历史 V2.5.0 标签已取得同源 CI 证据。（E104）
 - [x] Windows BAT 与候选门禁对 launcher 缺失、工具目录缺失、runtime Python 缺失/启动失败、产品拒绝和产品成功使用独立码或精确 marker。（E2、E3）
 - [x] 未使用的 `getReservation/getUsers/getPreferences` 已删除；`getRooms` 作为预约变更后的房间统计刷新接口保留并有调用；变更记录、审计和提醒接口保留。（E4）
 - [x] 个人中心简化为纯偏好设置页（移除“我的活动”统计页），个人统计唯一入口是数据中心本人视角；全应用只有一套 reports 统计口径。（E38、E39）
@@ -212,19 +212,21 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 - [x] 项目本地 Python/Node 版本、隔离依赖、Ruff/ESLint 及一键 bootstrap/check 命令已经固定；V2 不再复用视觉原型的 `node_modules`。（E4、E5）
 - [x] 全局 CSS 继续按功能域拆分；入口顺序和更新后的源码 SHA 由测试锁定，滑块、日历、房间和安全审计规则只落在对应功能域。（E4、E6、E9）
 
-## 当前 V2.5.0 标签候选已通过，Windows 实机与签名仍未完成
+## 当前 V2.5.1 发布前门禁：自动化通过，Windows 实机与签名仍未完成
 
-- [x] 当前 `v2.5.0` 标签已在 GitHub Actions 完成 Linux 双构建、Windows hosted candidate gate 与 macOS 候选验收并归档 artifact。（E104）
+- [x] 历史 `v2.5.0` 标签已在 GitHub Actions 完成 Linux 双构建、Windows hosted candidate gate 与 macOS 候选验收并归档 artifact。（E104）
+- [x] V2.5.1 合并前 CI 已覆盖 Linux/macOS/Windows、Windows 全新安装以及 V2.1.0→V2.5.1 累计升级与健康失败回滚；正式标签候选 SHA 与制品摘要仍须在标签 run 后登记。
 - [ ] 普通用户在 Windows 10 双击真实候选零参数 BAT，记录 UAC 接受与取消。
 - [ ] 普通用户在 Windows 11 双击真实候选零参数 BAT，记录 UAC 接受与取消。
-- [ ] 从最终冻结 V2.1.0 实机安装执行 V2.5.0 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
-- [ ] 在 V2.1.0→V2.5.0 实机升级的程序替换、健康检查和身份提交阶段分别故障注入，验证提交前回滚与提交后不回滚新数据。
-  当前 `V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md` 仅覆盖全新安装，不覆盖以上两项；
-  执行累计升级实机门禁前必须另建并审核当前任务书，不得复用 V2.3/V2.4.1 历史任务书。
+- [ ] 从最终冻结 V2.1.0 实机安装执行 V2.5.1 零参数累计升级，核对账号、预约、设置、备份、日志、install_id、原任务/防火墙/运行状态全部保持。
+- [ ] 在 V2.1.0→V2.5.1 实机升级的程序替换、健康检查和身份提交阶段分别故障注入，验证提交前回滚与提交后不回滚新数据。
+  `V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md` 只绑定历史 V2.5.0 全新安装候选；
+  执行 V2.5.1 实机门禁前必须另建并审核当前任务书，不得替换旧指南版本号或复用
+  V2.3/V2.4.1 历史任务书。
 - [ ] 验证固定 `%ProgramFiles%\会议室预约系统V2` 安装、中文 UI、标准用户账户和 UAC 路径。
 - [ ] 首次设置前第二台局域网电脑无法连接；设置完成后自动上线且第二台电脑可连接。
 - [ ] private/domain 防火墙规则只开放 TCP 8080 到 `LocalSubnet`。
-- [ ] 真实重启后 V2 专属主任务与每日备份任务正常启动、补跑且不重复并发。
+- [ ] 真实重启后 V2 专属主任务与每日备份任务正常启动、补跑且不重复并发，并定点复核局域网地址已刷新为当前有效地址。
 - [ ] 实机端口冲突不杀未知进程、不换端口，并显示可操作提示。
 - [ ] 标准用户不能修改程序，也不能读取数据库、secret、PID、日志或备份；维护入口按需 UAC。
 - [ ] 删除、损坏或代际篡改已设置数据库后不初始化、不重开 setup，并完成真实备份恢复演练。
@@ -236,13 +238,14 @@ T2 层 Windows 实机证据（UAC/SmartScreen/真实重启/局域网第二设备
 
 ## 发布物
 
-- [x] 为当前标签源码生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并完成反向加载。（E104）
-- [x] 正式标签 workflow 对两套 Windows 候选与 macOS 便携包完成独立双构建及字节一致性门禁。（E104）
-- [x] 当前标签候选已确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。（E104）
+- [ ] 为 V2.5.1 标签源码生成全新安装与累计升级两套 ZIP、SHA、manifest、SBOM、第三方许可证和 runtime provenance，并完成反向加载。
+- [ ] 正式标签 workflow 对两套 Windows 候选与 macOS 便携包完成独立双构建及字节一致性门禁。
+- [ ] V2.5.1 标签候选确认不含数据库、secret、日志、备份、测试文件、`node_modules` 或源码映射。
 - [x] 用户说明明确 V2 全新安装、V1 不迁移，以及恢复/日志/网络安全边界。（E2、E3）
 - [ ] 将通过 CI 和 Windows 实机验收的最终同一 SHA 两套候选及侧车移入受控发布归档。
-- [x] macOS：以 `v2.5.0` 标签 run 的候选 ZIP/DMG/清单为正式发布物；GitHub Release 仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。（E104、E105）
-- [ ] macOS 团队 Apple Silicon 真机抽验：从 V2.5.0 GitHub Release 下载正式 DMG 核对 SHA 并复跑 9 步验收，补记独立于 CI 的实体设备证据。
+- [x] macOS 历史证据：`v2.5.0` 标签 run 的候选 ZIP/DMG/清单已作为正式发布物；GitHub Release 仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。（E104、E105）
+- [ ] macOS：以 `v2.5.1` 标签 run 的候选 ZIP/DMG/清单发布 GitHub Release，仅附四项 macOS arm64 资产并记录完整 SHA-256，且设为 latest。
+- [ ] macOS 团队 Apple Silicon 真机抽验：从当前 GitHub Release 下载正式 DMG 核对 SHA 并复跑 9 步验收，补记独立于 CI 的实体设备证据。
 - [ ] 完整归档 Windows 10/11、标准用户、备份恢复、重启、第二台电脑和安全软件证据。
 
 ## 已撤销候选

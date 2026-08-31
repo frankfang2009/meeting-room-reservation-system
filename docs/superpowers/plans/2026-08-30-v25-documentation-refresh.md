@@ -1,12 +1,12 @@
 # V2.5 Documentation Refresh Implementation Record
 
-> **Status:** Completed locally on 2026-08-30 after independent final re-review. This
-> record documents the approved scope,
-> implementation batches, review checkpoints, and verification; it is not a recurring task.
+> **Status:** Original V2.5 documentation batches completed locally on 2026-08-30;
+> rebased onto V2.5.1 on 2026-08-31 for final reconciliation, verification, and release
+> integration. This record is not a recurring task.
 
-**Goal:** Align current V2.5 engineering, release, user, help-center, and security documentation with the shipped product while retaining dated evidence as clearly labeled history.
+**Goal:** Align current V2.5.1 engineering, release, user, help-center, and security documentation with the current implemented product while retaining dated V2.5.0 evidence as clearly labeled history.
 
-**Architecture:** Treat executable code, locked dependency files, current contracts, CI workflows, GitHub Release metadata, and the V2.5 Windows acceptance guide as the sources of truth. Update current-facing documents; add visible historical/superseded banners to completed task records instead of deleting or rewriting evidence.
+**Architecture:** Treat executable code, locked dependency files, current contracts, CI workflows, and GitHub Release metadata as the sources of truth. Update current-facing documents; add visible historical/superseded banners to completed task records instead of deleting or rewriting evidence. The dated V2.5.0 Windows guide remains historical evidence, not the V2.5.1 execution entry.
 
 **Tech Stack:** Markdown, plain-text operator notes, YAML comments, Python CLI help strings, GitHub Actions, Node help-center validation, Python/Flask/Waitress fixed runtime.
 
@@ -17,11 +17,13 @@
 ## Global constraints
 
 - Work only in the current linked V2 worktree on `codex/v25-doc-refresh`.
-- Do not change product behavior, V1 files/data, `.mimosa/`, `.zcode/`, or GitHub release state.
+- Do not change product behavior, V1 files/data, `.mimosa/`, or `.zcode/`.
 - Keep `formal_external_release_allowed=false` for Windows until all ordinary-user physical gates pass.
-- Distinguish the official V2.5 macOS arm64 Release from the internal Windows candidate.
+- Distinguish the historical official V2.5.0 macOS arm64 Release from the V2.5.1 release in progress and the internal-only Windows candidate.
 - Preserve dated evidence and completed task documents; mark them historical or superseded rather than deleting them.
-- Commit each completed batch locally. Do not push, merge, tag, publish, or create a release.
+- The original 2026-08-30 no-push/no-release checkpoint was superseded by the user's
+  2026-08-31 authorization to complete V2.5.1 release engineering without further
+  approval pauses. This branch remains documentation-only.
 
 ### Task 1: Correct engineering, runtime, upgrade, and release truth
 
@@ -102,3 +104,16 @@
 - [x] Run targeted searches for stale active claims and inspect the full diff/stat/status.
 - [x] Request final code/document review from a fresh subagent.
 - [x] Report changed scope, verification evidence, remaining physical Windows gate, branch, and unpushed status.
+
+### 2026-08-31 V2.5.1 reconciliation extension
+
+- [x] Rebase `codex/v25-doc-refresh` onto the V2.5.1 release-preparation merge on `main`.
+- [x] Change current-version claims to V2.5.1 while preserving the 2026-08-29 V2.5.0
+  release and Windows acceptance evidence as labeled history.
+- [x] Refresh workspace-root `STATE.md` topology and current-version summary without
+  changing the root V1 git index, branch, or other files.
+- [x] Run the full `check.sh`, help-center tests, reproducible help build, targeted
+  stale-claim searches, and `git diff --check`.
+- [x] Obtain a fresh read-only subagent final review and resolve any validated findings.
+- [ ] Push the rebased documentation branch, merge its green PR, and delete the merged
+  remote branch.

@@ -1,13 +1,13 @@
-会议室预约系统 V2.5.0：当前入口
+会议室预约系统 V2.5.1：当前入口
 ================================
 
 一、先确认版本与发布边界
 ------------------------
 
-当前产品代码位于 v2/，产品版本为 V2.5.0。V2 是全新安装产品，不导入、不读取、
+当前产品代码位于 v2/，产品版本为 V2.5.1。V2 是全新安装产品，不导入、不读取、
 不删除或覆盖 V1 的账号、笔录室、预约、配置和数据库。
 
-macOS 13 及以上、Apple Silicon（arm64）使用 GitHub Release 中的 V2.5.0 macOS
+macOS 13 及以上、Apple Silicon（arm64）使用 GitHub Release 中的当前 macOS
 自托管包；这是当前正式分发渠道。Windows 10/11 64 位 x86-64（AMD64）安装包和累计
 升级包仍是内部候选；Windows ARM64 与 32 位不在当前支持矩阵，
 在普通用户实机验收与 Authenticode 签名完成前不得正式外发，且
@@ -30,8 +30,8 @@ formal_external_release_allowed=false。
 2. API 真值：v2/docs/API-CONTRACT.md
 3. 架构与运行：v2/docs/ARCHITECTURE.md
 4. 当前发布门禁：v2/docs/RELEASE-CHECKLIST.md
-5. Windows V2.5.0 全新安装实机验收：v2/docs/V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md
-6. Windows V2.1.0→V2.5.0 累计升级实机门禁：见发布清单；当前没有可执行的新任务书，
+5. Windows V2.5.1 全新安装实机验收：见发布清单；V2.5.0 指南仅为历史证据
+6. Windows V2.1.0→V2.5.1 累计升级实机门禁：见发布清单；当前没有可执行的新任务书，
    不得改用旧 V2.3/V2.4.1 任务书替代
 7. 完整版本记录：v2/CHANGELOG.md
 
