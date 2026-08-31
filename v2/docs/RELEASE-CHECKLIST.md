@@ -21,6 +21,11 @@ GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发�
 
 ## V2.5.0 Windows 自动化测试证据（2026-08-29）
 
+实体 Windows 10/11 验收按
+[`V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md`](V2.5.0-WINDOWS-PHYSICAL-ACCEPTANCE-GUIDE.md)
+执行；指南固定候选 run、SHA、首次安装范围、人工步骤和脱敏证据模板，不授权公开 Windows
+二进制。
+
 | 编号 | 命令或证据 | 实际结果 |
 | --- | --- | --- |
 | E103 | PR #40 最终提交的 [Windows acceptance run 33243388757](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/33243388757) | `2d8149c4` 的全新安装 job `99076473165` 与 V2.1.0→V2.5.0 累计升级/健康失败回滚 job `99076473228` 均通过，分别输出 `MRV2_T1=PASS`、`MRV2_T1U=PASS`；该提交与合并/标签 `32a0bbbd` 的 Git tree 同为 `b24daa83…1aa04`。较早的 `3999505b` 升级验收曾在回滚块失败，最终提交加入脱敏 checkpoint 后完整复验通过；失败历史与限制未隐去，详见 [`V2.5.0-WINDOWS-TEST-EVIDENCE.md`](V2.5.0-WINDOWS-TEST-EVIDENCE.md) |
