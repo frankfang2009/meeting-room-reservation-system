@@ -1,4 +1,4 @@
-# 55 篇文章证据矩阵 · 2026-08-20
+# 55 篇文章证据矩阵 · 2026-08-30
 
 本分卷供内容维护使用；路径相对于 V2 仓库 `03_当前V2项目/meeting-room-v2`。R1 表示完整代码调用链，R2 表示相关自动化已覆盖，R3 只表示真实浏览器/设备/平台复现。弹层、焦点、视觉、存储、声音、后台标签页、第二设备、局域网大屏和 Windows 安装不能由 R2 替代。
 
@@ -19,7 +19,7 @@
 | `rm-page-open` | `v2/frontend/src/App.jsx#visibilitychange`; `v2/backend/v2app/api/reminders.py#def due_reminders` | `v2/frontend/tests/production-source.test.mjs#the due-reminder poller stays on for handover requests regardless of switches` | R2 | 后台标签页节流待 R3 |
 | `rm-change-notice` | `v2/frontend/src/App.jsx#function ChangeNoticeItem`; `v2/backend/v2app/api/reminders.py#def acknowledge_notice` | `v2/backend/tests/test_backend.py#test_change_notices_are_event_scoped_and_survive_later_edits` | R2 | 弹窗焦点与 Esc 待 R3 |
 | `rm-party-notify` | `v2/frontend/src/features/reminders/reminder-template.js#export function renderReminderTemplate`; `v2/frontend/src/App.jsx#async function copyText` | `v2/frontend/tests/reminder-template.test.mjs#default reminder template renders the approved five booking fields` | R2 | 剪贴板权限与外部发送待 R3 |
-| `rm-sound` | `v2/frontend/src/features/reminders/arrival-chime.js#export function playArrivalChime`; `v2/frontend/src/features/profile/PersonalCenter.jsx#reminder-sound-switch` | `v2/backend/tests/test_backend.py#test_reminder_lead_preference_and_sound_drive_due_window` | R2 | 真实音频及变更通知声音待 R3 |
+| `rm-sound` | `v2/frontend/src/App.jsx#refreshDueReminders`; `v2/frontend/src/features/reminders/arrival-chime.js#export function playArrivalChime`; `v2/frontend/src/features/profile/PersonalCenter.jsx#reminder-sound-switch` | `v2/backend/tests/test_backend.py#test_reminder_lead_preference_and_sound_drive_due_window`; `v2/frontend/tests/production-source.test.mjs#upcoming reminders live in the calendar with a counting badge and a one-time arrival toast` | R2 | 真实音频与浏览器播放限制待 R3；变更通知不承诺声音 |
 | `ho-when` | `v2/frontend/src/App.jsx#canHandover`; `v2/backend/v2app/services/handovers.py#def _started` | `v2/backend/tests/test_backend.py#test_started_booking_expires_request` | R2 | 双账号界面待 R3 |
 | `ho-receive` | `v2/backend/v2app/api/handovers.py#def accept_handover`; `v2/backend/v2app/api/handovers.py#def decline_handover` | `v2/backend/tests/test_backend.py#test_handover_decline_and_withdraw_keep_owner` | R2 | 接收弹窗待 R3 |
 | `ho-defer` | `v2/frontend/src/App.jsx#deferVisibleHandovers`; `v2/backend/v2app/services/handovers.py#def list_my_handovers` | `v2/frontend/tests/production-source.test.mjs#handover requests ride the action modal, the dedicated page, and the details drawer` | R2 | Esc 与焦点待 R3 |
@@ -63,6 +63,5 @@
 ## 发现但未修复的产品/Contract 偏差
 
 1. `api/admin.py#update_user` 会让停用用户会话失效，但当前保存路径不会同步把所有 pending handover 请求改为另一种终态；`services/handovers.py` 只在读取/接受时按启用状态和开始时间过滤。本文档改为“停用后逐项检查”，未修改产品代码。
-2. 个人中心的提示音开关文案提到“临近提醒与变更通知”，但 `App.jsx#refreshDueReminders` 的 `playArrivalChime()` 调用位于 fresh upcoming 分支；本文档没有把变更通知声音写成已确认规则，仍需 R3。
-3. 旧文案把审计写成“永久保留”；当前 `services/audit.py` 对登录失败使用 `AUTH_FAILURE_AUDIT_MAX_ROWS = 20_000` 的有界聚合，本文档已删除永久保留承诺。
-4. 公开大屏“数据可能已过期/网络已断开”是前端按最近成功时间计算的显示状态，不等价于预约状态；真实网络断开、后台标签页、第二设备、声音、焦点和 Windows 安装/升级仍不是 R2 证据。
+2. 旧文案把审计写成“永久保留”；当前 `services/audit.py` 对登录失败使用 `AUTH_FAILURE_AUDIT_MAX_ROWS = 20_000` 的有界聚合，本文档已删除永久保留承诺。
+3. 公开大屏“数据可能已过期/网络已断开”是前端按最近成功时间计算的显示状态，不等价于预约状态；真实网络断开、后台标签页、第二设备、声音、焦点和 Windows 安装/升级仍不是 R2 证据。

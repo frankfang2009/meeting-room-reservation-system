@@ -35,8 +35,9 @@ node build.mjs --output ../../frontend/dist/client/help/index.html
 
 `build.mjs` 内嵌的 SVG 图标路径数据逐字取自 [Lucide Icons](https://lucide.dev)
 （ISC License，© Lucide 作者），仅按产品线宽/圆角参数包装为 `<svg>` 壳。
-这是帮助中心唯一的第三方素材来源；如更换或新增图标，必须同步在
-`v2/NOTICE` / `THIRD_PARTY_NOTICES.md` 的覆盖范围中复核此声明。
+这是帮助中心唯一的第三方素材来源；如更换或新增图标，必须同步在仓库根目录的
+[`NOTICE`](../../../NOTICE) / [`THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md)
+覆盖范围中复核此声明。
 
 ## 验证
 

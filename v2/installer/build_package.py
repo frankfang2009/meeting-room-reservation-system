@@ -603,7 +603,7 @@ def build_package(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="制作 V2.2.0 全新安装候选 ZIP")
+    parser = argparse.ArgumentParser(description="制作当前 V2 全新安装候选 ZIP")
     parser.add_argument("--payload-root", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

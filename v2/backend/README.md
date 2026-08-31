@@ -1,15 +1,18 @@
 # V2 Flask backend
 
-Production targets the frozen Windows Python 3.13 runtime with exact direct
-dependencies from `requirements.txt` (`Flask==3.1.3`, `waitress==3.0.2`). The
-code is also covered by compatibility tests under the repository's local
-Python 3.8 / Flask 3.0.3 environment.
+Production and the complete local gate target Python 3.13.14 with the exact
+direct dependencies from `requirements.txt`: Flask 3.1.3 and Waitress 3.0.2.
+Development must use the repository-managed isolated environment created by
+`v2/scripts/bootstrap-dev.sh`; older system Python/Flask installations are not
+part of the supported or tested runtime matrix.
 
-Run the service from this directory with `python server.py`. A new database is
-created as V2 generation 2 with `setup_complete=0`; the server binds only to
-`127.0.0.1` until the atomic setup request succeeds. It then recreates Waitress
-on `0.0.0.0`. Existing V1 or unidentified databases are rejected before
-installation identity files are created.
+After `v2/scripts/bootstrap-dev.sh`, run the development service from this
+directory with `.venv/bin/python server.py`; do not substitute an arbitrary
+system Python. A new database is created as V2 generation 2 with
+`setup_complete=0`; the server binds only to `127.0.0.1` until the atomic setup
+request succeeds. It then recreates Waitress on `0.0.0.0`. Existing V1 or
+unidentified databases are rejected before installation identity files are
+created.
 
 The client obtains a session/CSRF token from `GET /api/v1/session`. Every JSON
 write uses the same-origin session cookie and `X-CSRF-Token`.

@@ -5,7 +5,7 @@ name: V2 Windows acceptance
 # 本工作流只在 runner 内部构建测试候选（规范命名，与正式候选同名同源），
 # 不上传、不保留任何安装包制品；正式候选构建仍由 release-candidate.yml 独占。
 # upgrade-acceptance 作业先安装冻结 V2.1.0 基线，再用当前累计升级包执行
-# 真实 V2.1.0 → V2.2.0 升级，覆盖替换后 DACL 重固化、数据保留与升级收尾。
+# 真实 V2.1.0 → 当前 `v2/VERSION` 升级，覆盖替换后 DACL 重固化、数据保留与升级收尾。
 on:
   pull_request:
   push:

@@ -3,6 +3,9 @@
 本目录实现 V2.5.1 全新安装、V2.1.0 起源离线累计升级与 macOS 自托管便携包，
 不包含 V1 迁移、导入、目录搜索或自动删除。
 
+Windows 内部候选包与 macOS 正式发布包均固定携带 Python 3.13.14、Flask 3.1.3、Waitress 3.0.2；
+构建与完整门禁固定使用 Node.js 22.17.1。客户机器不依赖系统 Python/Flask/Node。
+
 ## 先组装客户 payload
 
 前端完成 `npm run build` 后，把正式后端与 `dist/client` 组装成不含现场数据的
@@ -13,7 +16,7 @@ python3 -m v2.installer.assemble_payload \
   --backend-root /absolute/path/to/v2/backend \
   --frontend-dist /absolute/path/to/v2/frontend/dist/client \
   --frontend-lock /absolute/path/to/v2/frontend/package-lock.json \
-  --output /absolute/path/to/payload-v2.2.1
+  --output /absolute/path/to/payload-v2.5.1
 ```
 
 组装器要求正式 `service.py`、其 `server.py` 运行依赖、`backup.py`、
@@ -40,7 +43,7 @@ python3 -m v2.installer.build_runtime \
   --python-embed-zip /absolute/path/to/python-3.13.14-embed-amd64.zip \
   --wheelhouse /absolute/path/to/verified-wheels \
   --lock-file /absolute/path/to/v2/backend/requirements-win-amd64.lock \
-  --output /absolute/path/to/runtime-v2.2.1
+  --output /absolute/path/to/runtime-v2.5.1
 ```
 
 输出目录必须不存在。正式 `Bundle.load` 还要求 lock 摘要和包含 provenance 在内的
@@ -94,8 +97,9 @@ runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 pa
   文件镜像为 `true` 而数据库缺失、损坏或未设置时则进入回环恢复态；
 - `setup_complete=false` 时只绑定 `127.0.0.1:8080`；
 - 首次设置必须在一个数据库事务中写入首个管理员、至少一个笔录室、工作时间、
-  `product_generation=2`、`schema_version=2` 和 `setup_complete=true`；升级预检仍接受
-  可在服务启动前就地迁移的 schema v1 基线数据库；
+  `product_generation=2`、`schema_version=4` 和 `setup_complete=true`；服务启动迁移可
+  把已有产品代际 2 的 schema v1/v2/v3 数据库依次升级至 v4；备份恢复侧车只接受
+  schema v1 或当前 schema v4；
 - 数据库事务提交后原子镜像 `install.json.setup_complete=true`，再由 supervisor
   重启服务，才可绑定 `0.0.0.0:8080`；
 - CLI 固定支持无参数启动、`--check` 和 `--stop`；`MEETING_ROOM_OPEN_BROWSER=1`
@@ -133,14 +137,15 @@ runtime 内 lock 逐字节一致，并验证 payload 内前端组件证据及 pa
 ## 离线累计升级
 
 `build_update_package.py` 使用与新装包相同的已组装 payload 和冻结 runtime，
-生成零参数 `升级到V2.2.0.bat`、`_V2更新工具`、SHA-256、manifest、
+读取 `v2/VERSION` 的当前目标版本，生成零参数 `升级到V<目标版本>.bat`、
+`_V2更新工具`、SHA-256、manifest、
 SBOM、许可说明和 runtime provenance。
 
 ```bash
 python3 -m v2.installer.build_update_package \
-  --payload-root /absolute/path/to/payload-v2.2.0 \
-  --runtime-root /absolute/path/to/runtime-v2.2.0 \
-  --output /absolute/path/to/会议室预约系统-V2.2.0-累计升级包.zip
+  --payload-root /absolute/path/to/payload-v2.5.1 \
+  --runtime-root /absolute/path/to/runtime-v2.5.1 \
+  --output /absolute/path/to/会议室预约系统-V2.5.1-累计升级包.zip
 ```
 
 首个支持矩阵只包含最终冻结的 V2.1.0。`update_core.py` 只从明确路径

@@ -254,9 +254,11 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   为当前 schema v4；`POST /api/v1/admin/backups`
   返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
   `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
-- 备份侧车的 `databaseSchemaVersion` 新建时为 `4`；恢复器仍接受通过完整性和安装身份
-  验证的 schema v1/v2/v3 备份，并在恢复原子替换后迁移至当前结构（v1→v2 补列、
-  v2→v3 重建回执表、v3→v4 增交接表并重建事件枚举）。迁移或复检失败不得标记恢复成功。
+- 备份侧车的 `databaseSchemaVersion` 新建时为 `4`；恢复器只接受通过完整性和安装身份
+  验证的 schema v1 或当前 schema v4 备份。schema v1 在恢复原子替换后复用与服务启动
+  相同的数据库准备迁移链依次升级至 v4；schema v2/v3 只属于已有产品代际 2 数据库的
+  启动迁移输入，不是恢复侧车
+  的受支持版本。迁移或复检失败不得标记恢复成功。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
   返回 `{items,nextCursor,pageSize,total}`，事件时间键为 `occurredAtUtc`。
 - `GET|POST /api/v1/admin/tokens`；`DELETE /api/v1/admin/tokens/{id}`。明文 token 只在创建成功响应出现一次；`expiresAt` 必须带时区并规范化为 UTC。

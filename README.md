@@ -6,10 +6,12 @@
 
 一个面向可信局域网、可自托管的会议室/笔录室预约系统。当前主线 V2.5.1 使用 React、Flask 与 SQLite，提供共享日历、预约管理、数据中心与办件明细 CSV、公开大屏、用户与房间管理、备份恢复、离线帮助中心、Windows 全新安装与离线累计升级链，以及可直接下载的 macOS 自托管版。
 
-> 当前公开的是源代码，不是正式 Windows 安装包。Windows 安装包与升级包尚未完成普通用户
-> Windows 10/11 实机验收和 Authenticode 签名，自动构建产物只能作为内部候选，不能视为
+> 当前公开的是源代码，不是正式 Windows 安装包。Windows 10/11 64 位 x86-64（AMD64）
+> 安装包与升级包尚未完成普通用户实机验收和 Authenticode 签名；Windows ARM64 与 32 位
+> 不在当前支持矩阵。自动构建产物只能作为内部候选，不能视为
 > 正式发布。macOS 自托管版自 V2.2.1 起以 [GitHub Release](https://github.com/frankfang2009/meeting-room-reservation-system/releases)
-> 为正式分发渠道（未签名，首次运行需右键打开）。
+> 为正式分发渠道（未签名，首次运行需右键打开）。在 V2.5.1 标签与 Release 完成前，
+> Releases 的 latest 正式二进制仍是历史 V2.5.0；V2.5.1 当前是已实现、待发布的源码主线。
 
 ## 主要能力
 
@@ -30,7 +32,7 @@
 
 使用 Apple Silicon（M 系列）Mac 的用户无需安装 Python 或 Node：
 
-1. 从 [Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) 下载 `会议室预约系统-V*-macOS-arm64.dmg`，并核对发布说明中的 SHA-256。
+1. 从 [Releases](https://github.com/frankfang2009/meeting-room-reservation-system/releases) 下载 `meeting-room-v2-<版本>-macOS-arm64.dmg`，并核对发布说明中的 SHA-256。
 2. 双击挂载 DMG，把 `会议室预约系统V2-macOS` 文件夹拖到「应用程序」或任意可写位置（不要在 DMG 里直接运行），然后推出 DMG。
 3. 首次双击 `启动.command` 时 macOS 会拦截：右键 →「打开」→ 再点「打开」放行（只需一次）。
 4. 浏览器自动打开 `http://127.0.0.1:8080`，按向导创建首名管理员、笔录室和工作时间即可使用。
@@ -40,7 +42,9 @@
 
 ## 快速开始（开发环境）
 
-完整本地门禁固定使用 Python 3.13.14、Node.js 22.17.1、npm 和 [uv](https://docs.astral.sh/uv/)。
+完整本地门禁固定使用 Python 3.13.14、Node.js 22.17.1、npm 和 [uv](https://docs.astral.sh/uv/)；
+后端直接依赖固定为 Flask 3.1.3 与 Waitress 3.0.2。生产包自带冻结运行时，普通用户
+无需另装 Python 或 Node.js。
 
 ```bash
 v2/scripts/bootstrap-dev.sh
@@ -67,7 +71,7 @@ cd ../backend && .venv/bin/python server.py
 
 - `v2/frontend/`：React/Vite 正式前端。
 - `v2/backend/`：Flask API、认证权限、SQLite 数据、备份和运行服务。
-- `v2/installer/`：V2 全新安装、可复现候选包和未来 V2-only 更新安全基础。
+- `v2/installer/`：Windows 全新安装、离线累计升级候选工具和 macOS 自托管打包。
 - `v2/docs/`：产品、API、架构、安全和发布契约。
 - `02_开发工作区/`：V1 历史源码与升级验证材料，仅作兼容维护和审计证据，不接受新功能。
 
