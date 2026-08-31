@@ -107,7 +107,8 @@
 
 ### 2026-08-31 V2.5.1 reconciliation extension
 
-- [x] Rebase `codex/v25-doc-refresh` onto the V2.5.1 release-preparation merge on `main`.
+- [x] Rebase `codex/v25-doc-refresh` onto the latest V2.5.1 `main`, including the
+  release-preparation merge and Windows rollback-recovery fix.
 - [x] Change current-version claims to V2.5.1 while preserving the 2026-08-29 V2.5.0
   release and Windows acceptance evidence as labeled history.
 - [x] Refresh workspace-root `STATE.md` topology and current-version summary without
