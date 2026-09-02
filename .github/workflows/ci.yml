@@ -72,7 +72,7 @@ jobs:
       - name: Python compile gate
         run: python -m compileall -q v2/backend v2/installer v2/tests
       - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.17.1"
           cache: npm
@@ -114,7 +114,7 @@ jobs:
           python -m unittest discover -s v2/tests -v
           python -m compileall -q v2/backend v2/installer v2/tests
       - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.17.1"
           cache: npm
@@ -155,7 +155,7 @@ jobs:
       - name: Python compile gate
         run: python -m compileall -q v2/backend v2/installer v2/tests
       - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22.17.1"
           cache: npm
