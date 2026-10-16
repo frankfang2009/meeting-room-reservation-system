@@ -50,7 +50,8 @@ const expectedFiles = [
 // V2.5.0：数据中心默认态收束为指标与趋势，分析/筛选/导出渐进展开（reports.css / responsive.css）。
 // V2.5.0：帮助入口合一；个人偏好与系统安全能力按需展开（help-center/settings/system-extensions.css）。
 // V2.5.0：所有真实空状态共用克制的居中图标、说明和单一恢复动作（idle-states.css）。
-const frozenSourceSha256 = "d515b0c489d711dc3823b1f3df130df828331af7c06077882aa5463df8e83c3c";
+// 日历本人/他人分层：本人折角卡片与他人平贴块（calendar.css）。
+const frozenSourceSha256 = "e5f34578883f1eb22402699d421af18d25b7013f537ee7adf349270c6021ead1";
 
 function luminance(hex) {
   const channels = hex.match(/[0-9a-f]{2}/gi).map((value) => Number.parseInt(value, 16) / 255);

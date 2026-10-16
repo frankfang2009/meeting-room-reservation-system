@@ -1,8 +1,8 @@
 const TAG_COLORS = [
-  { color: "#D97757", surface: "#F7ECE7", line: "#E8C8BC" },
-  { color: "#C29A4A", surface: "#F6F1E4", line: "#E5D4AD" },
-  { color: "#7B9275", surface: "#EEF1EA", line: "#C9D3C4" },
-  { color: "#71879A", surface: "#EBEFF1", line: "#C5D0D7" },
+  { color: "#D97757", surface: "#F7ECE7", line: "#E8C8BC", fold: "#D7B3A4" },
+  { color: "#C29A4A", surface: "#F6F1E4", line: "#E5D4AD", fold: "#DCC79A" },
+  { color: "#7B9275", surface: "#EEF1EA", line: "#C9D3C4", fold: "#C5D2C1" },
+  { color: "#71879A", surface: "#EBEFF1", line: "#C5D0D7", fold: "#B9C8D2" },
 ];
 
 export function parseDate(value) {
@@ -34,11 +34,29 @@ export function monthKey(value) {
 }
 
 export function tagStyle(tag) {
+  const palette = TAG_COLORS[Math.max(0, Math.min(3, Number(tag?.slot || 1) - 1))] || TAG_COLORS[0];
   return {
-    "--tag-color": tag?.color || TAG_COLORS[0].color,
-    "--tag-surface": tag?.surface || TAG_COLORS[0].surface,
-    "--tag-line": tag?.line || TAG_COLORS[0].line,
+    "--tag-color": tag?.color || palette.color,
+    "--tag-surface": tag?.surface || palette.surface,
+    "--tag-line": tag?.line || palette.line,
+    "--tag-fold": tag?.fold || palette.fold,
   };
+}
+
+// 日历上“我的 / 他人”只认预约对象里的 ownerId，不靠角色推断。
+export function calendarBookingOwnership(booking, currentUserId) {
+  if (!currentUserId || !booking?.ownerId) return "unknown";
+  return booking.ownerId === currentUserId ? "mine" : "other";
+}
+
+// 短卡（约 30 分钟，或只占一行）用更小的折角，避免压住圆点和标题。
+export function calendarFoldSize({ durationMinutes, slotMinutes = 30 } = {}) {
+  const duration = Number(durationMinutes);
+  const slot = Number(slotMinutes);
+  if (!Number.isFinite(duration) || duration <= 0) return 12;
+  const step = Number.isFinite(slot) && slot > 0 ? slot : 30;
+  const span = Math.max(1, Math.round(duration / step));
+  return span <= 1 || duration <= 30 ? 8 : 12;
 }
 
 export function normalizeTag(tag, index) {

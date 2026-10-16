@@ -388,36 +388,33 @@
   transform: translateY(0);
 }
 
-.available-slot.past-slot {
+.available-slot.past-slot,
+.available-slot.outside-work-slot {
   cursor: not-allowed;
+  background: #ebe6dc;
 }
 
 .available-slot.past-slot:hover,
-.available-slot.past-slot:focus-visible {
-  border-color: transparent;
-  background: transparent;
-}
-
-.available-slot.past-slot .slot-affordance {
-  color: rgba(92, 89, 83, 0.56);
-  opacity: 0;
-  transform: none;
-}
-
-.available-slot.outside-work-slot {
-  cursor: not-allowed;
-  background: rgba(20, 20, 19, 0.018);
-}
-
+.available-slot.past-slot:focus-visible,
 .available-slot.outside-work-slot:hover,
 .available-slot.outside-work-slot:focus-visible {
   border-color: transparent;
-  background: rgba(20, 20, 19, 0.018);
+  background: #ebe6dc;
 }
 
+.available-slot.past-slot .slot-affordance,
 .available-slot.outside-work-slot .slot-affordance {
+  color: var(--muted);
+  font-size: 12px;
   opacity: 0;
   transform: none;
+}
+
+.available-slot.past-slot:hover .slot-affordance,
+.available-slot.past-slot:focus-visible .slot-affordance,
+.available-slot.outside-work-slot:hover .slot-affordance,
+.available-slot.outside-work-slot:focus-visible .slot-affordance {
+  opacity: 1;
 }
 
 .booked-slot {
@@ -433,7 +430,110 @@
   border: 1px solid var(--tag-line, var(--hairline-strong));
   background: var(--tag-surface, var(--paper-raised));
   text-align: left;
-  transition: border-color 130ms ease, background 130ms ease, opacity 150ms ease, filter 150ms ease;
+  transition: border-color 130ms ease, background 130ms ease, opacity 150ms ease, filter 150ms ease, transform 130ms ease;
+}
+
+/* 他人预约平贴在画布上：暖象牙填色、无投影、无标签色强调，比本人卡片更收进一圈。 */
+.booked-slot.booking-other {
+  z-index: 4;
+  margin-right: 34px;
+  margin-left: 34px;
+  padding: 8px 16px;
+  color: var(--muted);
+  border-color: transparent;
+  background: #f3efe8;
+  box-shadow: none;
+}
+
+.booked-slot.booking-other .booking-title {
+  gap: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.booked-slot.booking-other .booking-case {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.booked-slot.booking-other:hover:not(.tag-muted),
+.booked-slot.booking-other:focus-visible:not(.tag-muted) {
+  border-color: rgba(20, 20, 19, 0.22);
+  background: #efeae1;
+  filter: none;
+}
+
+/* 本人预约保持浅标签底和圆点，并略微浮起。折角已经承担“我的”信号，投影比方案 C 收一档。 */
+.booked-slot.booking-mine {
+  --fold-size: 12px;
+  --fold-cut: calc(var(--fold-size) * 0.7071);
+  z-index: 6;
+  overflow: visible;
+  padding: 10px 20px 8px 22px;
+  border-width: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.booked-slot.booking-mine.booking-short {
+  --fold-size: 8px;
+  padding: 12px 16px 6px 16px;
+}
+
+.booking-card,
+.booking-fold {
+  position: absolute;
+  pointer-events: none;
+}
+
+.booking-card {
+  inset: 0;
+  z-index: 0;
+  filter:
+    drop-shadow(0 1px 1px rgba(20, 20, 19, 0.045))
+    drop-shadow(0 3px 7px rgba(20, 20, 19, 0.04));
+}
+
+.booking-sheet {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--tag-line, var(--hairline-strong));
+  border-radius: 12px;
+  border-top-left-radius: 3px;
+  background: var(--tag-surface, var(--paper-raised));
+  -webkit-mask-image: linear-gradient(135deg, transparent var(--fold-cut), #000 var(--fold-cut));
+  mask-image: linear-gradient(135deg, transparent var(--fold-cut), #000 var(--fold-cut));
+}
+
+/* 折角画在卡片内侧，盖住被斜切掉的一角；投影跟着被裁切的轮廓走。 */
+.booking-fold {
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: var(--fold-size);
+  height: var(--fold-size);
+  background: var(--tag-fold, var(--tag-line));
+  clip-path: polygon(100% 0, 0 100%, 100% 100%);
+  filter: drop-shadow(1px 1px 1px rgba(20, 20, 19, 0.14));
+}
+
+.booked-slot.booking-mine .booking-title,
+.booked-slot.booking-mine .booking-case,
+.booked-slot.booking-mine .booking-countdown {
+  position: relative;
+  z-index: 2;
+}
+
+.booked-slot.booking-mine:hover .booking-sheet,
+.booked-slot.booking-mine:focus-visible .booking-sheet {
+  border-color: var(--tag-color, var(--hairline-strong));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .booked-slot.booking-mine:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .occupied-slot {
@@ -531,6 +631,12 @@
   border: 1.5px solid rgba(20, 20, 19, 0.46);
   border-radius: 10px;
   pointer-events: none;
+}
+
+.slot.booked-slot.booking-mine.slot-origin::after {
+  z-index: 3;
+  -webkit-mask-image: linear-gradient(135deg, transparent calc(var(--fold-cut) - 1.4px), #000 calc(var(--fold-cut) - 1.4px));
+  mask-image: linear-gradient(135deg, transparent calc(var(--fold-cut) - 1.4px), #000 calc(var(--fold-cut) - 1.4px));
 }
 
 /* 日期切换按方向轻移入场；首次加载不播放，reduced-motion 全局降级。 */
