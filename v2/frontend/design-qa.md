@@ -710,3 +710,25 @@ final result: passed (screenshot evidence attached on the PR)
 - P3：0。
 
 final result: passed
+
+## 日历溢出测试清理 — 2026-10-17
+
+### 变更范围
+
+- 复验确认长文本截断已经修好。新增布局测试仍有两项阻断：Chrome 退出后立刻删除 profile，以及调试回复用 `Map.get(message.id)` 取回调。
+- 关闭浏览器时先发 `Browser.close`，再结束整个进程树，等进程退出并释放文件后才删临时目录。只对 `EBUSY`、`ENOTEMPTY`、`EPERM`、`EACCES` 做有限重试；锁一直不放就抛出。进程到时仍不退出也抛出，不留孤儿进程。
+- 调试会话同一时间只保留一条命令，回复用固定的 `settle` 完成，不再按消息 id 从 Map 里取出函数调用。
+
+### 验证
+
+- 布局测试连跑 5 次通过。目录锁会重试，持续占用和非锁错误仍会失败。子进程还在写 profile 时，先结束进程树再删除目录，目录不会被重新写回。
+- `v2/scripts/check.sh` 在这次修复后通过。
+
+### Findings
+
+- P0：0。
+- P1：0。
+- P2：测试清理竞态和动态方法分发已按上面处理。
+- P3：0。
+
+final result: passed

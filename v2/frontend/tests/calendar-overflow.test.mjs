@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appSource = fs.readFileSync(path.join(root, "src/App.jsx"), "utf8");
@@ -109,6 +108,178 @@ function freePort() {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function processHasExited(child) {
+  return !child || child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForExit(child, timeoutMs) {
+  if (processHasExited(child)) return Promise.resolve("exit");
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      child.removeListener("exit", onExit);
+      resolve("timeout");
+    }, timeoutMs);
+    function onExit() {
+      clearTimeout(timer);
+      resolve("exit");
+    }
+    child.once("exit", onExit);
+  });
+}
+
+function killProcessTree(child) {
+  if (!child?.pid || processHasExited(child)) return;
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    } catch {
+      try { child.kill("SIGKILL"); } catch { /* the process already exited */ }
+    }
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch { /* the process already exited */ }
+  }
+}
+
+function killProcessesUsingPath(marker) {
+  if (process.platform === "win32" || !marker) return;
+  let listing = "";
+  try {
+    listing = execFileSync("ps", ["-ax", "-o", "pid=", "-o", "command="], { encoding: "utf8" });
+  } catch {
+    return;
+  }
+  for (const line of listing.split("\n")) {
+    if (!line.includes(marker)) continue;
+    const pid = Number.parseInt(line.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    try { process.kill(pid, "SIGKILL"); } catch { /* the process already exited */ }
+  }
+}
+
+async function stopProcessTree(child, marker) {
+  if (!processHasExited(child)) {
+    killProcessTree(child);
+    await waitForExit(child, 5000);
+  }
+  killProcessesUsingPath(marker);
+  if (!processHasExited(child)) {
+    killProcessTree(child);
+    const status = await waitForExit(child, 2000);
+    if (status !== "exit") {
+      throw new Error(`process ${child.pid} did not exit`);
+    }
+  }
+}
+
+const directoryLockCodes = new Set(["EBUSY", "ENOTEMPTY", "EPERM", "EACCES"]);
+
+async function removeDirectory(directory, options = {}) {
+  const rm = options.rm || fs.rmSync;
+  const attempts = options.attempts || 20;
+  const delayMs = options.delayMs || ((attempt) => Math.min(50 * (attempt + 1), 250));
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      if (!directoryLockCodes.has(error?.code)) throw error;
+      lastError = error;
+      if (attempt === attempts - 1) break;
+      await delay(delayMs(attempt));
+    }
+  }
+  throw lastError;
+}
+
+async function stopBrowser(child, socket, marker) {
+  if (socket && socket.readyState === 1) {
+    try { socket.send(JSON.stringify({ id: 0, method: "Browser.close" })); } catch { /* the socket is already closing */ }
+  }
+  if (socket && socket.readyState < 2) {
+    try { socket.close(); } catch { /* the socket is already closing */ }
+    await waitForExit(child, 2000);
+  }
+  await stopProcessTree(child, marker);
+}
+
+function openDebugger(url, logs) {
+  const socket = new globalThis.WebSocket(url);
+  socket.addEventListener("error", () => {});
+  return new Promise((resolve, reject) => {
+    socket.addEventListener("open", () => resolve(socket), { once: true });
+    socket.addEventListener("error", () => reject(new Error(logs() || "Chrome debugger socket failed")), { once: true });
+  });
+}
+
+// One in-flight command. Replies are matched by id and settled through a fixed
+// property, not looked up with Map.get on the message id. That lookup is what
+// CodeQL reports as an unvalidated dynamic method call.
+function createDebuggerSession(socket) {
+  let sequence = 0;
+  let inflight = null;
+  let loadWait = null;
+
+  socket.addEventListener("message", (event) => {
+    const text = typeof event.data === "string" ? event.data : "";
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      return;
+    }
+    if (payload.method === "Page.loadEventFired" && loadWait) {
+      const done = loadWait;
+      loadWait = null;
+      done();
+      return;
+    }
+    if (!inflight || payload.id !== inflight.id) return;
+    const current = inflight;
+    inflight = null;
+    current.settle(payload);
+  });
+
+  function send(method, params = {}) {
+    if (inflight) throw new Error(`debugger command already in flight: ${method}`);
+    const id = ++sequence;
+    return new Promise((resolve, reject) => {
+      inflight = {
+        id,
+        settle(payload) {
+          if (payload.error) reject(new Error(`${method}: ${JSON.stringify(payload.error)}`));
+          else resolve(payload.result);
+        },
+      };
+      socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  function waitForLoad(timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        loadWait = null;
+        reject(new Error("calendar fixture did not load"));
+      }, timeoutMs);
+      loadWait = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
+  }
+
+  return { send, waitForLoad };
+}
+
 async function measureLayout() {
   const chrome = chromePath();
   assert.ok(chrome, "Chrome is required to measure calendar text overflow");
@@ -122,69 +293,64 @@ async function measureLayout() {
     "--disable-gpu",
     "--no-sandbox",
     "--disable-dev-shm-usage",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-extensions",
+    "--disable-sync",
+    "--disable-background-networking",
+    "--disable-component-update",
     `--user-data-dir=${profile}`,
     `--remote-debugging-port=${port}`,
     "--window-size=1024,720",
     "--force-device-scale-factor=1",
     "about:blank",
-  ], { stdio: ["ignore", "pipe", "pipe"] });
+  ], { detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  child.ref();
   let logs = "";
   child.stdout.on("data", (chunk) => { logs += chunk; });
   child.stderr.on("data", (chunk) => { logs += chunk; });
+  child.on("error", () => {});
+  let socket = null;
+  let failure = null;
+  let measured = null;
   try {
     const targets = await waitForTargets(port);
     const page = targets.find((target) => target.type === "page");
     assert.ok(page?.webSocketDebuggerUrl, logs || "Chrome did not expose a page target");
-    const ws = new globalThis.WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener("open", resolve, { once: true });
-      ws.addEventListener("error", () => reject(new Error(logs || "Chrome debugger socket failed")), { once: true });
-    });
-    let sequence = 0;
-    const pending = new Map();
-    ws.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data);
-      const resolve = pending.get(message.id);
-      if (!resolve) return;
-      pending.delete(message.id);
-      resolve(message);
-    });
-    const send = (method, params = {}) => new Promise((resolve, reject) => {
-      const id = ++sequence;
-      pending.set(id, (message) => {
-        if (message.error) reject(new Error(`${method}: ${JSON.stringify(message.error)}`));
-        else resolve(message.result);
-      });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-    await send("Page.enable");
-    await send("Emulation.setDeviceMetricsOverride", { width: 1024, height: 720, deviceScaleFactor: 1, mobile: false });
-    const loaded = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("calendar fixture did not load")), 10000);
-      ws.addEventListener("message", (event) => {
-        const message = JSON.parse(event.data);
-        if (message.method === "Page.loadEventFired") {
-          clearTimeout(timeout);
-          resolve();
-        }
-      });
-    });
-    await send("Page.navigate", { url: pathToFileURL(htmlPath).href });
+    socket = await openDebugger(page.webSocketDebuggerUrl, () => logs);
+    const session = createDebuggerSession(socket);
+    await session.send("Page.enable");
+    await session.send("Emulation.setDeviceMetricsOverride", { width: 1024, height: 720, deviceScaleFactor: 1, mobile: false });
+    const loaded = session.waitForLoad(10000);
+    await session.send("Page.navigate", { url: pathToFileURL(htmlPath).href });
     await loaded;
-    await send("Runtime.evaluate", { expression: "document.fonts ? document.fonts.ready : null", awaitPromise: true });
-    const evaluated = await send("Runtime.evaluate", {
+    await session.send("Runtime.evaluate", { expression: "document.fonts ? document.fonts.ready : null", awaitPromise: true });
+    const evaluated = await session.send("Runtime.evaluate", {
       expression: measureExpression,
       returnByValue: true,
     });
-    ws.close();
     if (evaluated.exceptionDetails) {
       throw new Error(evaluated.exceptionDetails.text || JSON.stringify(evaluated.exceptionDetails));
     }
-    return evaluated.result.value;
+    measured = evaluated.result.value;
+  } catch (error) {
+    failure = error;
   } finally {
-    child.kill("SIGKILL");
-    fs.rmSync(directory, { recursive: true, force: true });
+    let cleanupError = null;
+    try {
+      await stopBrowser(child, socket, profile);
+      await removeDirectory(directory);
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (failure && cleanupError) {
+      failure = new Error(`${failure.message}\nCleanup also failed: ${cleanupError.message}`);
+    } else if (cleanupError) {
+      failure = cleanupError;
+    }
   }
+  if (failure) throw failure;
+  return measured;
 }
 
 async function waitForTargets(port) {
@@ -312,4 +478,92 @@ test("a 1024px three-room calendar clips long case numbers and names without los
   assert.match(mine.caseAttr, new RegExp(longCase));
   assert.match(short.titleAttr, new RegExp(longName));
   assert.match(short.aria, new RegExp(longName));
+});
+
+test("directory cleanup retries a file lock and still reports a lock that does not clear", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "calendar-overflow-lock-"));
+  let calls = 0;
+  await removeDirectory(directory, {
+    rm() {
+      calls += 1;
+      if (calls < 3) {
+        const error = new Error("busy");
+        error.code = "EBUSY";
+        throw error;
+      }
+      fs.rmSync(directory, { recursive: true, force: true });
+    },
+    delayMs: () => 0,
+  });
+  assert.equal(calls, 3);
+  assert.equal(fs.existsSync(directory), false);
+
+  const stuck = fs.mkdtempSync(path.join(os.tmpdir(), "calendar-overflow-stuck-"));
+  await assert.rejects(() => removeDirectory(stuck, {
+    rm() {
+      const error = new Error("busy");
+      error.code = "EBUSY";
+      throw error;
+    },
+    attempts: 3,
+    delayMs: () => 0,
+  }), (error) => error.code === "EBUSY");
+  fs.rmSync(stuck, { recursive: true, force: true });
+
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), "calendar-overflow-io-"));
+  let otherCalls = 0;
+  await assert.rejects(() => removeDirectory(other, {
+    rm() {
+      otherCalls += 1;
+      const error = new Error("io");
+      error.code = "EIO";
+      throw error;
+    },
+    attempts: 5,
+    delayMs: () => 0,
+  }), (error) => error.code === "EIO");
+  assert.equal(otherCalls, 1);
+  fs.rmSync(other, { recursive: true, force: true });
+});
+
+test("a child process tree is stopped before its directory is removed", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "calendar-overflow-cleanup-"));
+  const profile = path.join(directory, "profile");
+  fs.mkdirSync(profile);
+  const writer = `
+    const fs = require("fs");
+    const path = require("path");
+    const dir = process.argv[1];
+    setInterval(() => {
+      fs.mkdirSync(path.join(dir, "Default"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "Default", "Account Web Data"), String(Date.now()));
+    }, 15);
+  `;
+  const parent = `
+    const { spawn } = require("child_process");
+    const child = spawn(process.execPath, ["-e", process.argv[2], process.argv[1]], { stdio: "ignore", windowsHide: true });
+    child.unref();
+    setInterval(() => {}, 1000);
+  `;
+  const child = spawn(process.execPath, ["-e", parent, profile, writer], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  child.ref();
+  const lock = path.join(profile, "Default", "Account Web Data");
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(lock)) {
+    if (processHasExited(child) || Date.now() > deadline) {
+      await stopProcessTree(child, profile);
+      throw new Error("profile writer did not start");
+    }
+    await delay(20);
+  }
+  await stopProcessTree(child, profile);
+  await removeDirectory(directory);
+  assert.equal(fs.existsSync(directory), false);
+  await delay(250);
+  assert.equal(fs.existsSync(directory), false);
+  assert.equal(processHasExited(child), true);
 });
