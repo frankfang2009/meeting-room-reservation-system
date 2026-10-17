@@ -2263,15 +2263,18 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
                   countdown?.urgent ? "slot-countdown-urgent" : "",
                   calendarTagFilter && calendarTagFilter !== booking.tagId ? "tag-muted" : "",
                 ].filter(Boolean).join(" ");
+                const ownerName = booking.owner?.name || "未知用户";
+                const titleText = `${ownerName} · 已预约`;
+                const caseText = `案号 ${booking.caseNumber}`;
                 const ariaLabel = [
                   `${room.name} ${booking.start}至${booking.end}`,
-                  `预约者${booking.owner?.name || "未知用户"}`,
+                  `预约者${ownerName}`,
                   ownershipLabel,
                   `当事人${booking.partyName}`,
                   `案号${booking.caseNumber}`,
                   countdown ? `${countdown.label}开始` : "",
                 ].filter(Boolean).join("，");
-                return <button className={bookingClass} data-booking-ownership={ownership} data-calendar-row={rowIndex} data-calendar-column={columnIndex} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationMinutes / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={ariaLabel}>{ownership === "mine" && <><span className="booking-card" aria-hidden="true"><span className="booking-sheet" /></span><span className="booking-fold" aria-hidden="true" /></>}<span className="booking-title">{ownership === "mine" && <i />}{booking.owner?.name || "未知用户"} · 已预约</span><span className="booking-case">案号 {booking.caseNumber}</span>{countdown && <span className="booking-countdown" aria-hidden="true">{countdown.label}</span>}</button>;
+                return <button className={bookingClass} data-booking-ownership={ownership} data-calendar-row={rowIndex} data-calendar-column={columnIndex} style={{ ...tagStyle(tag), "--booking-span": Math.max(1, Math.round(durationMinutes / Number(settings.slotMinutes || 30))) }} key={room.id + start} tabIndex={-1} onClick={() => openDetails(booking)} aria-label={ariaLabel}>{ownership === "mine" && <><span className="booking-card" aria-hidden="true"><span className="booking-sheet" /></span><span className="booking-fold" aria-hidden="true" /></>}<span className="booking-copy"><span className="booking-title">{ownership === "mine" && <i />}<span title={titleText}>{titleText}</span></span><span className="booking-case" title={caseText}>{caseText}</span></span>{countdown && <span className="booking-countdown" aria-hidden="true">{countdown.label}</span>}</button>;
               }
               const slotStarted = hasBookingStarted({ date: dateKey(currentDate), start, serverDate: businessClock.date, serverTime: businessClock.time });
               const outsideWorkHours = !isWithinWorkingHours(start, end, settings.workStart, settings.workEnd);

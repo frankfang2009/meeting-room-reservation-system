@@ -349,6 +349,7 @@
   position: relative;
   z-index: 2;
   height: 70px;
+  min-width: 0;
   margin: 3px 27px 0;
   padding: 0;
   overflow: hidden;
@@ -518,11 +519,13 @@
   filter: drop-shadow(1px 1px 1px rgba(20, 20, 19, 0.14));
 }
 
-.booked-slot.booking-mine .booking-title,
-.booked-slot.booking-mine .booking-case,
-.booked-slot.booking-mine .booking-countdown {
+.booked-slot.booking-mine .booking-copy {
   position: relative;
   z-index: 2;
+}
+
+.booked-slot.booking-mine .booking-countdown {
+  z-index: 3;
 }
 
 .booked-slot.booking-mine:hover .booking-sheet,
@@ -603,15 +606,39 @@
   box-shadow: 0 0 0 1px rgba(20, 20, 19, 0.34);
 }
 
+/* 折角和投影留在卡片外层；正文单独收进卡片宽度，长案号和长姓名用省略号截断。 */
+.booking-copy {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .booking-title {
   display: flex;
   align-items: center;
   gap: 11px;
+  width: 100%;
+  min-width: 0;
   font-size: 15px;
   font-weight: 500;
 }
 
+.booking-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .booking-title i {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -619,8 +646,18 @@
 }
 
 .booking-case {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   color: var(--faint);
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot.booked-slot.slot-countdown .booking-copy {
+  padding-right: 72px;
 }
 
 /* 抽屉打开时，为它对应的来源时段格保持一枚安静的石墨描边。 */

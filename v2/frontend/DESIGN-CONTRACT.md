@@ -314,7 +314,14 @@ not announced as either “mine” or “someone else’s”.
   mockup C. Sage and slate folds are darkened enough to stay visible. There
   is no paper texture. Hover may lift the card by 1px only when the user has
   not requested reduced motion. The dot, time, and title stay clear of the
-  fold, including on short cards.
+  fold, including on short cards. The card itself stays `overflow: visible`
+  so the fold and its shadow are not clipped. Title and case number live in
+  a separate shrinkable block: long names and case numbers (the API allows
+  120 characters) truncate with an ellipsis inside the card, on short cards
+  as well as ordinary ones, and the same rule applies to other people’s
+  blocks. The full name and case number stay in the button’s accessible name
+  and on hover titles. A countdown chip reserves space so the ellipsis
+  happens before the chip.
 - Other people’s blocks are flat on the canvas: `#f3efe8`, no shadow, no tag
   dot or tag-colored emphasis, muted smaller text, and a slightly deeper
   inset. Hover and focus stay quiet graphite, and tag filtering still fades
