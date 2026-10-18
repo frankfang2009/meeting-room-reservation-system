@@ -454,6 +454,11 @@ class DeidRuleTests(unittest.TestCase):
             "三十分钟",
             "明天晚上谈话",
             "会见室明天上午一小时",
+            "具体几点都可以",
+            "差不多一个钟头",
+            "个把小时",
+            "尽量最好有空就行吧",
+            "随便约一下呀",
         )
         for raw in samples:
             with self.subTest(raw=raw):
