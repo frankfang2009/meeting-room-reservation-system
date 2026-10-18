@@ -3,6 +3,9 @@
 日期、时间在服务器业务日上解析。空房查询只统计仍有效的占用，口径与
 ``reservations._conflicts`` 相同。当事人、案号和事项只读取请求者本人的
 历史预约；模型给出的事项提示不会写入预约。功能默认关闭。
+
+凌晨、早上、傍晚、晚上和夜里使用各自的时段窗口，再和工作时间取交集。
+没有交集时澄清并给出最近的工作时间，不把晚上改成下午，也不把凌晨改成上班后的第一段。
 """
 
 from __future__ import annotations
@@ -39,6 +42,21 @@ _DURATION_CHOICES = (60, 120, "window")
 _GUIDE_TEXT = "改期、取消和查询请到「我的预约」里处理。"
 _SAME_PARTY = "same_as_party_recent"
 _COUNT_WORDS = {2: "两", 3: "三"}
+# 与 model_intent 的时段窗口一致。上午、下午仍按上班到中午、中午到下班。
+_PERIOD_BOUNDS = {
+    "dawn": (0, 6 * 60),
+    "early": (6 * 60, 9 * 60),
+    "dusk": (17 * 60, 19 * 60),
+    "night": (18 * 60, 23 * 60),
+}
+_PERIOD_LABELS = {
+    "dawn": "凌晨",
+    "early": "早上",
+    "dusk": "傍晚",
+    "night": "晚上",
+    "morning": "上午",
+    "afternoon": "下午",
+}
 
 
 def conversation_available(db: sqlite3.Connection) -> bool:
@@ -326,6 +344,7 @@ def _plan(
     state["timePart"] = intent.time_part
     state["timeStart"] = intent.time_start
     state["timeEnd"] = intent.time_end
+    state["periodLabel"] = intent.period_label
     state["notes"] = intent.notes or ""
     state["startExplicit"] = intent.time_part == "exact" and bool(intent.time_start)
     state["endExplicit"] = intent.time_part == "exact" and bool(intent.time_end)
@@ -520,9 +539,14 @@ def _finalize(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> di
     if not state.get("date"):
         return _clarify(state, "这个日期不在可预约范围内。", options=[])
     settings = _system_settings(db)
+    blocked = _blocked_period(db, state, settings)
+    if blocked is not None:
+        return blocked
     rooms = _active_rooms(db)
     windows = _free_windows(db, state, rooms, settings)
     if not windows:
+        if _period_too_short(state, settings):
+            return _clarify(state, "这个时段在工作时间里不够放下这段时长。", options=[])
         return _clarify(state, "这个时段没有空着的笔录室。", options=[])
     chosen = _choose_room(db, user_id, state, windows)
     if state.get("ambiguousDuration"):
@@ -712,10 +736,130 @@ def _end_bound(state: dict[str, Any]) -> int | None:
     return None
 
 
+def _blocked_period(
+    db: sqlite3.Connection,
+    state: dict[str, Any],
+    settings: sqlite3.Row,
+) -> dict[str, Any] | None:
+    """时段落在工作时间外，或钟点和时段对不上时，不改成另一个时段。"""
+
+    work_start = time_to_minutes(settings["work_start"], field="workStart")
+    work_end = time_to_minutes(settings["work_end"], field="workEnd")
+    part = state.get("timePart") or "any"
+    label = state.get("periodLabel") or _PERIOD_LABELS.get(part, "")
+    clock = state.get("timeStart")
+    raw = _raw_period(part)
+    if clock and part not in {"exact", "any"} and raw is not None:
+        start = time_to_minutes(clock, field="start")
+        if not raw[0] <= start < raw[1]:
+            text = f"{clock}不在{label}（{minutes_to_time(raw[0])}–{minutes_to_time(raw[1])}）内。"
+            return _clarify(state, text, options=[])
+    if part == "exact" and clock:
+        start = time_to_minutes(clock, field="start")
+        if start < work_start or start >= work_end:
+            return _outside_clarify(db, state, settings, label)
+        return None
+    bounds = _PERIOD_BOUNDS.get(part)
+    if bounds is not None and max(bounds[0], work_start) >= min(bounds[1], work_end):
+        return _outside_clarify(db, state, settings, label)
+    return None
+
+
+def _raw_period(part: str) -> tuple[int, int] | None:
+    if part == "morning":
+        return 0, 12 * 60
+    if part == "afternoon":
+        return 12 * 60, 24 * 60
+    return _PERIOD_BOUNDS.get(part)
+
+
+def _outside_clarify(
+    db: sqlite3.Connection,
+    state: dict[str, Any],
+    settings: sqlite3.Row,
+    label: str,
+) -> dict[str, Any]:
+    hours = f"{settings['work_start']}–{settings['work_end']}"
+    if label:
+        text = f"{label}不在工作时间（{hours}）内。"
+    else:
+        text = f"这个时段不在工作时间（{hours}）内。"
+    return _clarify(state, text, options=_nearest_options(db, state, settings))
+
+
+def _nearest_options(
+    db: sqlite3.Connection,
+    state: dict[str, Any],
+    settings: sqlite3.Row,
+) -> list[dict[str, Any]]:
+    step = int(settings["slot_minutes"])
+    work_start = time_to_minutes(settings["work_start"], field="workStart")
+    work_end = time_to_minutes(settings["work_end"], field="workEnd")
+    duration = state.get("duration")
+    maximum = int(settings["max_duration_minutes"])
+    if not isinstance(duration, int) or duration < step or duration > maximum:
+        duration = 60 if step <= 60 <= maximum else step
+    duration -= duration % step
+    if duration < step or work_end - work_start < duration:
+        return []
+    part = state.get("timePart") or ""
+    bounds = _PERIOD_BOUNDS.get(part)
+    clock = state.get("timeStart")
+    if part == "exact" and clock:
+        after = time_to_minutes(clock, field="start") >= work_end
+    elif bounds is not None and bounds[0] >= work_end:
+        after = True
+    elif bounds is not None and bounds[1] <= work_start:
+        after = False
+    else:
+        after = False
+    start = work_end - duration if after else work_start
+    if start < work_start or (start - work_start) % step != 0:
+        return []
+    options = []
+    for room in _active_rooms(db):
+        options.append(
+            {
+                "type": "room",
+                "roomId": room["id"],
+                "roomName": room["name"],
+                "date": state.get("date"),
+                "windowStart": minutes_to_time(start),
+                "windowEnd": minutes_to_time(start + duration),
+                "maxDuration": duration,
+            }
+        )
+        if len(options) == 3:
+            break
+    return options
+
+
+def _period_too_short(state: dict[str, Any], settings: sqlite3.Row) -> bool:
+    part = state.get("timePart") or ""
+    bounds = _PERIOD_BOUNDS.get(part)
+    if bounds is None:
+        return False
+    work_start = time_to_minutes(settings["work_start"], field="workStart")
+    work_end = time_to_minutes(settings["work_end"], field="workEnd")
+    start = max(bounds[0], work_start)
+    end = min(bounds[1], work_end)
+    if start >= end:
+        return False
+    duration = state.get("duration")
+    return isinstance(duration, int) and duration > end - start
+
+
 def _time_window(
     state: dict[str, Any], work_start: int, work_end: int, step: int
 ) -> tuple[int, int]:
     part = state.get("timePart") or "any"
+    if part in _PERIOD_BOUNDS:
+        low, high = _PERIOD_BOUNDS[part]
+        start = max(low, work_start)
+        end = min(high, work_end)
+        if start >= end:
+            return start, start
+        return start, end
     if part == "morning":
         noon = _ceil_minutes(12 * 60, work_start, step)
         return work_start, min(noon, work_end)
@@ -1000,6 +1144,7 @@ def _blank_state() -> dict[str, Any]:
         "caseFromHistory": False,
         "purposeFromHistory": False,
         "historyDate": None,
+        "periodLabel": None,
     }
 
 
@@ -1165,13 +1310,11 @@ def _relative_day(target: date, today: date) -> str:
 
 def _time_label(state: dict[str, Any]) -> str:
     part = state.get("timePart")
-    if part == "morning":
-        return "上午"
-    if part == "afternoon":
-        return "下午"
     if part == "exact" and state.get("timeStart"):
         return str(state["timeStart"])
-    return ""
+    if state.get("periodLabel"):
+        return str(state["periodLabel"])
+    return _PERIOD_LABELS.get(part, "")
 
 
 def _optional_text(value: object, field: str, label: str) -> str:

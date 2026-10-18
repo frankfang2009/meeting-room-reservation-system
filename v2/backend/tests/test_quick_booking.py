@@ -9,6 +9,7 @@ import sqlite3
 import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 import v2app.db as db_module
@@ -45,7 +46,18 @@ _SPOKEN_DIGITS = str.maketrans(
 )
 
 
-def _benign(text, *, date, part, duration, start=None, end=None, room=None, date_body=None):
+def _benign(
+    text,
+    *,
+    date,
+    part,
+    duration,
+    start=None,
+    end=None,
+    room=None,
+    date_body=None,
+    outside=False,
+):
     return {
         "text": text,
         "date": date,
@@ -55,6 +67,7 @@ def _benign(text, *, date, part, duration, start=None, end=None, room=None, date
         "end": end,
         "room": room,
         "date_body": date_body or {"relative_days": (date and 0) or 0},
+        "outside": outside,
     }
 
 
@@ -133,9 +146,10 @@ _BENIGN_CORPUS = (
     _benign(
         "明天晚上谈话半小时",
         date="2026-08-10",
-        part="afternoon",
+        part="night",
         duration=30,
         date_body={"relative_days": 1},
+        outside=True,
     ),
     _benign(
         "明天上午会见一小时",
@@ -299,9 +313,10 @@ _BENIGN_CORPUS = (
     _benign(
         "明天晚上一小时",
         date="2026-08-10",
-        part="afternoon",
+        part="night",
         duration=60,
         date_body={"relative_days": 1},
+        outside=True,
     ),
     _benign(
         "后天上午九点三十分，2号笔录室，半小时",
@@ -337,9 +352,10 @@ _BENIGN_CORPUS = (
     _benign(
         "明天晚上谈话",
         date="2026-08-10",
-        part="afternoon",
+        part="night",
         duration=None,
         date_body={"relative_days": 1},
+        outside=True,
     ),
     _benign(
         "明天上午会见",
@@ -1084,7 +1100,15 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             self.assertEqual(draft.get("timeStart"), sample["start"], sample["text"])
             self.assertEqual(draft.get("timeEnd"), sample["end"], sample["text"])
             self.assertEqual(draft.get("duration"), sample["duration"], sample["text"])
-            if sample["duration"] is None:
+            if sample["outside"]:
+                self.assertEqual(reply["kind"], "clarify", sample["text"])
+                self.assertIn("工作时间", reply["text"], sample["text"])
+                self.assertNotIn("prepared", reply, sample["text"])
+                for option in reply["options"]:
+                    self.assertGreaterEqual(option["windowStart"], "08:30", sample["text"])
+                    self.assertLessEqual(option["windowEnd"], "17:30", sample["text"])
+                    self.assertNotEqual(option["windowStart"], "12:00", sample["text"])
+            elif sample["duration"] is None:
                 self.assertIn("duration", reply, sample["text"])
             if sample["room"] is None:
                 self.assertEqual(reply["kind"], "clarify", sample["text"])
@@ -1109,7 +1133,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(local + model, len(_BENIGN_CORPUS))
         self.assertGreater(local, 0)
         self.assertGreater(model, 0)
-        self.assertEqual((local, model), (33, 8))
+        self.assertEqual((local, model), (34, 7))
 
     def test_sensitive_repros_do_not_reach_provider_or_audit(self) -> None:
         user, client, _rooms = self.begin()
@@ -1218,6 +1242,200 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertIsInstance(details["sentText"], str)
         self.assertNotIn(content, stored)
         self.assertNotIn("普通员工", stored)
+
+    def test_tomorrow_morning_compound_commits_the_next_day(self) -> None:
+        _user, client, rooms = self.begin()
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        provider = FakeProvider([])
+        self.enable(provider)
+        response = self.write(
+            "POST",
+            "/api/v1/conversations/new/messages",
+            {"text": "明早十点笔录室1用半小时"},
+            client=client,
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(provider.calls, [])
+        prepared = body["reply"]["prepared"]["booking"]
+        self.assertEqual(prepared["date"], "2026-08-10")
+        self.assertEqual(prepared["start"], "10:00")
+        self.assertEqual(prepared["end"], "10:30")
+        self.assertEqual(prepared["roomId"], room["id"])
+        supplied = self.write(
+            "POST",
+            "/api/v1/quick-booking/prepare",
+            {
+                "draftId": body["conversation"]["id"],
+                "purpose": "询问笔录",
+                "partyName": "孙某",
+                "caseNumber": "2026-087",
+            },
+            client=client,
+        )
+        self.assertEqual(supplied.status_code, 200, supplied.get_json())
+        created = self.write(
+            "POST",
+            "/api/v1/quick-booking/commit",
+            {"token": supplied.get_json()["reply"]["prepared"]["token"]},
+            client=client,
+        )
+        saved = created.get_json()
+        self.assertEqual(created.status_code, 201, saved)
+        self.assertEqual(saved["date"], "2026-08-10")
+        self.assertEqual(saved["start"], "10:00")
+        self.assertEqual(saved["end"], "10:30")
+        self.assertEqual(saved["roomId"], room["id"])
+
+    def test_night_and_dawn_clarify_outside_working_hours(self) -> None:
+        _user, client, _rooms = self.begin()
+        samples = (
+            ("明天晚上笔录室2用一个小时", "2026-08-10", "晚上", "night"),
+            ("后天夜里笔录室1半小时", "2026-08-11", "夜里", "night"),
+            ("下周四凌晨笔录室1一小时", "2026-08-13", "凌晨", "dawn"),
+        )
+        for text, day, label, part in samples:
+            provider = FakeProvider([])
+            self.enable(provider)
+            response = self.write(
+                "POST",
+                "/api/v1/conversations/new/messages",
+                {"text": text},
+                client=client,
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            self.assertEqual(provider.calls, [], text)
+            reply = body["reply"]
+            self.assertEqual(reply["kind"], "clarify", text)
+            self.assertIn(label, reply["text"], text)
+            self.assertIn("工作时间", reply["text"], text)
+            self.assertNotIn("prepared", reply, text)
+            self.assertGreaterEqual(len(reply["options"]), 1, text)
+            for option in reply["options"]:
+                self.assertGreaterEqual(option["windowStart"], "08:30", text)
+                self.assertLessEqual(option["windowEnd"], "17:30", text)
+                self.assertNotEqual(option["windowStart"], "12:00", text)
+            with self.app.app_context():
+                raw = (
+                    get_db()
+                    .execute(
+                        "SELECT draft_json FROM conversations WHERE id = ?",
+                        (body["conversation"]["id"],),
+                    )
+                    .fetchone()[0]
+                )
+            draft = json.loads(raw)
+            self.assertEqual(draft["date"], day, text)
+            self.assertEqual(draft["timePart"], part, text)
+            self.assertNotEqual(draft.get("timeStart"), "12:00", text)
+
+    def test_clock_outside_its_period_is_not_rewritten(self) -> None:
+        _user, client, _rooms = self.begin()
+        provider = FakeProvider([])
+        self.enable(provider)
+        response = self.write(
+            "POST",
+            "/api/v1/conversations/new/messages",
+            {"text": "明天早上十点笔录室1一小时"},
+            client=client,
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(provider.calls, [])
+        reply = body["reply"]
+        self.assertEqual(reply["kind"], "clarify")
+        self.assertIn("10:00", reply["text"])
+        self.assertIn("早上", reply["text"])
+        self.assertNotIn("prepared", reply)
+
+    def test_holdout_benign_corpus_stays_usable(self) -> None:
+        path = Path(__file__).resolve().parent / "fixtures" / "benign-holdout.json"
+        samples = json.loads(path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(samples), 30)
+        user, client, rooms = self.begin()
+        room_ids = {room["name"]: room["id"] for room in rooms}
+        counts = {"local": 0, "model": 0, "fallback": 0, "clarify": 0, "prepared": 0}
+        for sample in samples:
+            intent = _intent(
+                date=sample.get("date_body") or {"relative_days": 1},
+                time={
+                    "part": sample.get("provider_part", "afternoon"),
+                    "start": sample.get("provider_start"),
+                    "end": sample.get("provider_end"),
+                },
+                duration_minutes=sample.get("provider_duration", sample.get("duration")),
+                room={"name": sample.get("room"), "kind": None},
+                party_ref=None,
+                case_ref=None,
+                purpose_hint=None,
+                need_clarification=sample["kind"] != "prepared",
+                missing=sample.get("missing") or [],
+            )
+            provider = FakeProvider([json.dumps(intent, ensure_ascii=False)])
+            self.enable(provider)
+            response = self.write(
+                "POST",
+                "/api/v1/conversations/new/messages",
+                {"text": sample["text"]},
+                client=client,
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            reply = body["reply"]
+            self.assertNotEqual(reply["kind"], "fallback", sample["text"])
+            if provider.calls:
+                counts["model"] += 1
+                with self.app.app_context():
+                    context = deid_context_for_user(get_db(), user["id"])
+                masked = deidentify(sample["text"], context)
+                self.assertTrue(masked.confident, (sample["text"], masked.reasons, masked.text))
+            else:
+                counts["local"] += 1
+            counts[reply["kind"]] += 1
+            with self.app.app_context():
+                raw = (
+                    get_db()
+                    .execute(
+                        "SELECT draft_json FROM conversations WHERE id = ?",
+                        (body["conversation"]["id"],),
+                    )
+                    .fetchone()[0]
+                )
+            draft = json.loads(raw)
+            if sample.get("date"):
+                self.assertEqual(draft["date"], sample["date"], sample["text"])
+            if sample.get("part"):
+                self.assertEqual(draft["timePart"], sample["part"], sample["text"])
+            if sample["kind"] == "prepared":
+                booking = reply["prepared"]["booking"]
+                self.assertEqual(booking["date"], sample["date"], sample["text"])
+                self.assertEqual(booking["start"], sample["start"], sample["text"])
+                self.assertEqual(booking["end"], sample["end"], sample["text"])
+                self.assertEqual(booking["duration"], sample["duration"], sample["text"])
+                self.assertEqual(booking["roomId"], room_ids[sample["room"]], sample["text"])
+            elif sample["kind"] == "outside":
+                self.assertEqual(reply["kind"], "clarify", sample["text"])
+                self.assertIn("工作时间", reply["text"], sample["text"])
+                self.assertIn(sample["label"], reply["text"], sample["text"])
+                self.assertNotIn("prepared", reply)
+                for option in reply["options"]:
+                    self.assertNotEqual(option["windowStart"], "12:00", sample["text"])
+                    self.assertLessEqual(option["windowEnd"], "17:30", sample["text"])
+            elif sample["kind"] == "mismatch":
+                self.assertEqual(reply["kind"], "clarify", sample["text"])
+                self.assertIn(sample["needle"], reply["text"], sample["text"])
+                self.assertNotIn("prepared", reply)
+            else:
+                self.assertEqual(reply["kind"], "clarify", sample["text"])
+                self.assertNotIn("prepared", reply)
+        self.assertEqual(counts["fallback"], 0)
+        self.assertEqual(counts["prepared"] + counts["clarify"], len(samples))
+        self.assertGreaterEqual(counts["local"], 1)
+        self.assertEqual(
+            (counts["local"], counts["model"], counts["prepared"], counts["clarify"]),
+            (30, 3, 17, 16),
+        )
 
     def test_v4_database_gains_disabled_quick_booking_tables(self) -> None:
         self.setup_system()
