@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -125,11 +126,7 @@ _LEXICON_TEXT = """
 明天下午两点 这个案子 下周一
 """
 _PARTICLE_TEXT = "的了和是在要与及或到去用来请把被从对给就也再不没会能为个向往做约看帮找让很及"
-_LEXICON = frozenset(
-    word
-    for word in _LEXICON_TEXT.split()
-    if len(word) >= 2
-) | frozenset(
+_LEXICON = frozenset(word for word in _LEXICON_TEXT.split() if len(word) >= 2) | frozenset(
     char for char in _PARTICLE_TEXT if char not in _SINGLE_SURNAMES or char == "和"
 )
 
@@ -142,6 +139,24 @@ _SHORT_DIGIT_RE = re.compile(r"(?<=第)\d{2,}|\d{2,}(?=[号字])")
 _ID_RE = r"(?<![0-9A-Za-z])\d{17}[\dXx](?![0-9A-Za-z])|(?<![0-9])\d{15}(?![0-9])"
 _MOBILE_RE = r"(?<![0-9])(?:\+?86[-\s]?)?1[3-9]\d[-\s]?\d{4}[-\s]?\d{4}(?![0-9])"
 _LANDLINE_RE = r"(?<![0-9])0\d{2,3}[-\s]?\d{7,8}(?![0-9])"
+# 逐位或分组隔开的数字。分隔符至少出现一次，避免把日期里的连字符整段吞掉。
+_SPLIT_DIGIT_RE = re.compile(r"(?<!\d)(?:\d[ \t·•・．.\-]+){2,}\d(?!\d)")
+_CN_NUMERALS = frozenset("〇零一二三四五六七八九壹贰貳叁肆伍陆陸柒捌玖拾佰仟")
+_LATIN_ALLOW = frozenset({"no", "min", "h", "am", "pm"})
+_KEYWORD_TAILS = (
+    ("联系电话", "电话"),
+    ("当事人电话", "电话"),
+    ("电话", "电话"),
+    ("身份证", "证件号"),
+    ("证件号", "证件号"),
+    ("证件", "证件号"),
+    ("案件编号", "案号"),
+    ("案件号", "案号"),
+    ("案号", "案号"),
+    ("编号", "案号"),
+    ("卷号", "案号"),
+    ("文号", "案号"),
+)
 
 
 @dataclass(frozen=True)
@@ -211,8 +226,62 @@ def _halfwidth(text: str) -> str:
     return "".join(out)
 
 
+def _normalize_text(text: str) -> str:
+    """半角、去掉格式字符，并把各种空格折成普通空格。
+
+    全角空格、不换行空格、零宽字符不能把「李明」拆成匹配不到的两截。
+    """
+
+    text = _halfwidth(text)
+    out: list[str] = []
+    for char in text:
+        category = unicodedata.category(char)
+        if category == "Cf":
+            continue
+        if category == "Zs" and char != " ":
+            out.append(" ")
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _bridge_cjk(text: str) -> str:
+    """把拆开的姓名重新接上，但保留「号 明天」这类词边界上的空格。"""
+
+    def join(match: re.Match[str]) -> str:
+        right = match.string[match.end() :]
+        if _lexicon_prefix_length(right, 0) >= 2:
+            return match.group(0)
+        left_end = match.start()
+        left_start = left_end
+        while left_start > 0 and "\u4e00" <= match.string[left_start - 1] <= "\u9fff":
+            left_start -= 1
+        left = match.string[left_start:left_end]
+        if left in _COMPOUND_SURNAMES or (len(left) == 1 and left in _SINGLE_SURNAMES):
+            return ""
+        return match.group(0)
+
+    return re.sub(rf"(?<=[{CJK}])[ \t·•・．.]+(?=[{CJK}])", join, text)
+
+
+def _collapse_separated_digits(text: str) -> str:
+    """把逐位或分组隔开的数字收成连续数字，交给电话、证件和数字兜底。"""
+
+    return _SPLIT_DIGIT_RE.sub(lambda match: re.sub(r"\D", "", match.group(0)), text)
+
+
+def _lexicon_prefix_length(text: str, index: int) -> int:
+    best = 0
+    for word in _LEXICON:
+        if len(word) < 2 or len(word) <= best:
+            continue
+        if text.startswith(word, index):
+            best = len(word)
+    return best
+
+
 def _identity(value: str) -> str:
-    text = _halfwidth(value).replace(" ", "")
+    text = _bridge_cjk(_normalize_text(value)).replace(" ", "")
     for full, half in (
         ("（", "("),
         ("）", ")"),
@@ -323,11 +392,7 @@ def _name_spans(run: str) -> list[tuple[int, int]]:
         while end < len(run) and not consumed[end]:
             end += 1
         start = index
-        if (
-            start > 0
-            and cover[start - 1] == 1
-            and run[start - 1] in _SINGLE_SURNAMES
-        ):
+        if start > 0 and cover[start - 1] == 1 and run[start - 1] in _SINGLE_SURNAMES:
             start -= 1
         chunk = run[start:end]
         if _is_personal_name(chunk):
@@ -367,21 +432,24 @@ class _Session:
     def run(self, raw: str) -> DeidResult:
         if len(raw) > MAX_SOURCE_CHARS:
             self._add_reason("source_too_long")
-        text = _halfwidth(raw)
+        text = _bridge_cjk(_normalize_text(raw))
         if "@" in text:
             self._add_reason("email_marker")
             text = _EMAIL_RE.sub(lambda match: self._placeholder("编号", match.group(0)), text)
 
         text = self._exact(text)
         text = self._party_patterns(text)
+        text = self._keyword_tails(text)
+        text = _collapse_separated_digits(text)
         text = self._sub(_ID_RE, "证件号", text)
         text = self._sub(_MOBILE_RE, "电话", text)
         text = self._sub(_LANDLINE_RE, "电话", text)
         text = self._protect_whitelist(text)
         text = self._structural(text)
         text = self._catchall_digits(text)
-        text = self._unknown_names(text)
         text = self._document_tails(text)
+        text = self._unknown_names(text)
+        text = self._unknown_latin(text)
         text = self._digit_backstop(text)
         text = self._restore(text)
 
@@ -474,6 +542,56 @@ class _Session:
             )
         return text
 
+    def _keyword_tails(self, text: str) -> str:
+        """敏感词后面没被词表解释掉的内容整段遮住。
+
+        「案号 A B C」不能只遮第一个字母；中文数字案号、逐位隔开的
+        电话和证件号也走这里。预约常用词（明天、下午）会截断尾巴。
+        """
+
+        spans: list[tuple[int, int, str]] = []
+        index = 0
+        while index < len(text):
+            if text[index] in (SENT_P0, SENT_W0):
+                index += 3
+                continue
+            matched: tuple[str, str] | None = None
+            for keyword, label in _KEYWORD_TAILS:
+                if text.startswith(keyword, index):
+                    matched = (keyword, label)
+                    break
+            if matched is None:
+                index += 1
+                continue
+            keyword, label = matched
+            start = index + len(keyword)
+            while start < len(text) and text[start] in " \t":
+                start += 1
+            if start < len(text) and text[start] in "是为:：":
+                start += 1
+                while start < len(text) and text[start] in " \t:：":
+                    start += 1
+            end = start
+            while end < len(text):
+                if text[end] in _DOC_DELIMITERS or text[end] in (SENT_P0, SENT_W0):
+                    break
+                if text[end] in "和与及或的":
+                    break
+                if _lexicon_prefix_length(text, end) >= 2:
+                    break
+                end += 1
+            while end > start and text[end - 1] in " \t":
+                end -= 1
+            residue = text[start:end]
+            if residue and not _SENTINEL_PAIR.search(residue):
+                spans.append((start, end, label))
+                index = end
+            else:
+                index += len(keyword)
+        for start, end, label in reversed(spans):
+            text = text[:start] + self._placeholder(label, text[start:end]) + text[end:]
+        return text
+
     def _party_patterns(self, text: str) -> str:
         def title(match: re.Match[str]) -> str:
             return self._placeholder("当事人", match.group(0))
@@ -488,11 +606,7 @@ class _Session:
         return _XIAO_RE.sub(xiao, text)
 
     def _protect_whitelist(self, text: str) -> str:
-        variants = {
-            variant
-            for name in self.context.room_names
-            for variant in _room_variants(name)
-        }
+        variants = {variant for name in self.context.room_names for variant in _room_variants(name)}
         for room in sorted(variants, key=len, reverse=True):
             text = re.sub(re.escape(room) + r"(?!\d)", self._protect, text)
         patterns = (
@@ -558,17 +672,49 @@ class _Session:
 
     def _mask_names(self, run: str) -> str:
         spans = _name_spans(run)
+        consumed, _cover = _lexicon_cover(run)
+        covered = consumed[:]
+        for start, end in spans:
+            for offset in range(start, end):
+                covered[offset] = True
+        index = 0
+        while index < len(run):
+            if covered[index]:
+                index += 1
+                continue
+            end = index
+            while end < len(run) and not covered[end]:
+                end += 1
+            # 姓氏表盖不住、又不像案号或房间的短汉字（如阿依古丽）不得外发。
+            chunk = run[index:end]
+            if (
+                2 <= len(chunk) <= 8
+                and chunk not in _DOC_KEYWORDS
+                and not any(char in "号室录案点时日月" for char in chunk)
+            ):
+                spans.append((index, end))
+            index = end
         if not spans:
             return run
         pieces: list[str] = []
         cursor = 0
-        for start, end in spans:
+        for start, end in sorted(spans):
             pieces.append(run[cursor:start])
             self._add_reason("unknown_name")
             pieces.append(self._placeholder("当事人", run[start:end]))
             cursor = end
         pieces.append(run[cursor:])
         return "".join(pieces)
+
+    def _unknown_latin(self, text: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            token = match.group(0)
+            if token.casefold() in _LATIN_ALLOW:
+                return token
+            self._add_reason("unknown_name")
+            return self._placeholder("当事人", token)
+
+        return re.sub(r"(?<![A-Za-z])[A-Za-z]{2,}(?![A-Za-z])", replace, text)
 
     def _document_tails(self, text: str) -> str:
         occupied = [False] * len(text)
@@ -598,12 +744,20 @@ class _Session:
         return text
 
     def _digit_backstop(self, text: str) -> str:
-        visible = _SENTINEL_PAIR.sub(" ", text)
+        visible = _collapse_separated_digits(_SENTINEL_PAIR.sub(" ", text))
+        if any(char in _CN_NUMERALS for char in visible) and re.search(
+            rf"[{''.join(_CN_NUMERALS)}]{{4,}}", visible
+        ):
+            self._add_reason("unknown_digit_run")
         if _LONG_DIGIT_RE.search(visible) or _SHORT_DIGIT_RE.search(visible):
             self._add_reason("unknown_digit_run")
             text = self._sub(r"\d{3,}", "编号", text)
             text = self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
-        if re.search(_ID_RE, visible) or re.search(_MOBILE_RE, visible) or re.search(_LANDLINE_RE, visible):
+        if (
+            re.search(_ID_RE, visible)
+            or re.search(_MOBILE_RE, visible)
+            or re.search(_LANDLINE_RE, visible)
+        ):
             self._add_reason("unknown_digit_run")
             text = self._sub(_ID_RE, "证件号", text)
             text = self._sub(_MOBILE_RE, "电话", text)

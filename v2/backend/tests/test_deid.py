@@ -205,6 +205,75 @@ class DeidRuleTests(unittest.TestCase):
         self.assertFalse(result.confident)
         self.assertIn("masked_too_long", result.reasons)
 
+    def test_spaced_known_name_variants_do_not_leak(self) -> None:
+        context = DeidContext(directory_names=("李明",))
+        samples = (
+            "李 明明天下午",
+            "李\u3000明明天下午",
+            "李\u200b明明天下午",
+            "李\u00a0明明天下午",
+            "李·明明天下午",
+            "李\u2060明明天下午",
+        )
+        for raw in samples:
+            with self.subTest(raw=raw):
+                result = deidentify(raw, context)
+                self.assertTrue(result.confident, (result.reasons, result.text))
+                self.assertIn("[同事1]", result.text)
+                self.assertNotIn("李", result.text)
+                self.assertNotRegex(result.text, r"李\s*明")
+                self.assertEqual(result.mapping["[同事1]"], "李明")
+
+    def test_unknown_latin_and_uyghur_names_are_not_sent(self) -> None:
+        latin = deidentify("明天下午 Alice Smith 做笔录", DeidContext())
+        self.assertFalse(latin.confident)
+        self.assertIn("unknown_name", latin.reasons)
+        self.assertNotIn("Alice", latin.text)
+        self.assertNotIn("Smith", latin.text)
+        uyghur = deidentify("明天下午和阿依古丽做笔录", DeidContext())
+        self.assertFalse(uyghur.confident)
+        self.assertIn("unknown_name", uyghur.reasons)
+        self.assertNotIn("阿依古丽", uyghur.text)
+
+    def test_separated_phone_id_and_chinese_case_numbers_do_not_leak(self) -> None:
+        phone = deidentify("电话 1 3 8 0 0 1 3 8 0 0 0", DeidContext())
+        self.assertIn("[电话1]", phone.text)
+        self.assertNotIn("13800138000", re.sub(r"\D", "", phone.text))
+        self.assertNotRegex(phone.text, r"1\s*3\s*8")
+        spaced_id = "身份证 " + " ".join("110101199003071234")
+        identified = deidentify(spaced_id, DeidContext())
+        self.assertIn("[证件号1]", identified.text)
+        self.assertNotIn("110101199003071234", re.sub(r"\D", "", identified.text))
+        numerals = deidentify("案号二〇二六沪零一零一民初一二三号", DeidContext())
+        self.assertIn("[案号1]", numerals.text)
+        self.assertNotIn("二〇二六", numerals.text)
+        self.assertNotIn("零一零一", numerals.text)
+        self.assertNotIn("一二三", numerals.text)
+        wide = deidentify("电话１　３　８　０　０　１　３　８　０　０　０", DeidContext())
+        self.assertIn("[电话1]", wide.text)
+        self.assertNotIn("13800138000", re.sub(r"\D", "", wide.text))
+        self.assertNotIn("１", wide.text)
+        split_case = deidentify("案号 A B C，明天", DeidContext())
+        self.assertIn("[案号1]", split_case.text)
+        self.assertNotIn("B", split_case.text)
+        self.assertNotIn("C", split_case.text)
+
+    def test_fullwidth_case_numbers_still_mask(self) -> None:
+        exact = deidentify(
+            "案号２０２６－０８７",
+            DeidContext(case_numbers=("2026-087",)),
+        )
+        self.assertTrue(exact.confident, (exact.reasons, exact.text))
+        self.assertEqual(exact.text, "案号[案号1]")
+        self.assertNotIn("087", exact.text)
+        self.assertNotIn("０８７", exact.text)
+        judicial = deidentify("（２０２６）沪０１０１民初１２３４号明天", DeidContext())
+        self.assertTrue(judicial.confident, (judicial.reasons, judicial.text))
+        self.assertIn("[案号1]", judicial.text)
+        self.assertNotIn("1234", judicial.text)
+        self.assertNotIn("0101", judicial.text)
+        self.assertNotIn("１２３４", judicial.text)
+
     def test_non_string_input_is_rejected(self) -> None:
         with self.assertRaises(TypeError):
             deidentify(None)  # type: ignore[arg-type]
