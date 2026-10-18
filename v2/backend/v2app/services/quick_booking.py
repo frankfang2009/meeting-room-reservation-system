@@ -328,6 +328,7 @@ def _plan(
     state["timeEnd"] = intent.time_end
     state["notes"] = intent.notes or ""
     state["startExplicit"] = intent.time_part == "exact" and bool(intent.time_start)
+    state["endExplicit"] = intent.time_part == "exact" and bool(intent.time_end)
     span = _explicit_span(intent)
     if span is not None and (
         not _duration_allowed(span) or intent.duration_minutes not in (None, span)
@@ -673,21 +674,41 @@ def _free_spans(
 
 def _start_for(state: dict[str, Any], room: dict[str, Any], settings: sqlite3.Row) -> int | None:
     step = int(settings["slot_minutes"])
+    end_bound = _end_bound(state)
     if state.get("durationMode") == "window":
-        return int(room["spanStart"])
+        start = int(room["spanStart"])
+        if end_bound is not None and start >= end_bound:
+            return None
+        return start
     duration = int(state.get("duration") or 0)
     if duration < step or duration > int(settings["max_duration_minutes"]):
         return None
+    span_end = int(room["spanEnd"])
+    if end_bound is not None:
+        span_end = min(span_end, end_bound)
     if state.get("startExplicit") and state.get("timeStart"):
         start = time_to_minutes(state["timeStart"], field="start")
         work_start = time_to_minutes(settings["work_start"], field="workStart")
         if (start - work_start) % step != 0:
             return None
-        if not (int(room["spanStart"]) <= start and start + duration <= int(room["spanEnd"])):
+        if not (int(room["spanStart"]) <= start and start + duration <= span_end):
             return None
         return start
-    if int(room["spanStart"]) + duration <= int(room["spanEnd"]):
+    if state.get("endExplicit"):
+        latest = None
+        cursor = int(room["spanStart"])
+        while cursor + duration <= span_end:
+            latest = cursor
+            cursor += step
+        return latest
+    if int(room["spanStart"]) + duration <= span_end:
         return int(room["spanStart"])
+    return None
+
+
+def _end_bound(state: dict[str, Any]) -> int | None:
+    if state.get("endExplicit") and state.get("timeEnd"):
+        return time_to_minutes(state["timeEnd"], field="end")
     return None
 
 
@@ -701,9 +722,21 @@ def _time_window(
     if part == "afternoon":
         noon = _ceil_minutes(12 * 60, work_start, step)
         return min(max(noon, work_start), work_end), work_end
-    if part == "exact" and state.get("timeStart"):
-        start = time_to_minutes(state["timeStart"], field="start")
-        return start, work_end
+    if part == "exact":
+        has_start = bool(state.get("timeStart"))
+        has_end = bool(state.get("timeEnd"))
+        if has_start and has_end:
+            start = time_to_minutes(state["timeStart"], field="start")
+            end = time_to_minutes(state["timeEnd"], field="end")
+            if end <= start:
+                return start, start
+            return start, min(end, work_end)
+        if has_start:
+            start = time_to_minutes(state["timeStart"], field="start")
+            return start, work_end
+        if has_end:
+            end = time_to_minutes(state["timeEnd"], field="end")
+            return work_start, min(max(end, work_start), work_end)
     return work_start, work_end
 
 
@@ -957,6 +990,7 @@ def _blank_state() -> dict[str, Any]:
         "roomId": None,
         "roomExplicit": False,
         "startExplicit": False,
+        "endExplicit": False,
         "partyName": "",
         "caseNumber": "",
         "purpose": "",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import sqlite3
 import unittest
@@ -24,6 +25,24 @@ OTHER_PURPOSE = "他人事项秘密"
 OWN_PARTY = "孙某"
 OWN_CASE = "2026-087"
 OWN_PURPOSE = "询问笔录"
+_SPOKEN_DIGITS = str.maketrans(
+    {
+        "〇": "0",
+        "零": "0",
+        "洞": "0",
+        "一": "1",
+        "幺": "1",
+        "二": "2",
+        "两": "2",
+        "三": "3",
+        "四": "4",
+        "五": "5",
+        "六": "6",
+        "七": "7",
+        "八": "8",
+        "九": "9",
+    }
+)
 
 
 def _intent(**overrides) -> dict:
@@ -625,6 +644,134 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(clarified.status_code, 200, clarified_body)
         self.assertEqual(clarified_body["reply"]["kind"], "clarify")
         self.assertNotIn("token", clarified_body["reply"])
+
+    def test_end_only_deadline_never_overruns_and_start_only_holds(self) -> None:
+        user, client, rooms = self.begin()
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        room_body = {"name": room["name"], "kind": None}
+        too_early = self.ask(
+            client,
+            user["id"],
+            "明天09:00前结束",
+            time={"part": "exact", "start": None, "end": "09:00"},
+            duration_minutes=None,
+            room=room_body,
+        )[1]
+        early_body = too_early.get_json()
+        self.assertEqual(too_early.status_code, 200, early_body)
+        self.assertEqual(early_body["reply"]["kind"], "clarify")
+        self.assertNotIn("prepared", early_body["reply"])
+        fits = self.ask(
+            client,
+            user["id"],
+            "明天10:00前结束",
+            time={"part": "exact", "start": None, "end": "10:00"},
+            duration_minutes=None,
+            room=room_body,
+        )[1]
+        fit_body = fits.get_json()
+        self.assertEqual(fits.status_code, 200, fit_body)
+        booking = fit_body["reply"]["prepared"]["booking"]
+        self.assertEqual(booking["start"], "09:00")
+        self.assertEqual(booking["end"], "10:00")
+        self.assertLessEqual(booking["end"], "10:00")
+        start_only = self.ask(
+            client,
+            user["id"],
+            "明天14:00以后",
+            time={"part": "exact", "start": "14:00", "end": None},
+            duration_minutes=None,
+            room=room_body,
+        )[1]
+        start_body = start_only.get_json()
+        self.assertEqual(start_only.status_code, 200, start_body)
+        started = start_body["reply"]["prepared"]["booking"]
+        self.assertEqual(started["start"], "14:00")
+        self.assertEqual(started["end"], "15:00")
+        short = self.ask(
+            client,
+            user["id"],
+            "明天10:00前结束，半小时",
+            time={"part": "exact", "start": None, "end": "10:00"},
+            duration_minutes=30,
+            room=room_body,
+        )[1]
+        short_booking = short.get_json()["reply"]["prepared"]["booking"]
+        self.assertEqual(short_booking["start"], "09:30")
+        self.assertEqual(short_booking["end"], "10:00")
+
+    def test_sensitive_repros_do_not_reach_provider_or_audit(self) -> None:
+        user, client, _rooms = self.begin()
+        created = self.write(
+            "POST",
+            "/api/v1/users",
+            {
+                "username": "liming",
+                "password": "employee-pass-123",
+                "name": "李明",
+                "department": "测试部门",
+                "role": "employee",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
+        samples = (
+            ("明天和李/明做笔录", ("李/明", "李明", "liming")),
+            ("明天和李_/明做笔录", ("李_/明", "李明")),
+            ("明天 L i M i n g 做笔录", ("L i M i n g", "liming", "LiMing")),
+            ("明天和Иван做笔录", ("Иван", "иван")),
+            ("明天和محمد做笔录", ("محمد",)),
+            ("明天和李月做笔录", ("李月",)),
+            ("明天和明月华做笔录", ("明月华",)),
+            ("联系电 话1/3/8/0/0/1/3/8/0/0/0", ("13800138000", "1/3/8")),
+            (
+                "案 号 二 〇 二 六 沪 零 一 零 一 民 初 一 二 三 号",
+                ("二〇二六", "零一零一", "一二三", "2026"),
+            ),
+            ("电话幺三八洞洞幺三八洞洞洞", ("幺三八洞洞幺三八洞洞洞", "13800138000")),
+        )
+        for text, needles in samples:
+            provider = FakeProvider([json.dumps(_intent(), ensure_ascii=False)])
+            self.enable(provider)
+            response = self.write(
+                "POST",
+                "/api/v1/conversations/new/messages",
+                {"text": text},
+                client=client,
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            payload = "\n".join(
+                message.content
+                for call in provider.calls
+                for message in call
+                if message.role == "user"
+            )
+            with self.app.app_context():
+                stored = (
+                    get_db()
+                    .execute(
+                        """
+                    SELECT details_json FROM security_audit_log
+                    WHERE action = 'model.request'
+                    ORDER BY id DESC LIMIT 1
+                    """
+                    )
+                    .fetchone()[0]
+                )
+            details = json.loads(stored)
+            sent = details.get("sentText") or ""
+            blob = "\n".join((payload, sent, stored))
+            compact = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", blob.casefold())
+            digits = re.sub(r"\D", "", blob.translate(_SPOKEN_DIGITS))
+            for needle in needles:
+                with self.subTest(text=text, needle=needle):
+                    self.assertNotIn(needle.casefold(), blob.casefold())
+                    folded = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", needle.casefold())
+                    if len(folded) >= 2:
+                        self.assertNotIn(folded, compact)
+                    needle_digits = re.sub(r"\D", "", needle.translate(_SPOKEN_DIGITS))
+                    if len(needle_digits) >= 3:
+                        self.assertNotIn(needle_digits, digits)
 
     def test_unhashable_model_json_falls_back_and_audits(self) -> None:
         _user, client, _rooms = self.begin()
