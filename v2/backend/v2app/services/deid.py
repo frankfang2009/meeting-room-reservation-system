@@ -4,6 +4,18 @@
 可以留下；其余字母、汉字和数字默认遮住。拿不准就返回 ``confident=False``，
 调用方不得把文本发出本机。宁可多遮，不可漏遮。
 
+威胁模型（后续验收按这条，而不是按故意混淆）：网关防范的是普通工作人员在
+正常书写时的意外泄露。要挡住常见姓名、案号、电话、证件号，以及常见输入变体
+（空格、全角、零宽字符、常见分隔符、中文和口语数字、NFKC 兼容字符）。
+故意混淆是已知残余风险，不作为本阶段的阻断项，包括：
+
+- 非拉丁、非汉字的十进制数字，例如阿拉伯-印度数字、泰文数字；
+- 数字与汉字交错，例如「1甲3乙8丙」；
+- 混合文字编码。
+
+首要安全边界在架构上：当事人、案号和事项不采用模型输出，模型只解析意图。
+脱敏是第二道防线。
+
 本模块只使用标准库，不联网，也不读取数据库。案号、当事人、同事姓名和
 房间名全部由调用方按现行权限放进 :class:`DeidContext`：
 
@@ -115,9 +127,10 @@ _LEXICON_TEXT = """
 下个月 上个月 这个月 下月 上月 明年 去年 今年
 一点 两点 三点 四点 五点 六点 七点 八点 九点 十点 十一点 十二点
 两点半 三点半 四点半 一点半 点半 半个 一刻 三刻
-小时 钟头 分钟 半小时 一小时 两小时 一个小时 两个小时 个小时
-笔录 笔录室 询问 询问室 调解 调解室 谈话 谈话笔录 会议室 小会议室
-案子 案件 预约 记录 开庭
+小时 钟头 分钟 半小时 一小时 两小时 一个小时 两个小时 三个小时 个小时
+一个半小时 半个小时 三十分钟 十五分钟 四十五分钟 三十分 十五分 四十五分
+笔录 笔录室 询问 询问室 调解 调解室 谈话 谈话笔录 会见 会议室 小会议室
+案子 案件 预约 预订 记录 开庭 开会 帮我 帮我约 帮我订 楼上 楼下
 案号 案件号 案件编号 编号 卷号 文号 文号是 卷宗 身份证 证件 电话
 联系电话 当事人电话 当事人 同事
 找个 那个 这个 这些 那些 还是 一起 帮忙 再约 再约一次 一次
@@ -127,7 +140,9 @@ _LEXICON_TEXT = """
 明天下午 明天上午 后天上午 周五上午 周四下午 下周三上午 上午两小时
 这个案子 下周一
 """
-_PARTICLE_TEXT = "的了和是在要与及或到去用来请把被从对给就也再不没会能为个向往做约看帮找让很及"
+_PARTICLE_TEXT = (
+    "的了和是在要与及或到去用来请把被从对给就也再不没会能为个向往做约看帮找让很及我订室"
+)
 _LEXICON = frozenset(word for word in _LEXICON_TEXT.split() if len(word) >= 2) | frozenset(
     char for char in _PARTICLE_TEXT if char not in _SINGLE_SURNAMES or char == "和"
 )
@@ -145,7 +160,8 @@ _LANDLINE_RE = r"(?<![0-9])0\d{2,3}[-\s]?\d{7,8}(?![0-9])"
 _DIGIT_CHARS = frozenset(
     "0123456789〇零一二三四五六七八九十百千两幺洞壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"
 )
-_LATIN_ALLOW = frozenset({"no", "min", "h", "am", "pm", "ai"})
+# 「no」只留给案号标记 No.。min / h / am / pm / ai 不在这里全局放行。
+_LATIN_ALLOW = frozenset({"no"})
 _NAME_MARKS = (
     "当事人",
     "同事",
@@ -244,14 +260,17 @@ def _halfwidth(text: str) -> str:
 def _nfkc_keep(char: str) -> bool:
     if char == " " or unicodedata.category(char) == "Zs":
         return True
+    if _is_han(char):
+        return True
     return char.isascii() and char.isalnum()
 
 
 def _normalize_text(text: str) -> str:
-    """先做兼容归一，再去掉格式字符和组合记号。
+    """整句做兼容归一，再去掉格式字符和组合记号。
 
-    只会采纳变成字母、数字或空格的 NFKC 结果，避免把中文标点折成英文标点。
-    全角数字、全角字母和阿拉伯-印度数字因此并进检测，中文逗号仍留在原文里。
+    汉字的兼容形式（例如兼容区里的姓）和变成字母、数字的 NFKC 结果都会采纳，
+    这样已知姓名在匹配前已经折成同一字形。中文标点仍留在原文里，避免逗号被
+    折成英文逗号。非拉丁十进制数字不在这里折成 ASCII，那是已知残余风险。
     """
 
     out: list[str] = []
@@ -455,16 +474,29 @@ def _room_variants(name: str) -> set[str]:
     return {item for item in variants if len(item) >= 2}
 
 
-def _unique_stripped(values: tuple[str, ...]) -> list[str]:
+def _unique_stripped(values: tuple[str, ...], *, minimum: int = 2) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for value in values:
         cleaned = value.strip()
-        if len(cleaned) < 2 or cleaned in seen:
+        if len(cleaned) < minimum or cleaned in seen:
             continue
         seen.add(cleaned)
         result.append(cleaned)
     return result
+
+
+def _lexicon_covers(text: str, index: int, length: int) -> bool:
+    """单字已知姓名落在「明天」这类预约词里面时，不要把它抠出来。"""
+
+    for word in _LEXICON:
+        if len(word) < 2:
+            continue
+        start = max(0, index - len(word) + 1)
+        for cursor in range(start, index + 1):
+            if text.startswith(word, cursor) and cursor + len(word) >= index + length:
+                return True
+    return False
 
 
 def _usable_mask(masked: str, original: str) -> bool:
@@ -606,8 +638,8 @@ class _Session:
         return re.sub(pattern, replace, text)
 
     def _exact(self, text: str) -> str:
-        parties = _unique_stripped(self.context.party_names)
-        directory = _unique_stripped(self.context.directory_names)
+        parties = _unique_stripped(self.context.party_names, minimum=1)
+        directory = _unique_stripped(self.context.directory_names, minimum=1)
         party_keys = {_identity(name) for name in parties}
         directory_only: list[str] = []
         for name in directory:
@@ -621,12 +653,17 @@ class _Session:
             for variant in _case_variants(case_number):
                 entries.append((variant, "案号", case_number))
         for name in parties:
-            entries.append((name, "当事人", name))
+            if len(name) < 2:
+                continue
+            folded = _normalize_text(name)
+            entries.append((folded, "当事人", name))
             masked = mask_party_name(name)
             if _usable_mask(masked, name):
                 entries.append((masked, "当事人", name))
         for name in directory_only:
-            entries.append((name, "同事", name))
+            if len(name) < 2:
+                continue
+            entries.append((_normalize_text(name), "同事", name))
 
         entries.sort(key=lambda item: len(item[0]), reverse=True)
         for variant, label, restore in entries:
@@ -648,17 +685,24 @@ class _Session:
         return text
 
     def _mask_collapsed_name(self, text: str, name: str, label: str, restore: str) -> str:
-        """在收掉分隔符之后的文本里找已知姓名，再把原文那一段换成占位符。"""
+        """在收掉分隔符之后的文本里找已知姓名，再把原文那一段换成占位符。
 
-        target, _origins = _collapse_between(name, _letter_core)
+        单字姓名也要遮。它若是「明天」这类预约词的一部分，则留在词里。
+        """
+
+        target, _origins = _collapse_between(_normalize_text(name), _letter_core)
         target = "".join(char for char in target if _letter_core(char))
-        if len(target) < 2:
+        if not target:
             return text
+        search_from = 0
         while True:
             collapsed, origins = _collapse_between(text, _letter_core)
-            index = collapsed.find(target)
+            index = collapsed.find(target, search_from)
             if index < 0:
                 return text
+            if len(target) == 1 and _lexicon_covers(collapsed, index, 1):
+                search_from = index + 1
+                continue
             origin_start = origins[index]
             origin_end = origins[index + len(target) - 1] + 1
             if _crosses_sentinel(text[origin_start:origin_end]):
@@ -668,6 +712,7 @@ class _Session:
             if updated == text:
                 return text
             text = updated
+            search_from = 0
 
     def _keyword_tails(self, text: str) -> str:
         """敏感词按收掉分隔符之后的样子匹配，后面没被词表解释掉的内容整段遮住。
@@ -745,9 +790,13 @@ class _Session:
             r"(?<![0-9A-Za-z\-/])(?:19|20)\d{2}-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])(?![0-9\-])",
             r"(?<![0-9/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![0-9/])",
             rf"(?:(?<=[月到至和或是在])|(?<![{CJK}A-Za-z0-9\-_/]))(?:0?[1-9]|[12]\d|3[01])\s*号(?![{CJK}]*?[0-9])(?=[上下早中晚那当的有开\s,，。]|$)",
-            r"(?<![0-9])(?:[01]?\d|2[0-3])\s*[:：]\s*[0-5]\d(?![0-9])",
+            r"(?<![0-9A-Za-z])(?:[01]?\d|2[0-3])\s*[:：]\s*[0-5]\d\s*(?:[AaPp][Mm])?(?![A-Za-z0-9])",
+            r"(?<![A-Za-z])[AaPp][Mm]\s*(?=(?:[01]?\d|2[0-3])(?:\s*[:：]\s*[0-5]\d)?)",
+            r"(?<![A-Za-z0-9])(?:[01]?\d|2[0-3])\s*[AaPp][Mm](?![A-Za-z])",
             r"(?<![0-9])(?:[01]?\d|2[0-3])\s*点\s*(?:半|一刻|三刻|[0-5]?\d\s*分?)?",
-            r"(?<![0-9])\d{1,3}(?:\.\d)?\s*个?\s*(?:小时|钟头|分钟|min|h)(?![A-Za-z])",
+            r"(?:十[一二]|[一二三四五六七八九两]|十)\s*点\s*(?:半|一刻|三刻|[零〇一二三四五六七八九十两]{1,3}\s*分)?",
+            r"(?:一个半小时|半个小时|[一二两三]\s*个\s*半\s*小时|[一二两三]\s*个?\s*小时|半\s*小时|[零〇一二三四五六七八九十两]{1,3}\s*分钟)",
+            r"(?<![0-9])\d{1,3}(?:\.\d)?\s*个?\s*(?:小时|钟头|分钟|[Mm][Ii][Nn]|[Hh])(?![A-Za-z])",
             r"(?<![0-9])\d{1,2}\s*(?:个人|人|位)",
             r"(?<![0-9])\d{1,2}\s*楼",
         )
@@ -793,11 +842,8 @@ class _Session:
         return self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
 
     def _latin_allow(self) -> frozenset[str]:
-        allowed = set(_LATIN_ALLOW)
-        for name in self.context.room_names:
-            for token in re.findall(r"[A-Za-z]+", name):
-                allowed.add(token.casefold())
-        return frozenset(allowed)
+        # 房间名里的拉丁字母只随整段房间名保护，不把 ai / min 之类单独放行。
+        return _LATIN_ALLOW
 
     def _mask_script(
         self, text: str, is_core, *, allow: frozenset[str], reason: str, label: str

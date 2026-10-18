@@ -397,11 +397,69 @@ class DeidRuleTests(unittest.TestCase):
                 for keyword in keywords:
                     sprinkled = separator.join(secret)
                     raw = f"明天{keyword}{sprinkled}做笔录"
+                    result = deidentify(raw, context)
+                    with self.subTest(raw=raw):
+                        self.assertIn("明天", result.text)
+                        if result.confident:
+                            _assert_no_secret(self, result.text, secret)
+
+    def test_known_single_character_name_is_masked(self) -> None:
+        result = deidentify("明天和彤做笔录", DeidContext(directory_names=("彤",)))
+        self.assertTrue(result.confident, (result.reasons, result.text))
+        self.assertIn("明天", result.text)
+        self.assertNotIn("彤", result.text)
+        self.assertEqual(result.mapping["[同事1]"], "彤")
+        party = deidentify("明天约彤", DeidContext(party_names=("彤",)))
+        self.assertNotIn("彤", party.text)
+        self.assertEqual(party.mapping["[当事人1]"], "彤")
+        inside_word = deidentify("明天做笔录", DeidContext(directory_names=("明",)))
+        self.assertIn("明天", inside_word.text)
+        self.assertNotIn("[同事", inside_word.text)
+        separate = deidentify("明天和明做笔录", DeidContext(directory_names=("明",)))
+        self.assertIn("明天", separate.text)
+        self.assertNotIn("和明", separate.text)
+        self.assertEqual(separate.mapping["[同事1]"], "明")
+
+    def test_compatibility_han_known_name_is_masked(self) -> None:
+        compat = "\uf9e1明"
+        result = deidentify(f"明天和{compat}做笔录", DeidContext(directory_names=("李明",)))
+        self.assertTrue(result.confident, (result.reasons, result.text))
+        self.assertIn("明天", result.text)
+        self.assertNotIn("\uf9e1", result.text)
+        self.assertNotIn("李明", result.text)
+        self.assertNotIn("李", result.text)
+        self.assertEqual(result.mapping["[同事1]"], "李明")
+
+    def test_duration_and_clock_latin_stay_only_in_context(self) -> None:
+        kept = deidentify("明天 90 min，14:00pm，9 am", DeidContext())
+        self.assertTrue(kept.confident, (kept.reasons, kept.text))
+        self.assertIn("min", kept.text)
+        self.assertIn("pm", kept.text)
+        self.assertIn("am", kept.text)
+        name = deidentify("明天 Min 做笔录", DeidContext())
+        self.assertFalse(name.confident)
+        self.assertNotIn("min", name.text.casefold())
+        wide = deidentify("明天Ａｉ做笔录", DeidContext())
+        self.assertFalse(wide.confident)
+        self.assertNotIn("Ai", wide.text)
+        self.assertNotIn("Ａｉ", wide.text)
+        self.assertNotIn("ai", wide.text.casefold())
+
+    def test_ordinary_booking_words_stay_sendable(self) -> None:
+        context = DeidContext(room_names=("笔录室 1", "笔录室 2"))
+        samples = (
+            "帮我约明天下午一小时",
+            "明天上午九点三十分，笔录室1，一小时",
+            "帮我订明天下午",
+            "三十分钟",
+            "明天晚上谈话",
+            "会见室明天上午一小时",
+        )
+        for raw in samples:
+            with self.subTest(raw=raw):
                 result = deidentify(raw, context)
-                with self.subTest(raw=raw):
-                    self.assertIn("明天", result.text)
-                    if result.confident:
-                        _assert_no_secret(self, result.text, secret)
+                self.assertTrue(result.confident, (result.reasons, result.text))
+                self.assertNotIn("[当事人", result.text)
 
     def test_non_string_input_is_rejected(self) -> None:
         with self.assertRaises(TypeError):

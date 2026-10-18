@@ -326,6 +326,11 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   启用用户目录中的姓名，以及房间表中的房间名。
 - 脱敏结果 `confident=false` 时不得外发，调用方应退回手动预约。占位符到原文的
   映射只留在本机。
+- 脱敏验收按正常书写的意外泄露。常见姓名（含请求者本人历史或目录里的单字姓名）、
+  案号、电话、证件号，以及空格、全角、零宽字符、常见分隔符、中文和口语数字、
+  NFKC 兼容字都要挡住。已知残余风险不作为阻断项：阿拉伯-印度数字、泰文数字等
+  非拉丁、非汉字十进制数字，数字与汉字交错（如「1甲3乙8丙」），混合文字编码。
+  当事人、案号和事项不采用模型输出。
 - 设计中的路径尚未实现，现在调用会落到现有的未匹配路由，而不是
   `403 FEATURE_DISABLED`。它们包括 `GET/POST/PATCH/DELETE /api/v1/conversations`、
   `POST /api/v1/quick-booking/prepare`、`POST /api/v1/quick-booking/commit`，
