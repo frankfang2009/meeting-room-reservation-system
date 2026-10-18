@@ -1,7 +1,8 @@
 """本机脱敏网关（一句话预约，文本）。
 
-原则：宁可多遮，不可漏遮。模型只需要知道“这里有一个当事人或案号”，
-不需要原文。拿不准就返回 ``confident=False``，调用方不得把文本发出本机。
+原则：外发决定是白名单。预约词、调用方交来的房间名、以及严格识别的日期时间
+可以留下；其余字母、汉字和数字默认遮住。拿不准就返回 ``confident=False``，
+调用方不得把文本发出本机。宁可多遮，不可漏遮。
 
 本模块只使用标准库，不联网，也不读取数据库。案号、当事人、同事姓名和
 房间名全部由调用方按现行权限放进 :class:`DeidContext`：
@@ -122,8 +123,9 @@ _LEXICON_TEXT = """
 找个 那个 这个 这些 那些 还是 一起 帮忙 再约 再约一次 一次
 两个 三个 一个 两个案子 那个案子 个人
 结束 开始 使用 联系 改到 下个 要用 前结束
+以前 以后 之前 之后
 明天下午 明天上午 后天上午 周五上午 周四下午 下周三上午 上午两小时
-明天下午两点 这个案子 下周一
+这个案子 下周一
 """
 _PARTICLE_TEXT = "的了和是在要与及或到去用来请把被从对给就也再不没会能为个向往做约看帮找让很及"
 _LEXICON = frozenset(word for word in _LEXICON_TEXT.split() if len(word) >= 2) | frozenset(
@@ -139,13 +141,26 @@ _SHORT_DIGIT_RE = re.compile(r"(?<=第)\d{2,}|\d{2,}(?=[号字])")
 _ID_RE = r"(?<![0-9A-Za-z])\d{17}[\dXx](?![0-9A-Za-z])|(?<![0-9])\d{15}(?![0-9])"
 _MOBILE_RE = r"(?<![0-9])(?:\+?86[-\s]?)?1[3-9]\d[-\s]?\d{4}[-\s]?\d{4}(?![0-9])"
 _LANDLINE_RE = r"(?<![0-9])0\d{2,3}[-\s]?\d{7,8}(?![0-9])"
-# 逐位或分组隔开的数字。分隔符至少出现一次，避免把日期里的连字符整段吞掉。
-_SPLIT_DIGIT_RE = re.compile(r"(?<!\d)(?:\d[ \t·•・．.\-]+){2,}\d(?!\d)")
-_CN_NUMERALS = frozenset("〇零一二三四五六七八九壹贰貳叁肆伍陆陸柒捌玖拾佰仟")
-_LATIN_ALLOW = frozenset({"no", "min", "h", "am", "pm"})
+# 外发前按“像数字”处理的字符。分隔符收掉之后，连续出现就要遮。
+_DIGIT_CHARS = frozenset(
+    "0123456789〇零一二三四五六七八九十百千两幺洞壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"
+)
+_LATIN_ALLOW = frozenset({"no", "min", "h", "am", "pm", "ai"})
+_NAME_MARKS = (
+    "当事人",
+    "同事",
+    "老师",
+    "律师",
+    "经理",
+    "先生",
+    "女士",
+    "客户",
+)
+_NAME_CHARS = frozenset("和跟与给找同约")
 _KEYWORD_TAILS = (
     ("联系电话", "电话"),
     ("当事人电话", "电话"),
+    ("手机", "电话"),
     ("电话", "电话"),
     ("身份证", "证件号"),
     ("证件号", "证件号"),
@@ -226,48 +241,155 @@ def _halfwidth(text: str) -> str:
     return "".join(out)
 
 
-def _normalize_text(text: str) -> str:
-    """半角、去掉格式字符，并把各种空格折成普通空格。
+def _nfkc_keep(char: str) -> bool:
+    if char == " " or unicodedata.category(char) == "Zs":
+        return True
+    return char.isascii() and char.isalnum()
 
-    全角空格、不换行空格、零宽字符不能把「李明」拆成匹配不到的两截。
+
+def _normalize_text(text: str) -> str:
+    """先做兼容归一，再去掉格式字符和组合记号。
+
+    只会采纳变成字母、数字或空格的 NFKC 结果，避免把中文标点折成英文标点。
+    全角数字、全角字母和阿拉伯-印度数字因此并进检测，中文逗号仍留在原文里。
     """
 
-    text = _halfwidth(text)
     out: list[str] = []
     for char in text:
         category = unicodedata.category(char)
-        if category == "Cf":
+        if category == "Cf" or category.startswith("M"):
+            continue
+        folded = unicodedata.normalize("NFKC", char)
+        if folded != char and folded and all(_nfkc_keep(item) for item in folded):
+            for item in folded:
+                out.append(" " if unicodedata.category(item) == "Zs" else item)
             continue
         if category == "Zs" and char != " ":
             out.append(" ")
         else:
             out.append(char)
-    return "".join(out)
+    return _halfwidth("".join(out))
 
 
-def _bridge_cjk(text: str) -> str:
-    """把拆开的姓名重新接上，但保留「号 明天」这类词边界上的空格。"""
-
-    def join(match: re.Match[str]) -> str:
-        right = match.string[match.end() :]
-        if _lexicon_prefix_length(right, 0) >= 2:
-            return match.group(0)
-        left_end = match.start()
-        left_start = left_end
-        while left_start > 0 and "\u4e00" <= match.string[left_start - 1] <= "\u9fff":
-            left_start -= 1
-        left = match.string[left_start:left_end]
-        if left in _COMPOUND_SURNAMES or (len(left) == 1 and left in _SINGLE_SURNAMES):
-            return ""
-        return match.group(0)
-
-    return re.sub(rf"(?<=[{CJK}])[ \t·•・．.]+(?=[{CJK}])", join, text)
+def _is_han(char: str) -> bool:
+    code = ord(char)
+    return 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF or 0xF900 <= code <= 0xFAFF
 
 
-def _collapse_separated_digits(text: str) -> str:
-    """把逐位或分组隔开的数字收成连续数字，交给电话、证件和数字兜底。"""
+def _is_basic_latin(char: str) -> bool:
+    return char.isascii() and char.isalpha()
 
-    return _SPLIT_DIGIT_RE.sub(lambda match: re.sub(r"\D", "", match.group(0)), text)
+
+def _is_other_letter(char: str) -> bool:
+    return (
+        unicodedata.category(char).startswith("L")
+        and not _is_han(char)
+        and not _is_basic_latin(char)
+    )
+
+
+def _is_digit_like(char: str) -> bool:
+    return char in _DIGIT_CHARS
+
+
+def _is_private(char: str) -> bool:
+    return "\ue000" <= char <= "\uf8ff"
+
+
+def _is_gap(char: str) -> bool:
+    """字母或数字以外的字符，都可能被拿来拆开姓名、关键词或号码。"""
+
+    if _is_private(char):
+        return False
+    if _is_han(char) or _is_basic_latin(char) or _is_other_letter(char):
+        return False
+    if _is_digit_like(char):
+        return False
+    return True
+
+
+def _collapse_between(text: str, is_core) -> tuple[str, list[int]]:
+    """去掉夹在同类字符之间的任意分隔，并记下每个保留字符的原位置。
+
+    检测在收紧后的文本上进行，替换仍落回原文，所以没被遮住的空格保持原样。
+    """
+
+    out: list[str] = []
+    origins: list[int] = []
+    index = 0
+    size = len(text)
+    while index < size:
+        if is_core(text[index]):
+            out.append(text[index])
+            origins.append(index)
+            index += 1
+            continue
+        gap_end = index
+        while gap_end < size and _is_gap(text[gap_end]):
+            gap_end += 1
+        between_cores = (
+            bool(out)
+            and is_core(text[origins[-1]])
+            and gap_end > index
+            and gap_end < size
+            and is_core(text[gap_end])
+        )
+        if between_cores:
+            index = gap_end
+            continue
+        if gap_end == index:
+            out.append(text[index])
+            origins.append(index)
+            index += 1
+            continue
+        for cursor in range(index, gap_end):
+            out.append(text[cursor])
+            origins.append(cursor)
+        index = gap_end
+    return "".join(out), origins
+
+
+def _crosses_sentinel(fragment: str) -> bool:
+    return SENT_P0 in fragment or SENT_W0 in fragment or bool(_SENTINEL_PAIR.search(fragment))
+
+
+def _letter_core(char: str) -> bool:
+    return _is_han(char) or _is_basic_latin(char) or _is_other_letter(char)
+
+
+def _han_name_position(text: str, index: int) -> bool:
+    """短汉字挨着「和 / 给 / 约 / 老师」这类位置时，按姓名处理。"""
+
+    if index > 0 and text[index - 1] in _NAME_CHARS:
+        return True
+    if index + 1 < len(text) and text[index + 1] in _NAME_CHARS:
+        return True
+    before = text[:index]
+    after = text[index + 1 :]
+    if before.endswith("总"):
+        return True
+    return any(before.endswith(mark) or after.startswith(mark) for mark in _NAME_MARKS)
+
+
+def _anchor_label(text: str, origin_start: int) -> str | None:
+    window = text[max(0, origin_start - 16) : origin_start]
+    collapsed, _origins = _collapse_between(window, _letter_core)
+    for keyword, label in _KEYWORD_TAILS:
+        if collapsed.endswith(keyword):
+            return label
+    return None
+
+
+def _digit_run_present(text: str, minimum: int) -> bool:
+    run = 0
+    for char in text:
+        if _is_digit_like(char):
+            run += 1
+            if run >= minimum:
+                return True
+        else:
+            run = 0
+    return False
 
 
 def _lexicon_prefix_length(text: str, index: int) -> int:
@@ -281,7 +403,8 @@ def _lexicon_prefix_length(text: str, index: int) -> int:
 
 
 def _identity(value: str) -> str:
-    text = _bridge_cjk(_normalize_text(value)).replace(" ", "")
+    text, _origins = _collapse_between(_normalize_text(value), _letter_core)
+    text = text.replace(" ", "")
     for full, half in (
         ("（", "("),
         ("）", ")"),
@@ -358,11 +481,13 @@ def _is_personal_name(chunk: str) -> bool:
     return chunk[0] in _SINGLE_SURNAMES and len(chunk) in (2, 3)
 
 
-def _lexicon_cover(run: str) -> tuple[list[bool], list[int]]:
+def _lexicon_cover(run: str, *, minimum: int = 1) -> tuple[list[bool], list[int]]:
     consumed = [False] * len(run)
     cover = [0] * len(run)
     found: list[tuple[int, int]] = []
     for word in _LEXICON:
+        if len(word) < minimum:
+            continue
         start = 0
         while True:
             index = run.find(word, start)
@@ -380,43 +505,6 @@ def _lexicon_cover(run: str) -> tuple[list[bool], list[int]]:
     return consumed, cover
 
 
-def _name_spans(run: str) -> list[tuple[int, int]]:
-    consumed, cover = _lexicon_cover(run)
-    spans: list[tuple[int, int]] = []
-    index = 0
-    while index < len(run):
-        if consumed[index]:
-            index += 1
-            continue
-        end = index
-        while end < len(run) and not consumed[end]:
-            end += 1
-        start = index
-        if start > 0 and cover[start - 1] == 1 and run[start - 1] in _SINGLE_SURNAMES:
-            start -= 1
-        chunk = run[start:end]
-        if _is_personal_name(chunk):
-            spans.append((start, end))
-        elif len(chunk) >= 4:
-            cursor = 0
-            while cursor < len(chunk):
-                matched = 0
-                for compound in _COMPOUND_SURNAMES:
-                    if chunk.startswith(compound, cursor):
-                        room = len(chunk) - (cursor + len(compound))
-                        take = len(compound) + min(2, room)
-                        if take > len(compound):
-                            matched = take
-                        break
-                if matched:
-                    spans.append((start + cursor, start + cursor + matched))
-                    cursor += matched
-                else:
-                    cursor += 1
-        index = end
-    return spans
-
-
 class _Session:
     def __init__(self, context: DeidContext) -> None:
         self.context = context
@@ -432,7 +520,7 @@ class _Session:
     def run(self, raw: str) -> DeidResult:
         if len(raw) > MAX_SOURCE_CHARS:
             self._add_reason("source_too_long")
-        text = _bridge_cjk(_normalize_text(raw))
+        text = _normalize_text(raw)
         if "@" in text:
             self._add_reason("email_marker")
             text = _EMAIL_RE.sub(lambda match: self._placeholder("编号", match.group(0)), text)
@@ -440,16 +528,29 @@ class _Session:
         text = self._exact(text)
         text = self._party_patterns(text)
         text = self._keyword_tails(text)
-        text = _collapse_separated_digits(text)
+        text = self._protect_whitelist(text)
+        text = self._structural(text)
         text = self._sub(_ID_RE, "证件号", text)
         text = self._sub(_MOBILE_RE, "电话", text)
         text = self._sub(_LANDLINE_RE, "电话", text)
-        text = self._protect_whitelist(text)
-        text = self._structural(text)
         text = self._catchall_digits(text)
+        text = self._mask_digit_like(text)
         text = self._document_tails(text)
-        text = self._unknown_names(text)
-        text = self._unknown_latin(text)
+        text = self._han_residual(text)
+        text = self._mask_script(
+            text,
+            _is_other_letter,
+            allow=frozenset(),
+            reason="unknown_name",
+            label="当事人",
+        )
+        text = self._mask_script(
+            text,
+            _is_basic_latin,
+            allow=self._latin_allow(),
+            reason="unknown_name",
+            label="当事人",
+        )
         text = self._digit_backstop(text)
         text = self._restore(text)
 
@@ -540,55 +641,85 @@ class _Session:
                 ),
                 text,
             )
+        named = [(item, "当事人") for item in parties]
+        named.extend((item, "同事") for item in directory_only)
+        for name, label in named:
+            text = self._mask_collapsed_name(text, name, label, name)
         return text
 
-    def _keyword_tails(self, text: str) -> str:
-        """敏感词后面没被词表解释掉的内容整段遮住。
+    def _mask_collapsed_name(self, text: str, name: str, label: str, restore: str) -> str:
+        """在收掉分隔符之后的文本里找已知姓名，再把原文那一段换成占位符。"""
 
-        「案号 A B C」不能只遮第一个字母；中文数字案号、逐位隔开的
-        电话和证件号也走这里。预约常用词（明天、下午）会截断尾巴。
+        target, _origins = _collapse_between(name, _letter_core)
+        target = "".join(char for char in target if _letter_core(char))
+        if len(target) < 2:
+            return text
+        while True:
+            collapsed, origins = _collapse_between(text, _letter_core)
+            index = collapsed.find(target)
+            if index < 0:
+                return text
+            origin_start = origins[index]
+            origin_end = origins[index + len(target) - 1] + 1
+            if _crosses_sentinel(text[origin_start:origin_end]):
+                return text
+            replacement = self._placeholder(label, restore)
+            updated = text[:origin_start] + replacement + text[origin_end:]
+            if updated == text:
+                return text
+            text = updated
+
+    def _keyword_tails(self, text: str) -> str:
+        """敏感词按收掉分隔符之后的样子匹配，后面没被词表解释掉的内容整段遮住。
+
+        「案 号」「联系电 话」和「案号 A B C」都不能只遮住其中一个字。
+        预约常用词（明天、下午）会截断尾巴。
         """
 
+        collapsed, origins = _collapse_between(text, _letter_core)
+        occupied = [False] * len(collapsed)
+        found: list[tuple[int, int, str]] = []
+        for keyword, label in _KEYWORD_TAILS:
+            start = 0
+            while True:
+                index = collapsed.find(keyword, start)
+                if index < 0:
+                    break
+                end = index + len(keyword)
+                if any(occupied[index:end]):
+                    start = index + 1
+                    continue
+                if not all(_letter_core(collapsed[offset]) for offset in range(index, end)):
+                    start = index + 1
+                    continue
+                for offset in range(index, end):
+                    occupied[offset] = True
+                found.append((index, end, label))
+                start = end
         spans: list[tuple[int, int, str]] = []
-        index = 0
-        while index < len(text):
-            if text[index] in (SENT_P0, SENT_W0):
-                index += 3
-                continue
-            matched: tuple[str, str] | None = None
-            for keyword, label in _KEYWORD_TAILS:
-                if text.startswith(keyword, index):
-                    matched = (keyword, label)
+        for index, end, label in found:
+            tail_start = origins[end - 1] + 1
+            while tail_start < len(text) and text[tail_start] in " \t":
+                tail_start += 1
+            if tail_start < len(text) and text[tail_start] in "是为:：":
+                tail_start += 1
+                while tail_start < len(text) and text[tail_start] in " \t:：":
+                    tail_start += 1
+            tail_end = tail_start
+            while tail_end < len(text):
+                if text[tail_end] in _DOC_DELIMITERS or text[tail_end] in (SENT_P0, SENT_W0):
                     break
-            if matched is None:
-                index += 1
-                continue
-            keyword, label = matched
-            start = index + len(keyword)
-            while start < len(text) and text[start] in " \t":
-                start += 1
-            if start < len(text) and text[start] in "是为:：":
-                start += 1
-                while start < len(text) and text[start] in " \t:：":
-                    start += 1
-            end = start
-            while end < len(text):
-                if text[end] in _DOC_DELIMITERS or text[end] in (SENT_P0, SENT_W0):
+                if text[tail_end] in "和与及或的":
                     break
-                if text[end] in "和与及或的":
+                if _lexicon_prefix_length(text, tail_end) >= 2:
                     break
-                if _lexicon_prefix_length(text, end) >= 2:
-                    break
-                end += 1
-            while end > start and text[end - 1] in " \t":
-                end -= 1
-            residue = text[start:end]
-            if residue and not _SENTINEL_PAIR.search(residue):
-                spans.append((start, end, label))
-                index = end
-            else:
-                index += len(keyword)
-        for start, end, label in reversed(spans):
+                tail_end += 1
+            while tail_end > tail_start and text[tail_end - 1] in " \t":
+                tail_end -= 1
+            residue = text[tail_start:tail_end]
+            if residue and not _crosses_sentinel(residue):
+                spans.append((tail_start, tail_end, label))
+        for start, end, label in sorted(spans, key=lambda item: item[0], reverse=True):
             text = text[:start] + self._placeholder(label, text[start:end]) + text[end:]
         return text
 
@@ -618,6 +749,7 @@ class _Session:
             r"(?<![0-9])(?:[01]?\d|2[0-3])\s*点\s*(?:半|一刻|三刻|[0-5]?\d\s*分?)?",
             r"(?<![0-9])\d{1,3}(?:\.\d)?\s*个?\s*(?:小时|钟头|分钟|min|h)(?![A-Za-z])",
             r"(?<![0-9])\d{1,2}\s*(?:个人|人|位)",
+            r"(?<![0-9])\d{1,2}\s*楼",
         )
         for pattern in patterns:
             text = re.sub(pattern, self._protect, text)
@@ -660,61 +792,134 @@ class _Session:
         text = self._sub(r"\d{3,}", "编号", text)
         return self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
 
-    def _unknown_names(self, text: str) -> str:
-        pieces: list[str] = []
-        cursor = 0
-        for match in _CJK_RUN_RE.finditer(text):
-            pieces.append(text[cursor : match.start()])
-            pieces.append(self._mask_names(match.group(0)))
-            cursor = match.end()
-        pieces.append(text[cursor:])
-        return "".join(pieces)
+    def _latin_allow(self) -> frozenset[str]:
+        allowed = set(_LATIN_ALLOW)
+        for name in self.context.room_names:
+            for token in re.findall(r"[A-Za-z]+", name):
+                allowed.add(token.casefold())
+        return frozenset(allowed)
 
-    def _mask_names(self, run: str) -> str:
-        spans = _name_spans(run)
-        consumed, _cover = _lexicon_cover(run)
-        covered = consumed[:]
-        for start, end in spans:
-            for offset in range(start, end):
-                covered[offset] = True
+    def _mask_script(
+        self, text: str, is_core, *, allow: frozenset[str], reason: str, label: str
+    ) -> str:
+        """非白名单的字母串整段遮住。分隔符先收掉，所以 L i M i n g 不会漏。"""
+
+        collapsed, origins = _collapse_between(text, is_core)
+        spans: list[tuple[int, int]] = []
         index = 0
-        while index < len(run):
-            if covered[index]:
+        while index < len(collapsed):
+            if not is_core(collapsed[index]):
                 index += 1
                 continue
             end = index
-            while end < len(run) and not covered[end]:
+            while end < len(collapsed) and is_core(collapsed[end]):
                 end += 1
-            # 姓氏表盖不住、又不像案号或房间的短汉字（如阿依古丽）不得外发。
-            chunk = run[index:end]
-            if (
-                2 <= len(chunk) <= 8
-                and chunk not in _DOC_KEYWORDS
-                and not any(char in "号室录案点时日月" for char in chunk)
-            ):
-                spans.append((index, end))
+            token = collapsed[index:end]
+            if token.casefold() in allow:
+                index = end
+                continue
+            origin_start = origins[index]
+            origin_end = origins[end - 1] + 1
+            if not _crosses_sentinel(text[origin_start:origin_end]):
+                spans.append((origin_start, origin_end))
             index = end
-        if not spans:
-            return run
-        pieces: list[str] = []
-        cursor = 0
+        return self._cover_spans(text, spans, label=label, reason=reason)
+
+    def _mask_digit_like(self, text: str) -> str:
+        """任意分隔符收掉之后，未受保护的数字串都遮住。
+
+        三位及以上一律遮。关键词后面的两位也遮，避免「案号 12」留下可还原的号。
+        """
+
+        collapsed, origins = _collapse_between(text, _is_digit_like)
+        spans: list[tuple[int, int, str]] = []
+        index = 0
+        while index < len(collapsed):
+            if not _is_digit_like(collapsed[index]):
+                index += 1
+                continue
+            end = index
+            while end < len(collapsed) and _is_digit_like(collapsed[end]):
+                end += 1
+            origin_start = origins[index]
+            origin_end = origins[end - 1] + 1
+            length = end - index
+            label = _anchor_label(text, origin_start)
+            if not _crosses_sentinel(text[origin_start:origin_end]) and (
+                length >= 3 or (label is not None and length >= 2)
+            ):
+                spans.append((origin_start, origin_end, label or "编号"))
+            index = end
+        for origin_start, origin_end, label in sorted(
+            spans, key=lambda item: item[0], reverse=True
+        ):
+            text = (
+                text[:origin_start]
+                + self._placeholder(label, text[origin_start:origin_end])
+                + text[origin_end:]
+            )
+        return text
+
+    def _han_residual(self, text: str) -> str:
+        """预约词表盖不住的汉字，处在姓名位置或本身就是短串时不得外发。
+
+        不再因为里面有「月」这类单字就放行。拿不准的长串同样遮住并拒绝外发。
+        """
+
+        collapsed, origins = _collapse_between(text, _is_han)
+        spans: list[tuple[int, int]] = []
+        for match in _CJK_RUN_RE.finditer(collapsed):
+            run = match.group(0)
+            base = match.start()
+            consumed, _cover = _lexicon_cover(run, minimum=2)
+            for offset, char in enumerate(run):
+                if not consumed[offset] and char in _LEXICON:
+                    consumed[offset] = True
+            index = 0
+            while index < len(run):
+                if consumed[index]:
+                    index += 1
+                    continue
+                end = index
+                while end < len(run) and not consumed[end]:
+                    end += 1
+                chunk = run[index:end]
+                chunk_at = index
+                index = end
+                if chunk in _DOC_KEYWORDS:
+                    continue
+                name_like = len(chunk) == 1 and _han_name_position(collapsed, base + chunk_at)
+                if len(chunk) < 2 and not name_like:
+                    continue
+                origin_start = origins[base + chunk_at]
+                origin_end = origins[base + index - 1] + 1
+                if not _crosses_sentinel(text[origin_start:origin_end]):
+                    spans.append((origin_start, origin_end))
+        return self._cover_spans(text, spans, label="当事人", reason="unknown_name")
+
+    def _cover_spans(
+        self,
+        text: str,
+        spans: list[tuple[int, int]],
+        *,
+        label: str,
+        reason: str,
+    ) -> str:
+        merged: list[tuple[int, int]] = []
         for start, end in sorted(spans):
-            pieces.append(run[cursor:start])
-            self._add_reason("unknown_name")
-            pieces.append(self._placeholder("当事人", run[start:end]))
-            cursor = end
-        pieces.append(run[cursor:])
-        return "".join(pieces)
-
-    def _unknown_latin(self, text: str) -> str:
-        def replace(match: re.Match[str]) -> str:
-            token = match.group(0)
-            if token.casefold() in _LATIN_ALLOW:
-                return token
-            self._add_reason("unknown_name")
-            return self._placeholder("当事人", token)
-
-        return re.sub(r"(?<![A-Za-z])[A-Za-z]{2,}(?![A-Za-z])", replace, text)
+            if end <= start:
+                continue
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        for start, end in reversed(merged):
+            piece = text[start:end]
+            if not piece.strip() or _crosses_sentinel(piece):
+                continue
+            self._add_reason(reason)
+            text = text[:start] + self._placeholder(label, piece.strip()) + text[end:]
+        return text
 
     def _document_tails(self, text: str) -> str:
         occupied = [False] * len(text)
@@ -744,24 +949,15 @@ class _Session:
         return text
 
     def _digit_backstop(self, text: str) -> str:
-        visible = _collapse_separated_digits(_SENTINEL_PAIR.sub(" ", text))
-        if any(char in _CN_NUMERALS for char in visible) and re.search(
-            rf"[{''.join(_CN_NUMERALS)}]{{4,}}", visible
-        ):
+        visible = _SENTINEL_PAIR.sub(" ", text)
+        collapsed, _origins = _collapse_between(visible, _is_digit_like)
+        if _digit_run_present(collapsed, 3):
             self._add_reason("unknown_digit_run")
+            text = self._mask_digit_like(text)
         if _LONG_DIGIT_RE.search(visible) or _SHORT_DIGIT_RE.search(visible):
             self._add_reason("unknown_digit_run")
             text = self._sub(r"\d{3,}", "编号", text)
             text = self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
-        if (
-            re.search(_ID_RE, visible)
-            or re.search(_MOBILE_RE, visible)
-            or re.search(_LANDLINE_RE, visible)
-        ):
-            self._add_reason("unknown_digit_run")
-            text = self._sub(_ID_RE, "证件号", text)
-            text = self._sub(_MOBILE_RE, "电话", text)
-            text = self._sub(_LANDLINE_RE, "电话", text)
         return text
 
     def _restore(self, text: str) -> str:

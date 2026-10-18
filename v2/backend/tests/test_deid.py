@@ -20,6 +20,54 @@ from v2app.services.deid import DeidContext, deidentify
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "deid-cases.json"
+_SPOKEN_DIGITS = str.maketrans(
+    {
+        "〇": "0",
+        "零": "0",
+        "洞": "0",
+        "一": "1",
+        "幺": "1",
+        "壹": "1",
+        "二": "2",
+        "两": "2",
+        "贰": "2",
+        "貳": "2",
+        "三": "3",
+        "叁": "3",
+        "參": "3",
+        "四": "4",
+        "肆": "4",
+        "五": "5",
+        "伍": "5",
+        "六": "6",
+        "陆": "6",
+        "陸": "6",
+        "七": "7",
+        "柒": "7",
+        "八": "8",
+        "捌": "8",
+        "九": "9",
+        "玖": "9",
+    }
+)
+
+
+def _digits_of(text: str) -> str:
+    return "".join(char for char in text.translate(_SPOKEN_DIGITS) if char.isdigit())
+
+
+def _assert_no_secret(test: unittest.TestCase, text: str, secret: str) -> None:
+    folded = text.casefold()
+    test.assertNotIn(secret.casefold(), folded)
+    compact_text = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", folded)
+    compact_secret = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", secret.casefold())
+    if len(compact_secret) >= 2:
+        test.assertNotIn(compact_secret, compact_text)
+    secret_digits = _digits_of(secret)
+    if len(secret_digits) >= 3:
+        test.assertNotIn(secret_digits, _digits_of(text))
+
+
 V2_ROOT = Path(__file__).resolve().parents[2]
 APPROVED_FEATURE = (
     "对话预约（默认关闭）：管理员开启后，用户可用一句话准备预约并一键确认。"
@@ -155,7 +203,8 @@ class DeidRuleTests(unittest.TestCase):
         self.assertIn("[案号1]", supplied.text)
         self.assertNotIn("甲乙丙丁号外", supplied.text)
         omitted = deidentify("约甲乙丙丁号外，明天", DeidContext())
-        self.assertIn("甲乙丙丁号外", omitted.text)
+        self.assertNotIn("甲乙丙丁号外", omitted.text)
+        self.assertFalse(omitted.confident)
 
     def test_email_marker_blocks_sending_and_drops_the_address(self) -> None:
         result = deidentify("邮箱 a@b.com，明天", DeidContext())
@@ -273,6 +322,86 @@ class DeidRuleTests(unittest.TestCase):
         self.assertNotIn("1234", judicial.text)
         self.assertNotIn("0101", judicial.text)
         self.assertNotIn("１２３４", judicial.text)
+
+    def test_split_names_and_other_scripts_do_not_leak(self) -> None:
+        context = DeidContext(directory_names=("李明",), room_names=("笔录室 1",))
+        known = (
+            "明天和李/明做笔录",
+            "明天和李_/明做笔录",
+            "明天和李\u3000明做笔录",
+            "明天和李\u200b明做笔录",
+        )
+        for raw in known:
+            with self.subTest(raw=raw):
+                result = deidentify(raw, context)
+                self.assertTrue(result.confident, (result.reasons, result.text))
+                self.assertIn("[同事1]", result.text)
+                self.assertNotIn("李", result.text)
+                self.assertNotIn("李明", result.text)
+                self.assertNotRegex(result.text, r"李\W*明")
+                self.assertEqual(result.mapping["[同事1]"], "李明")
+        blocked = (
+            "明天 L i M i n g 做笔录",
+            "明天和Иван做笔录",
+            "明天和محمد做笔录",
+            "明天和李月做笔录",
+            "明天和明月华做笔录",
+        )
+        for raw in blocked:
+            with self.subTest(raw=raw):
+                result = deidentify(raw, context)
+                self.assertFalse(result.confident, (result.reasons, result.text))
+                self.assertIn("unknown_name", result.reasons)
+                compact = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", result.text).casefold()
+                self.assertNotIn("liming", compact)
+                self.assertNotIn("иван", result.text.casefold())
+                self.assertNotIn("محمد", result.text)
+                self.assertNotIn("李月", result.text)
+                self.assertNotIn("明月华", result.text)
+
+    def test_split_keywords_and_spoken_digits_do_not_leak(self) -> None:
+        phone = deidentify("联系电 话1/3/8/0/0/1/3/8/0/0/0", DeidContext())
+        self.assertNotIn("13800138000", re.sub(r"\D", "", phone.text))
+        self.assertNotRegex(phone.text, r"1\s*/\s*3")
+        spoken = deidentify("电话幺三八洞洞幺三八洞洞洞", DeidContext())
+        self.assertNotIn("幺三八", spoken.text)
+        self.assertNotIn("13800138000", _digits_of(spoken.text))
+        case = deidentify("案 号 二 〇 二 六 沪 零 一 零 一 民 初 一 二 三 号", DeidContext())
+        self.assertNotIn("二〇二六", re.sub(r"\s", "", case.text))
+        self.assertNotIn("零一零一", case.text)
+        self.assertNotIn("一二三", case.text)
+        self.assertNotIn("2026", _digits_of(case.text))
+
+    def test_separator_fuzz_does_not_leave_a_sendable_secret(self) -> None:
+        context = DeidContext(
+            directory_names=("李明",),
+            room_names=("笔录室 1", "笔录室 2"),
+            case_numbers=("2026-087",),
+        )
+        secrets = (
+            "李明",
+            "李月",
+            "阿依古丽",
+            "LiMing",
+            "Иван",
+            "محمد",
+            "13800138000",
+            "110101199003071234",
+            "二〇二六沪零一",
+            "幺三八洞洞幺三八洞洞洞",
+        )
+        separators = (" ", "\u3000", "\u200b", "/", "_", "-", ".", ",", "·", "|")
+        keywords = ("", "案号", "案 号", "电话", "联系电 话", "身份证", "编号")
+        for secret in secrets:
+            for separator in separators:
+                for keyword in keywords:
+                    sprinkled = separator.join(secret)
+                    raw = f"明天{keyword}{sprinkled}做笔录"
+                result = deidentify(raw, context)
+                with self.subTest(raw=raw):
+                    self.assertIn("明天", result.text)
+                    if result.confident:
+                        _assert_no_secret(self, result.text, secret)
 
     def test_non_string_input_is_rejected(self) -> None:
         with self.assertRaises(TypeError):
