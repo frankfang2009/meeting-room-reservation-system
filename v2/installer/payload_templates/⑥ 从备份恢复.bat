@@ -222,7 +222,7 @@ foreach ($sidecar in $sidecars) {
             # 库 schema，历史备份为 1/2/3，当前为 4；真正的可恢复性由 restore.py
             # 恢复后复检兜底。
             [int]$metadata.databaseSchemaVersion -lt 1 -or
-            [int]$metadata.databaseSchemaVersion -gt 4 -or
+            [int]$metadata.databaseSchemaVersion -gt 5 -or
             $metadata.setupComplete -isnot [bool] -or
             $metadata.setupComplete -ne $true
         ) { continue }

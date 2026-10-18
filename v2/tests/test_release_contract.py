@@ -19,8 +19,8 @@ def read(relative: str) -> str:
 class CrossLayerReleaseContractTests(unittest.TestCase):
     def test_product_contract_uses_the_current_database_schema(self) -> None:
         contract = read("docs/PRODUCT-CONTRACT.md")
-        self.assertIn("`schema_version=4`", contract)
-        self.assertNotIn("`schema_version=3`", contract)
+        self.assertIn("`schema_version=5`", contract)
+        self.assertNotIn("`schema_version=4`", contract)
 
     def test_unsigned_elevation_bootstrap_risk_remains_an_explicit_release_gate(self) -> None:
         security = read("docs/SECURITY-DEPLOYMENT.md")
@@ -190,9 +190,9 @@ class CrossLayerReleaseContractTests(unittest.TestCase):
         self.assertIn('data_dir / "reservation.db"', app_factory)
         self.assertIn('"data" / "reservation.db"', updater)
         self.assertRegex(database, r"PRODUCT_GENERATION\s*=\s*2")
-        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*4")
+        self.assertRegex(database, r"SCHEMA_VERSION\s*=\s*5")
         self.assertIn(
-            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, SCHEMA_VERSION})", database
+            "SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, 4, SCHEMA_VERSION})", database
         )
         self.assertIn("SUPPORTED_DATABASE_SCHEMA_VERSIONS", updater)
 

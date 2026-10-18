@@ -33,6 +33,7 @@ from ..security import (
     serialize_user,
 )
 from ..services.audit import write_bounded_auth_failure, write_security_audit
+from ..services.quick_booking import conversation_available
 from ..runtime.install_state import sync_install_json
 
 
@@ -579,6 +580,7 @@ def bootstrap():
                 "viewReports": True,
                 "viewOverallReports": user["role"] == "admin",
                 "viewOtherUserReports": user["role"] == "admin",
+                "useConversation": conversation_available(db),
             },
         }
     )

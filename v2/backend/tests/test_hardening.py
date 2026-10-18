@@ -777,7 +777,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         )
         self.assertEqual(sidecar["databaseSha256"], sha256_file(first_path))
         self.assertEqual(sidecar["sequence"], 1)
-        self.assertEqual(sidecar["databaseSchemaVersion"], 4)
+        self.assertEqual(sidecar["databaseSchemaVersion"], 5)
         self.assertEqual(sidecar["sourceDataSequence"], first.get_json()["sourceDataSequence"])
         self.assertEqual(list(backup_dir.glob(".*.part-*")), [])
         self.assertEqual(list(backup_dir.glob(".*.part")), [])
@@ -1368,7 +1368,13 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
                 db.execute(
                     "SELECT value FROM app_meta WHERE key = 'schema_version'"
                 ).fetchone()[0],
-                "4",
+                "5",
+            )
+            self.assertEqual(
+                db.execute(
+                    "SELECT enabled FROM conversation_settings WHERE id = 1"
+                ).fetchone()[0],
+                0,
             )
             self.assertIsNone(
                 db.execute(

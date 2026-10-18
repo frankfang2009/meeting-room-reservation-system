@@ -360,70 +360,77 @@ def _insert_event(
     )
 
 
+def _create_in_transaction(db: sqlite3.Connection, actor: dict[str, Any], payload: dict[str, Any]) -> str:
+    """在调用方已经打开的事务里创建预约。手动创建和对话确认共用这一段。"""
+
+    reservation_id = new_id()
+    values = _validate_booking_payload(db, payload, owner_id=actor["id"])
+    conflicts = _conflicts(
+        db,
+        room_id=values["room_id"],
+        booking_date=values["booking_date"],
+        slots=values["slots"],
+    )
+    if conflicts:
+        raise ApiError(
+            409,
+            "SLOT_CONFLICT",
+            "所选时段已被占用",
+            conflicts=conflicts,
+        )
+    db.execute(
+        """
+        INSERT INTO reservations (
+            id, room_id, room_name_snapshot, booking_date, start_time,
+            end_time, owner_user_id, owner_name_snapshot, party_name,
+            case_number, purpose, notes, tag_slot, tag_label_snapshot
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            reservation_id,
+            values["room_id"],
+            values["room_name"],
+            values["booking_date"],
+            values["start"],
+            values["end"],
+            actor["id"],
+            actor["display_name"],
+            values["party_name"],
+            values["case_number"],
+            values["purpose"],
+            values["notes"],
+            values["tag_slot"],
+            values["tag_label"],
+        ),
+    )
+    _failpoint("create_after_reservation")
+    _insert_slots(
+        db,
+        reservation_id=reservation_id,
+        room_id=values["room_id"],
+        booking_date=values["booking_date"],
+        slots=values["slots"],
+    )
+    _failpoint("create_after_slots")
+    row = _row_for_id(db, reservation_id)
+    _insert_event(
+        db,
+        reservation_id=reservation_id,
+        actor_id=actor["id"],
+        event_type="created",
+        revision=1,
+        before=None,
+        after=_snapshot(row),
+    )
+    _failpoint("create_after_event")
+    return reservation_id
+
+
 def create_reservation(payload: dict[str, Any]) -> dict[str, Any]:
     db = get_db()
-    reservation_id = new_id()
     with transaction(db):
         actor = locked_actor(db)
-        values = _validate_booking_payload(db, payload, owner_id=actor["id"])
-        conflicts = _conflicts(
-            db,
-            room_id=values["room_id"],
-            booking_date=values["booking_date"],
-            slots=values["slots"],
-        )
-        if conflicts:
-            raise ApiError(
-                409,
-                "SLOT_CONFLICT",
-                "所选时段已被占用",
-                conflicts=conflicts,
-            )
-        db.execute(
-            """
-            INSERT INTO reservations (
-                id, room_id, room_name_snapshot, booking_date, start_time,
-                end_time, owner_user_id, owner_name_snapshot, party_name,
-                case_number, purpose, notes, tag_slot, tag_label_snapshot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                reservation_id,
-                values["room_id"],
-                values["room_name"],
-                values["booking_date"],
-                values["start"],
-                values["end"],
-                actor["id"],
-                actor["display_name"],
-                values["party_name"],
-                values["case_number"],
-                values["purpose"],
-                values["notes"],
-                values["tag_slot"],
-                values["tag_label"],
-            ),
-        )
-        _failpoint("create_after_reservation")
-        _insert_slots(
-            db,
-            reservation_id=reservation_id,
-            room_id=values["room_id"],
-            booking_date=values["booking_date"],
-            slots=values["slots"],
-        )
-        _failpoint("create_after_slots")
-        row = _row_for_id(db, reservation_id)
-        _insert_event(
-            db,
-            reservation_id=reservation_id,
-            actor_id=actor["id"],
-            event_type="created",
-            revision=1,
-            before=None,
-            after=_snapshot(row),
-        )
-        _failpoint("create_after_event")
+        reservation_id = _create_in_transaction(db, actor, payload)
     row = _row_for_id(db, reservation_id)
     return serialize_reservation(row, actor)
 

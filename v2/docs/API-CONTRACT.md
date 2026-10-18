@@ -251,12 +251,12 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
   `{id, name, department}`（不含用户名），作为交接选择器数据源。
 - `GET /api/v1/admin/system` 返回真实数据库、服务、备份追平状态以及
   `backupSequence/dataSequence/servicePort/bindMode/workStart/workEnd`；其 `databaseVersion`
-  为当前 schema v4；`POST /api/v1/admin/backups`
+  为当前 schema v5；`POST /api/v1/admin/backups`
   返回备份文件、UTC 时间、备份序列与源数据序列；备份管道失败时稳定返回
   `500 BACKUP_FAILED`，即使失败审计写入也失败；`GET /api/v1/admin/diagnostics`。
-- 备份侧车的 `databaseSchemaVersion` 新建时为 `4`；恢复器只接受通过完整性和安装身份
-  验证的 schema v1 或当前 schema v4 备份。schema v1 在恢复原子替换后复用与服务启动
-  相同的数据库准备迁移链依次升级至 v4；schema v2/v3 只属于已有产品代际 2 数据库的
+- 备份侧车的 `databaseSchemaVersion` 新建时为 `5`；恢复器只接受通过完整性和安装身份
+  验证的 schema v1 或当前 schema v5 备份。schema v1 在恢复原子替换后复用与服务启动
+  相同的数据库准备迁移链依次升级至 v5；schema v2/v3/v4 只属于已有产品代际 2 数据库的
   启动迁移输入，不是恢复侧车
   的受支持版本。迁移或复检失败不得标记恢复成功。
 - `GET /api/v1/admin/audit` 支持 `cursor/pageSize/action/outcome/actorId/targetType/targetId/dateFrom/dateTo`，
@@ -316,35 +316,105 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 全部隐藏时返回 `rooms: []`。`/integration/rooms` 与 `/integration/availability` 不受
 公开大屏开关影响。
 
-## 对话预约（V2.6.0，本增量未暴露接口）
+## 对话预约（V2.6.0，默认关闭）
 
-本增量不注册对话、快速预约或模型配置路由。模型接口只在进程内存在，功能保持关闭，
-测试只用替身。第一期没有语音输入，也没有麦克风或系统听写接口。模型输出只有
-引用和证据：相对日或周几、开始时段或钟点、时长、房间、事项列表中的一项、
-`refs` 和证据下标。不接受 `purpose_hint`、`notes` 或其他自由文本。证据下标
-必须存在，时间字段的证据必须是时间类词元。没有本地规则快路径。
+`conversation_settings.enabled` 默认为 0。关闭时，下面三个已注册的写接口返回
+`403 FEATURE_DISABLED`，`error.message` 为「对话预约未开启」，并且不编码、不调用模型。
+`GET /bootstrap` 的 `permissions.useConversation` 仅在功能开启且（测试注入了
+模型替身，或已配置模型名和服务器密钥）时为 true；响应里没有密钥。
 
-- 任何未来要离开本机的句子必须先经过本机出站编码器（`v2app/services/deid.py`）。
-  编码器不联网。调用方只提供当前用户按现有权限已经可见的案号、本人历史当事人、
-  启用用户目录中的姓名、房间表中的房间名，以及事项名。
-- 编码结果 `confident=false` 时不得外发，调用方应退回手动预约。占位符到原文的
-  映射只留在本机。通过编码之后还要过 `release_outbound`：词元不是词表词或
-  `[Pn]` 就不发。
-- S1 验收是不变式，不是黑名单样例。非词表的姓名、案号、电话、证件号不能以
-  连续子串出现在外发文本里。所有带数字的词元共用一笔预算，中文数字按十进制
-  位数计：每条消息最多 1 个日期、2 个时刻、1 个时长、1 个日号（1–31）、
-  1 个已公开的房间序号，合计不超过 16 个数字字符。时刻的分钟只允许
-  00/15/30/45（预约格子是 30 分钟；刻钟留给澄清，不用 5 的倍数，避免多藏数字）。
-  时长必须是 15 的倍数且不超过 180 分钟。`13:38`、`13:81`、`6:7` 和超额的
-  `5点6点7点`、`一号三号` 不放行。四位年份只允许服务器当年或下一年，并且
-  `date()` 必须认这是真日期。数字词两边必须是词表词、标点、空白或字符串边界，
-  否则并进占位符。2026-10-20 当天，一句里的数字文法约 26.27 比特
-  （`log2(730)+2×log2(96)+log2(12)`）。换一句或改走词表选词都不在这笔上限里，
-  所以它只挡住偶然碎片。事项只发送代码里的类别，不发送历史自由文本。
-  已知残余风险：名字里由词表词组成的部分（如「张会」→ `[P1] 会`，负责人 2026-10-20 确认），
-  管理员房间名只检查长度，以及阿拉伯-印度数字、泰文数字。当事人和案号不作为自由文本外发。
-- 设计中的路径尚未实现，现在调用会落到现有的未匹配路由，而不是
-  `403 FEATURE_DISABLED`。它们包括 `GET/POST/PATCH/DELETE /api/v1/conversations`、
-  `POST /api/v1/quick-booking/prepare`、`POST /api/v1/quick-booking/commit`，
-  以及 `/api/v1/admin/conversation-settings`。在这些路由真正注册之前，契约不把
-  它们当作可用 API。
+第一期没有语音输入，也没有麦克风或系统听写接口。本增量不注册会话列表、
+重命名、删除、管理员模型设置，也不在预约详情上返回 `fromConversation`。
+这些未注册路径仍是 `404`，而不是 `403`。
+
+已注册的只有 POST。对这三条路径发 GET 时，现有的未匹配路由仍返回 `404`。
+已注册：
+
+- `POST /api/v1/conversations/{id}/messages`，请求体 `{ "text": "..." }`，
+  可选 `mentions`（`start`、`end`、`kind=party|case`、`value`）。`id` 为 `new`
+  时由服务端新建会话。一句最长 200 字。
+- `POST /api/v1/quick-booking/prepare`，请求体 `{ "draftId", roomId?, duration?, caseNumber?, purpose?, partyName? }`。
+  `duration` 可以是 30–180 的 30 倍数，或 `"window"`。此接口不调用模型。
+- `POST /api/v1/quick-booking/commit`，请求体 `{ "token": "qb_..." }`。成功 `201`，
+  正文是现有预约序列化结果加上 `conversationId`。
+
+准备成功时响应为：
+
+```json
+{
+  "conversation": { "id": "...", "title": "笔录室 1 · 8月10日 12:00", "status": "open" },
+  "reply": {
+    "kind": "prepared",
+    "text": "帮你找到了：笔录室 1 明天下午空着，案号从你 8 月 8 日的预约里带出来了。",
+    "prepared": {
+      "token": "qb_...",
+      "expiresAt": "2026-08-09T08:10:00+08:00",
+      "booking": {
+        "date": "2026-08-10", "start": "12:00", "duration": 60, "end": "13:00",
+        "roomId": "...", "roomName": "笔录室 1",
+        "partyName": "孙某", "caseNumber": "2026-087", "purpose": "询问笔录",
+        "notes": "", "tagId": "tag-1"
+      },
+      "inferred": ["start", "roomId", "caseNumber", "purpose"],
+      "missing": [],
+      "relativeDay": "明天"
+    }
+  }
+}
+```
+
+`inferred` 只列出程序补上的字段。`missing` 列出仍空着的 `party`、`case`、`purpose`。
+事项只从请求者本人的历史预约，或句子里已经出现的事项词带回；不采用模型的
+`purpose_hint`，也不接受模型自由文本。事项为空时仍签发凭证，但 `commit` 会走
+现有创建校验，返回 `422 VALIDATION_ERROR` 且 `error.fields.purpose="请输入事项"`。
+用户可再调 `prepare` 提交事项。相对日期以服务器业务日为准，回复正文不写案号。
+
+每句话都走模型。模型只返回引用和证据：相对日或周几、开始时段或钟点、时长、
+房间、事项列表中的一项、`refs` 和证据下标。证据下标必须存在，时间字段的证据
+必须是时间类词元。`need_clarification` 为真时一律澄清。时段词只约束开始时间：
+上午 08:30–12:00，中午 11:30–13:30，下午 12:00–17:30，晚上 18:00–23:00。开始
+时间必须落在窗口与工作时间 08:30–17:30 的交集里；结束时间可以越过时段窗口，
+不能越过工作时间。交不上时给出最近的合法开始，不改记成另一个时段，也不写成
+非法卡片。时长必须是 30–180 的 30 倍数，不能约过去。
+
+当事人和案号只来自两处：请求者本人 `status=active` 的历史（含已结束的场次），
+或用户自己句子里的占位符，由本机按原文回填。`@` 只能当人，`#` 只能当案号。
+启用用户的显示名只参与编码，不进入提示词，也不用来带出别人的事项。未说明的
+房间、时长、事项、当事人按本人历史补全。
+
+多间空房且没有房间偏好时返回 `reply.kind="clarify"`。房间选项含
+`type=room`、`roomId`、`roomName`、`date`、`windowStart`、`windowEnd`、
+`maxDuration`，最多 3 间。时长不明确时另有
+`duration.choices=[60, 120, "window"]`。澄清响应没有凭证。
+选房顺序是：句子里的房间名、该案号或当事人最近用过的房间、用户的默认笔录室、
+本人近 90 天使用最多的笔录室。空房只统计 `status=active` 的占用。
+
+凭证是 `qb_` 加随机串，库里只存 SHA-256，10 分钟有效，并绑定用户和当时的
+`session_version`。别人的凭证返回 `404 NOT_FOUND`。已使用返回
+`409 PREPARED_USED`。过期返回 `410 PREPARED_EXPIRED`。会话版本不一致返回
+`401 SESSION_EXPIRED`。`commit` 在同一个 `BEGIN IMMEDIATE` 事务里重新检查
+权限和冲突，并调用与 `POST /reservations` 相同的创建路径；冲突返回
+`409 SLOT_CONFLICT`，`conflicts` 只有 `id`、`roomId`、`date`、`start`、`end`。
+失败会回滚，凭证保持未使用。预约审计仍是 `reservation_events` 的 `created`，
+不另记原文。
+
+离开本机的句子必须先经过 `v2app/services/deid.py` 的白名单编码器。编码器不联网。
+所有带数字的词元共用一笔预算，中文数字按十进制位数计：每条消息最多 1 个日期、
+2 个时刻、1 个时长、1 个日号（1–31）、1 个已公开的房间序号，合计不超过 16 个
+数字字符。时刻的分钟只允许 00/15/30/45。时长必须是 15 的倍数且不超过 180 分钟。
+四位年份只允许服务器当年或下一年，并且 `date()` 必须认这是真日期。不在词表里的
+数字词，两边必须是词表词、标点、空白或字符串边界，否则并进占位符。
+`13:38`、`13:81`、`6:7` 和超额的 `5点6点7点`、`一号三号` 不放行。2026-10-20
+当天一句数字文法约 26.27 比特；换一句或改走词表选词都不在这笔上限里，它只挡住
+偶然碎片。事项只发送代码里的类别，不发送历史自由文本。送给模型的只有编码句、
+服务器日期与星期、当前钟点、启用房间名和事项类别。工作时间留在本机，不写进提示词。
+字段值必须落在被引用词元的候选集里，对不上就澄清、不发凭证。
+`confident=false`（空文本、过长或编码结果破坏不变式）、闸门拦截、解析失败、超时
+或未配置模型时，`reply.kind="fallback"`。安全审计 `model.request` 只记录实际发出
+的编码文本、供应商、模型名、占位符数量、耗时和结果；映射不入库。
+
+验收拆开。S1 隐私不变式、S2 授权（凭证 10 分钟、用户与会话绑定、重放、过期、
+跨用户、权限与冲突复核）和 S3 业务硬约束都必须 100%。Q 理解质量是冻结语料上的
+指标，CI 用录制的模型输出回放，不按缺陷阻断。
+已知残余风险：名字里由词表词组成的部分（如「张会」→ `[P1] 会`，负责人 2026-10-20 确认）。
+管理员房间名只检查长度。阿拉伯-印度数字、泰文数字不在这套归一化里。
