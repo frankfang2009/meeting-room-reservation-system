@@ -45,6 +45,348 @@ _SPOKEN_DIGITS = str.maketrans(
 )
 
 
+def _benign(text, *, date, part, duration, start=None, end=None, room=None, date_body=None):
+    return {
+        "text": text,
+        "date": date,
+        "part": part,
+        "duration": duration,
+        "start": start,
+        "end": end,
+        "room": room,
+        "date_body": date_body or {"relative_days": (date and 0) or 0},
+    }
+
+
+_BENIGN_CORPUS = (
+    _benign(
+        "帮我约明天下午一小时",
+        date="2026-08-10",
+        part="afternoon",
+        duration=60,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午九点三十分，笔录室1，一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="09:30",
+        room="笔录室 1",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天下午一小时",
+        date="2026-08-10",
+        part="afternoon",
+        duration=60,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "后天上午笔录室 1 两小时",
+        date="2026-08-11",
+        part="morning",
+        duration=120,
+        room="笔录室 1",
+        date_body={"relative_days": 2},
+    ),
+    _benign(
+        "下周一上午两小时",
+        date="2026-08-10",
+        part="morning",
+        duration=120,
+        date_body={"week_offset": 1, "weekday": 1},
+    ),
+    _benign(
+        "明天14:00到15:00",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="14:00",
+        end="15:00",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天14:00到14:30",
+        date="2026-08-10",
+        part="exact",
+        duration=30,
+        start="14:00",
+        end="14:30",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午90分钟 2号笔录室",
+        date="2026-08-10",
+        part="morning",
+        duration=90,
+        room="笔录室 2",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "周五下午开会一小时",
+        date="2026-08-14",
+        part="afternoon",
+        duration=60,
+        date_body={"week_offset": 1, "weekday": 5},
+    ),
+    _benign(
+        "明天晚上谈话半小时",
+        date="2026-08-10",
+        part="afternoon",
+        duration=30,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午会见一小时",
+        date="2026-08-10",
+        part="morning",
+        duration=60,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "笔录室1 明天上午一小时",
+        date="2026-08-10",
+        part="morning",
+        duration=60,
+        room="笔录室 1",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "帮我预约明天下午开会一小时",
+        date="2026-08-10",
+        part="afternoon",
+        duration=60,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午九点半，笔录室1，一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="09:30",
+        room="笔录室 1",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天下午三点到四点，笔录室 2",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="15:00",
+        end="16:00",
+        room="笔录室 2",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "后天中午一小时",
+        date="2026-08-11",
+        part="afternoon",
+        duration=60,
+        date_body={"relative_days": 2},
+    ),
+    _benign(
+        "下周三下午两点，谈话一小时",
+        date="2026-08-12",
+        part="exact",
+        duration=60,
+        start="14:00",
+        date_body={"week_offset": 1, "weekday": 3},
+    ),
+    _benign(
+        "今天上午十点，笔录室1，一小时",
+        date="2026-08-09",
+        part="exact",
+        duration=60,
+        start="10:00",
+        room="笔录室 1",
+        date_body={"relative_days": 0},
+    ),
+    _benign(
+        "明天 9:30 笔录室1 一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="09:30",
+        room="笔录室 1",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "下周一下午三点半，半小时",
+        date="2026-08-10",
+        part="exact",
+        duration=30,
+        start="15:30",
+        date_body={"week_offset": 1, "weekday": 1},
+    ),
+    _benign(
+        "帮我订后天上午笔录室2，三十分钟",
+        date="2026-08-11",
+        part="morning",
+        duration=30,
+        room="笔录室 2",
+        date_body={"relative_days": 2},
+    ),
+    _benign(
+        "大后天上午一小时",
+        date="2026-08-12",
+        part="morning",
+        duration=60,
+        date_body={"relative_days": 3},
+    ),
+    _benign(
+        "明天上午九点，笔录室1，两小时",
+        date="2026-08-10",
+        part="exact",
+        duration=120,
+        start="09:00",
+        room="笔录室 1",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "后天14:00笔录室1一小时",
+        date="2026-08-11",
+        part="exact",
+        duration=60,
+        start="14:00",
+        room="笔录室 1",
+        date_body={"relative_days": 2},
+    ),
+    _benign(
+        "下周五下午两点半，笔录室 2，一小时",
+        date="2026-08-14",
+        part="exact",
+        duration=60,
+        start="14:30",
+        room="笔录室 2",
+        date_body={"week_offset": 1, "weekday": 5},
+    ),
+    _benign(
+        "明天中午十二点，一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="12:00",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "周六上午十点，笔录室1，90分钟",
+        date="2026-08-15",
+        part="exact",
+        duration=90,
+        start="10:00",
+        room="笔录室 1",
+        date_body={"week_offset": 1, "weekday": 6},
+    ),
+    _benign(
+        "明天上午8:30到10:00",
+        date="2026-08-10",
+        part="exact",
+        duration=90,
+        start="08:30",
+        end="10:00",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "帮我约下周一上午九点，笔录室1，一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="09:00",
+        room="笔录室 1",
+        date_body={"week_offset": 1, "weekday": 1},
+    ),
+    _benign(
+        "明天晚上一小时",
+        date="2026-08-10",
+        part="afternoon",
+        duration=60,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "后天上午九点三十分，2号笔录室，半小时",
+        date="2026-08-11",
+        part="exact",
+        duration=30,
+        start="09:30",
+        room="笔录室 2",
+        date_body={"relative_days": 2},
+    ),
+    _benign(
+        "明天下午两点一小时",
+        date="2026-08-10",
+        part="exact",
+        duration=60,
+        start="14:00",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "周五上午开会两小时",
+        date="2026-08-14",
+        part="morning",
+        duration=120,
+        date_body={"week_offset": 1, "weekday": 5},
+    ),
+    _benign(
+        "帮我订明天下午",
+        date="2026-08-10",
+        part="afternoon",
+        duration=None,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天晚上谈话",
+        date="2026-08-10",
+        part="afternoon",
+        duration=None,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午会见",
+        date="2026-08-10",
+        part="morning",
+        duration=None,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "明天上午九点三十分",
+        date="2026-08-10",
+        part="exact",
+        duration=None,
+        start="09:30",
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "约明天下午开会",
+        date="2026-08-10",
+        part="afternoon",
+        duration=None,
+        date_body={"relative_days": 1},
+    ),
+    _benign(
+        "周五下午开会",
+        date="2026-08-14",
+        part="afternoon",
+        duration=None,
+        date_body={"week_offset": 1, "weekday": 5},
+    ),
+    _benign(
+        "下周一上午笔录",
+        date="2026-08-10",
+        part="morning",
+        duration=None,
+        date_body={"week_offset": 1, "weekday": 1},
+    ),
+    _benign(
+        "后天中午开会",
+        date="2026-08-11",
+        part="afternoon",
+        duration=None,
+        date_body={"relative_days": 2},
+    ),
+)
+
+
 def _intent(**overrides) -> dict:
     value = {
         "intent": "book",
@@ -700,6 +1042,75 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(short_booking["start"], "09:30")
         self.assertEqual(short_booking["end"], "10:00")
 
+    def test_benign_booking_corpus_is_fully_usable(self) -> None:
+        user, client, rooms = self.begin()
+        room_ids = {room["name"]: room["id"] for room in rooms}
+        local = 0
+        model = 0
+        self.assertGreaterEqual(len(_BENIGN_CORPUS), 30)
+        for sample in _BENIGN_CORPUS:
+            intent = _intent(
+                date=sample["date_body"],
+                time={"part": sample["part"], "start": sample["start"], "end": sample["end"]},
+                duration_minutes=sample["duration"],
+                room={"name": sample["room"], "kind": None},
+                need_clarification=sample["duration"] is None,
+                missing=["duration"] if sample["duration"] is None else [],
+            )
+            provider = FakeProvider([json.dumps(intent, ensure_ascii=False)])
+            self.enable(provider)
+            response = self.write(
+                "POST",
+                "/api/v1/conversations/new/messages",
+                {"text": sample["text"]},
+                client=client,
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            reply = body["reply"]
+            self.assertIn(reply["kind"], {"prepared", "clarify"}, sample["text"])
+            with self.app.app_context():
+                raw = (
+                    get_db()
+                    .execute(
+                        "SELECT draft_json FROM conversations WHERE id = ?",
+                        (body["conversation"]["id"],),
+                    )
+                    .fetchone()[0]
+                )
+            draft = json.loads(raw)
+            self.assertEqual(draft["date"], sample["date"], sample["text"])
+            self.assertEqual(draft["timePart"], sample["part"], sample["text"])
+            self.assertEqual(draft.get("timeStart"), sample["start"], sample["text"])
+            self.assertEqual(draft.get("timeEnd"), sample["end"], sample["text"])
+            self.assertEqual(draft.get("duration"), sample["duration"], sample["text"])
+            if sample["duration"] is None:
+                self.assertIn("duration", reply, sample["text"])
+            if sample["room"] is None:
+                self.assertEqual(reply["kind"], "clarify", sample["text"])
+            else:
+                self.assertEqual(reply["kind"], "prepared", sample["text"])
+                booking = reply["prepared"]["booking"]
+                self.assertEqual(booking["roomId"], room_ids[sample["room"]], sample["text"])
+                self.assertEqual(booking["roomName"], sample["room"], sample["text"])
+                self.assertEqual(booking["date"], sample["date"], sample["text"])
+                self.assertEqual(booking["duration"], sample["duration"], sample["text"])
+                if sample["start"]:
+                    self.assertEqual(booking["start"], sample["start"], sample["text"])
+            if provider.calls:
+                model += 1
+                with self.app.app_context():
+                    context = deid_context_for_user(get_db(), user["id"])
+                masked = deidentify(sample["text"], context)
+                self.assertTrue(masked.confident, (sample["text"], masked.reasons, masked.text))
+                self.assertEqual(provider.calls[0][1].content, masked.text)
+            else:
+                local += 1
+        self.assertEqual(local + model, len(_BENIGN_CORPUS))
+        self.assertGreater(local, 0)
+        self.assertGreater(model, 0)
+        self.assertEqual((local, model), (33, 8))
+
     def test_sensitive_repros_do_not_reach_provider_or_audit(self) -> None:
         user, client, _rooms = self.begin()
         created = self.write(
@@ -730,6 +1141,10 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             ("电话幺三八洞洞幺三八洞洞洞", ("幺三八洞洞幺三八洞洞洞", "13800138000")),
         )
         for text, needles in samples:
+            with self.app.app_context():
+                db = get_db()
+                db.execute("DELETE FROM security_audit_log WHERE action = 'model.request'")
+                db.commit()
             provider = FakeProvider([json.dumps(_intent(), ensure_ascii=False)])
             self.enable(provider)
             response = self.write(
@@ -747,17 +1162,18 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
                 if message.role == "user"
             )
             with self.app.app_context():
-                stored = (
+                rows = (
                     get_db()
                     .execute(
                         """
                     SELECT details_json FROM security_audit_log
                     WHERE action = 'model.request'
-                    ORDER BY id DESC LIMIT 1
                     """
                     )
-                    .fetchone()[0]
+                    .fetchall()
                 )
+            self.assertEqual(len(rows), 1, text)
+            stored = rows[0][0]
             details = json.loads(stored)
             sent = details.get("sentText") or ""
             blob = "\n".join((payload, sent, stored))
