@@ -315,3 +315,19 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 只有 `is_active=1 AND show_on_display=1` 的笔录室及其预约能进入服务端查询和投影；
 全部隐藏时返回 `rooms: []`。`/integration/rooms` 与 `/integration/availability` 不受
 公开大屏开关影响。
+
+## 对话预约（V2.6.0，本增量未暴露接口）
+
+本增量不注册对话、快速预约或模型配置路由，也不接受模型调用。功能保持关闭。
+下列边界先于接口生效；第一期没有语音输入，也没有麦克风或系统听写接口。
+
+- 任何未来要离开本机的句子必须先经过本机脱敏网关（`v2app/services/deid.py`）。
+  网关不联网。调用方只提供当前用户按现有权限已经可见的案号、本人历史当事人、
+  启用用户目录中的姓名，以及房间表中的房间名。
+- 脱敏结果 `confident=false` 时不得外发，调用方应退回手动预约。占位符到原文的
+  映射只留在本机。
+- 设计中的路径尚未实现，现在调用会落到现有的未匹配路由，而不是
+  `403 FEATURE_DISABLED`。它们包括 `GET/POST/PATCH/DELETE /api/v1/conversations`、
+  `POST /api/v1/quick-booking/prepare`、`POST /api/v1/quick-booking/commit`，
+  以及 `/api/v1/admin/conversation-settings`。在这些路由真正注册之前，契约不把
+  它们当作可用 API。
