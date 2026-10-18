@@ -150,9 +150,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(provider.calls, [])
         self.assertIs(self.bootstrap()["permissions"]["useConversation"], False)
         self.assertEqual(self.client.get("/api/v1/conversations").status_code, 404)
-        self.assertEqual(
-            self.client.get("/api/v1/admin/conversation-settings").status_code, 404
-        )
+        self.assertEqual(self.client.get("/api/v1/admin/conversation-settings").status_code, 404)
 
     def test_happy_path_prefers_the_most_used_room_and_own_history(self) -> None:
         user, client, rooms = self.begin()
@@ -212,13 +210,12 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         with self.app.app_context():
             db = get_db()
             draft = db.execute("SELECT draft_json FROM conversations").fetchone()[0]
-            stored = db.execute(
-                "SELECT token_hash, payload_json FROM prepared_bookings"
-            ).fetchall()
+            stored = db.execute("SELECT token_hash, payload_json FROM prepared_bookings").fetchall()
         self.assertNotIn(sentence, draft)
-        self.assertNotIn(reply["prepared"]["token"], json.dumps(
-            [tuple(row) for row in stored], ensure_ascii=False
-        ))
+        self.assertNotIn(
+            reply["prepared"]["token"],
+            json.dumps([tuple(row) for row in stored], ensure_ascii=False),
+        )
         audit = self.client.get("/api/v1/admin/audit?action=model.request").get_json()
         self.assertNotIn(OWN_PARTY, json.dumps(audit, ensure_ascii=False))
         self.assertNotIn(sentence, json.dumps(audit, ensure_ascii=False))
@@ -299,13 +296,15 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(error["error"]["code"], "VALIDATION_ERROR")
         self.assertEqual(error["error"]["fields"]["purpose"], "请输入事项")
         with self.app.app_context():
-            count = get_db().execute(
-                "SELECT COUNT(*) FROM reservations WHERE owner_user_id = ?",
-                (user["id"],),
-            ).fetchone()[0]
-            used = get_db().execute(
-                "SELECT used_at FROM prepared_bookings"
-            ).fetchone()[0]
+            count = (
+                get_db()
+                .execute(
+                    "SELECT COUNT(*) FROM reservations WHERE owner_user_id = ?",
+                    (user["id"],),
+                )
+                .fetchone()[0]
+            )
+            used = get_db().execute("SELECT used_at FROM prepared_bookings").fetchone()[0]
         self.assertEqual(count, 0)
         self.assertIsNone(used)
 
@@ -355,16 +354,12 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         stranger = self.add_employee("stranger")
         other = self.app.test_client()
         self.login("stranger", "employee-pass-123", other)
-        hidden = self.write(
-            "POST", "/api/v1/quick-booking/commit", {"token": token}, client=other
-        )
+        hidden = self.write("POST", "/api/v1/quick-booking/commit", {"token": token}, client=other)
         self.assertEqual(hidden.status_code, 404, hidden.get_json())
         self.assertNotIn(OWN_PARTY, json.dumps(hidden.get_json(), ensure_ascii=False))
         self.assertNotEqual(stranger["id"], user["id"])
         with self.app.app_context():
-            used = get_db().execute(
-                "SELECT used_at FROM prepared_bookings"
-            ).fetchone()[0]
+            used = get_db().execute("SELECT used_at FROM prepared_bookings").fetchone()[0]
         self.assertIsNone(used)
 
     def test_conflict_between_prepare_and_commit_keeps_the_token(self) -> None:
@@ -425,22 +420,16 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
     def test_commit_failpoint_rolls_back_the_token_and_the_booking(self) -> None:
         user, client, rooms = self.begin()
         self.own_history(client, rooms)
-        _provider, response = self.ask(
-            client, user["id"], "明天下午给孙某做笔录，案号2026-087"
-        )
+        _provider, response = self.ask(client, user["id"], "明天下午给孙某做笔录，案号2026-087")
         token = response.get_json()["reply"]["prepared"]["token"]
         before = self._reservation_count()
         self.app.config["TRANSACTION_FAILPOINT"] = "create_after_slots"
-        failed = self.write(
-            "POST", "/api/v1/quick-booking/commit", {"token": token}, client=client
-        )
+        failed = self.write("POST", "/api/v1/quick-booking/commit", {"token": token}, client=client)
         self.assertEqual(failed.status_code, 500, failed.get_json())
         self.app.config["TRANSACTION_FAILPOINT"] = None
         self.assertEqual(self._reservation_count(), before)
         with self.app.app_context():
-            used = get_db().execute(
-                "SELECT used_at FROM prepared_bookings"
-            ).fetchone()[0]
+            used = get_db().execute("SELECT used_at FROM prepared_bookings").fetchone()[0]
         self.assertIsNone(used)
         created = self.write(
             "POST", "/api/v1/quick-booking/commit", {"token": token}, client=client
@@ -500,9 +489,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         )
         switched_body = json.dumps(switched.get_json(), ensure_ascii=False)
         self.assertEqual(switched.status_code, 200, switched.get_json())
-        self.assertEqual(
-            switched.get_json()["reply"]["prepared"]["booking"]["purpose"], ""
-        )
+        self.assertEqual(switched.get_json()["reply"]["prepared"]["booking"]["purpose"], "")
         self.assertNotIn(OTHER_PURPOSE, switched_body)
         self.assertNotEqual(other["id"], user["id"])
 
@@ -527,6 +514,148 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(option["windowStart"], "08:30")
         self.assertEqual(option["windowEnd"], "12:00")
 
+    def test_current_schema_missing_table_or_column_refuses_startup(self) -> None:
+        self.setup_system()
+
+        def snapshot(name: str):
+            target = self.database.with_name(name)
+            with (
+                closing(sqlite3.connect(self.database)) as source,
+                closing(sqlite3.connect(target)) as copied,
+            ):
+                source.backup(copied)
+            return target
+
+        missing_table_path = snapshot("missing-prepared-bookings.db")
+        with closing(sqlite3.connect(missing_table_path)) as db:
+            db.execute("DROP TABLE prepared_bookings")
+            db.commit()
+        with self.assertRaises(db_module.DatabaseGenerationError):
+            db_module.classify_existing_database(missing_table_path)
+        self.assertFalse(db_module.prepare_database(missing_table_path).ready)
+
+        missing_column_path = snapshot("missing-show-on-display.db")
+        with closing(sqlite3.connect(missing_column_path)) as db:
+            db.execute("ALTER TABLE rooms DROP COLUMN show_on_display")
+            db.commit()
+        with self.assertRaises(db_module.DatabaseGenerationError):
+            db_module.classify_existing_database(missing_column_path)
+        self.assertFalse(db_module.prepare_database(missing_column_path).ready)
+
+    def test_clarification_revokes_the_previous_prepared_token(self) -> None:
+        user, client, rooms = self.begin()
+        self.own_history(client, rooms)
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        _provider, first = self.ask(
+            client,
+            user["id"],
+            "明天下午给孙某做笔录，案号2026-087",
+            room={"name": room["name"], "kind": None},
+        )
+        first_body = first.get_json()
+        self.assertEqual(first.status_code, 200, first_body)
+        token = first_body["reply"]["prepared"]["token"]
+        conversation_id = first_body["conversation"]["id"]
+        follow = "明天下午做笔录"
+        provider = self.provider_for(
+            user["id"],
+            follow,
+            duration_minutes=None,
+            need_clarification=True,
+            missing=["duration"],
+            room={"name": room["name"], "kind": None},
+        )
+        self.enable(provider)
+        second = self.write(
+            "POST",
+            f"/api/v1/conversations/{conversation_id}/messages",
+            {"text": follow},
+            client=client,
+        )
+        second_body = second.get_json()
+        self.assertEqual(second.status_code, 200, second_body)
+        self.assertEqual(second_body["reply"]["kind"], "clarify")
+        self.assertNotIn("token", second_body["reply"])
+        commit = self.write(
+            "POST",
+            "/api/v1/quick-booking/commit",
+            {"token": token},
+            client=client,
+        )
+        self.assertEqual(commit.status_code, 409, commit.get_json())
+        self.assertEqual(commit.get_json()["error"]["code"], "PREPARED_USED")
+        with self.app.app_context():
+            used = get_db().execute("SELECT used_at FROM prepared_bookings").fetchone()[0]
+        self.assertIsNotNone(used)
+
+    def test_explicit_end_time_sets_duration_and_conflict_clarifies(self) -> None:
+        user, client, rooms = self.begin()
+        self.own_history(client, rooms)
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        sentence = "明天14:00到14:30给孙某做笔录，案号2026-087"
+        _provider, response = self.ask(
+            client,
+            user["id"],
+            sentence,
+            time={"part": "exact", "start": "14:00", "end": "14:30"},
+            duration_minutes=None,
+            room={"name": room["name"], "kind": None},
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        booking = body["reply"]["prepared"]["booking"]
+        self.assertEqual(booking["start"], "14:00")
+        self.assertEqual(booking["end"], "14:30")
+        self.assertEqual(booking["duration"], 30)
+        conflict = self.provider_for(
+            user["id"],
+            sentence,
+            time={"part": "exact", "start": "14:00", "end": "14:30"},
+            duration_minutes=60,
+            room={"name": room["name"], "kind": None},
+        )
+        self.enable(conflict)
+        clarified = self.write(
+            "POST",
+            "/api/v1/conversations/new/messages",
+            {"text": sentence},
+            client=client,
+        )
+        clarified_body = clarified.get_json()
+        self.assertEqual(clarified.status_code, 200, clarified_body)
+        self.assertEqual(clarified_body["reply"]["kind"], "clarify")
+        self.assertNotIn("token", clarified_body["reply"])
+
+    def test_unhashable_model_json_falls_back_and_audits(self) -> None:
+        _user, client, _rooms = self.begin()
+        content = json.dumps({**_intent(), "intent": []}, ensure_ascii=False)
+        self.enable(FakeProvider([content]))
+        response = self.write(
+            "POST",
+            "/api/v1/conversations/new/messages",
+            {"text": "明天下午做笔录"},
+            client=client,
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(body["reply"]["kind"], "fallback")
+        with self.app.app_context():
+            stored = (
+                get_db()
+                .execute(
+                    """
+                SELECT details_json FROM security_audit_log
+                WHERE action = 'model.request'
+                """
+                )
+                .fetchone()[0]
+            )
+        details = json.loads(stored)
+        self.assertEqual(details["outcome"], "invalid_json")
+        self.assertIsInstance(details["sentText"], str)
+        self.assertNotIn(content, stored)
+        self.assertNotIn("普通员工", stored)
+
     def test_v4_database_gains_disabled_quick_booking_tables(self) -> None:
         self.setup_system()
         with closing(sqlite3.connect(self.database)) as db:
@@ -545,10 +674,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
                 "SELECT enabled FROM conversation_settings WHERE id = 1"
             ).fetchone()[0]
             tables = {
-                row[0]
-                for row in db.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
             }
         self.assertEqual(version, "5")
         self.assertEqual(enabled, 0)

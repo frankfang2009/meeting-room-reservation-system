@@ -44,9 +44,7 @@ _COUNT_WORDS = {2: "两", 3: "三"}
 def conversation_available(db: sqlite3.Connection) -> bool:
     """功能已开启，且测试替身或已配置的模型密钥可用。"""
 
-    row = db.execute(
-        "SELECT enabled, model FROM conversation_settings WHERE id = 1"
-    ).fetchone()
+    row = db.execute("SELECT enabled, model FROM conversation_settings WHERE id = 1").fetchone()
     if row is None or int(row["enabled"]) != 1:
         return False
     if current_app.config.get("QUICK_BOOKING_PROVIDER") is not None:
@@ -152,6 +150,7 @@ def send_message(conversation_id: str, text: object) -> dict[str, Any]:
             )
         else:
             conversation_id = existing["id"]
+            _revoke_unused_tokens(db, conversation_id, actor["id"])
             db.execute(
                 """
                 UPDATE conversations
@@ -191,6 +190,7 @@ def prepare_booking(body: dict[str, Any]) -> dict[str, Any]:
     with transaction(db):
         actor = locked_actor(db)
         _require_feature(db)
+        _revoke_unused_tokens(db, row["id"], actor["id"])
         db.execute(
             """
             UPDATE conversations
@@ -328,7 +328,16 @@ def _plan(
     state["timeEnd"] = intent.time_end
     state["notes"] = intent.notes or ""
     state["startExplicit"] = intent.time_part == "exact" and bool(intent.time_start)
-    if intent.duration_minutes is None and (
+    span = _explicit_span(intent)
+    if span is not None and (
+        not _duration_allowed(span) or intent.duration_minutes not in (None, span)
+    ):
+        state["ambiguousDuration"] = True
+        state["duration"] = None
+    elif span is not None:
+        state["duration"] = span
+        state["durationExplicit"] = True
+    elif intent.duration_minutes is None and (
         intent.need_clarification or "duration" in intent.missing
     ):
         state["ambiguousDuration"] = True
@@ -595,8 +604,10 @@ def _free_windows(
     target = date.fromisoformat(state["date"])
     if target == local_now().date():
         window_start = max(window_start, _strictly_after_now(work_start, step))
-    needed = step if state.get("ambiguousDuration") or state.get("durationMode") == "window" else int(
-        state.get("duration") or step
+    needed = (
+        step
+        if state.get("ambiguousDuration") or state.get("durationMode") == "window"
+        else int(state.get("duration") or step)
     )
     result = []
     for room in rooms:
@@ -680,7 +691,9 @@ def _start_for(state: dict[str, Any], room: dict[str, Any], settings: sqlite3.Ro
     return None
 
 
-def _time_window(state: dict[str, Any], work_start: int, work_end: int, step: int) -> tuple[int, int]:
+def _time_window(
+    state: dict[str, Any], work_start: int, work_end: int, step: int
+) -> tuple[int, int]:
     part = state.get("timePart") or "any"
     if part == "morning":
         noon = _ceil_minutes(12 * 60, work_start, step)
@@ -807,6 +820,35 @@ def _prepared_plan(state: dict[str, Any], room_name: str) -> dict[str, Any]:
             },
         },
     }
+
+
+def _explicit_span(intent: BookingIntent) -> int | None:
+    if intent.time_part != "exact" or not intent.time_start or not intent.time_end:
+        return None
+    start = time_to_minutes(intent.time_start, field="start")
+    end = time_to_minutes(intent.time_end, field="end")
+    return end - start
+
+
+def _duration_allowed(minutes: int) -> bool:
+    return 30 <= minutes <= 180 and minutes % 30 == 0
+
+
+def _revoke_unused_tokens(
+    db: sqlite3.Connection,
+    conversation_id: str,
+    owner_id: str,
+) -> None:
+    """草稿被替换后，旧的未使用凭证不能再提交。"""
+
+    db.execute(
+        """
+        UPDATE prepared_bookings
+        SET used_at = ?
+        WHERE conversation_id = ? AND owner_user_id = ? AND used_at IS NULL
+        """,
+        (local_now().isoformat(), conversation_id, owner_id),
+    )
 
 
 def _issue_token(
@@ -987,7 +1029,7 @@ def _own_rows(
         f"""
         SELECT party_name, case_number, purpose, tag_slot, booking_date
         FROM reservations
-        WHERE {' AND '.join(clauses)}
+        WHERE {" AND ".join(clauses)}
         ORDER BY booking_date DESC, start_time DESC, created_at DESC
         """,
         parameters,

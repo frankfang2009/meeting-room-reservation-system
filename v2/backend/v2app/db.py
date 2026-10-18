@@ -58,9 +58,7 @@ NOTICE_RECEIPTS_TABLE_DDL = """
     )
 """
 
-NOTICE_RECEIPTS_INDEX_DDL = (
-    "CREATE INDEX idx_notice_receipts_user ON notice_receipts(user_id)"
-)
+NOTICE_RECEIPTS_INDEX_DDL = "CREATE INDEX idx_notice_receipts_user ON notice_receipts(user_id)"
 
 HANDOVER_REQUESTS_TABLE_DDL = """
     CREATE TABLE handover_requests (
@@ -85,8 +83,7 @@ HANDOVER_REQUESTS_INDEX_DDL = (
 )
 
 HANDOVER_REQUESTS_INBOX_INDEX_DDL = (
-    "CREATE INDEX idx_handover_requests_to_user "
-    "ON handover_requests(to_user_id, status)"
+    "CREATE INDEX idx_handover_requests_to_user ON handover_requests(to_user_id, status)"
 )
 
 CONVERSATION_SETTINGS_DDL = """
@@ -495,33 +492,26 @@ def classify_existing_database(path: Path) -> str:
             raise DatabaseGenerationError("数据库 setup_complete 元数据无效")
         for key in ("data_sequence", "backup_sequence"):
             sequence_value = _meta_value(db, key)
-            if (
-                sequence_value is None
-                or not sequence_value.isdigit()
-                or int(sequence_value) < 0
-            ):
+            if sequence_value is None or not sequence_value.isdigit() or int(sequence_value) < 0:
                 raise DatabaseGenerationError(f"数据库 {key} 元数据无效")
         missing = EXPECTED_TABLES - tables
         if missing:
-            raise DatabaseGenerationError(
-                "V2 数据库结构不完整：" + ", ".join(sorted(missing))
-            )
+            raise DatabaseGenerationError("V2 数据库结构不完整：" + ", ".join(sorted(missing)))
         receipts_table = _receipts_table_for(version)
         if receipts_table is None or receipts_table not in tables:
             raise DatabaseGenerationError(
                 "V2 数据库结构不完整：" + (receipts_table or "提醒回执表")
             )
-            if version == str(SCHEMA_VERSION):
-                missing_columns = (
-                    _missing_v2_columns(db)
-                    + _missing_v3_columns(db)
-                    + _missing_v4_requirements(db, tables)
-                    + _missing_v5_requirements(tables)
-                )
+        if version == str(SCHEMA_VERSION):
+            missing_columns = (
+                _missing_v2_columns(db)
+                + _missing_v3_columns(db)
+                + _missing_v4_requirements(db, tables)
+                + _missing_v5_requirements(tables)
+            )
             if missing_columns:
                 raise DatabaseGenerationError(
-                    "V2 数据库当前结构缺少列或表："
-                    + ", ".join(missing_columns)
+                    "V2 数据库当前结构缺少列或表：" + ", ".join(missing_columns)
                 )
         return f"v{version}"
     finally:
@@ -557,34 +547,27 @@ def migrate_schema_v1_to_v2(path: Path) -> bool:
                 missing = _missing_v2_columns(db)
                 if missing:
                     raise DatabaseGenerationError(
-                        "已标记为 schema v2 的数据库缺少列："
-                        + ", ".join(missing)
+                        "已标记为 schema v2 的数据库缺少列：" + ", ".join(missing)
                     )
                 db.execute("COMMIT")
                 return False
             if version != "1":
-                raise DatabaseGenerationError(
-                    f"不支持从 schema {version or '缺失'} 迁移到 2"
-                )
+                raise DatabaseGenerationError(f"不支持从 schema {version or '缺失'} 迁移到 2")
             missing_tables = EXPECTED_TABLES - _table_names(db)
             if missing_tables:
                 raise DatabaseGenerationError(
-                    "待迁移的 V2 数据库结构不完整："
-                    + ", ".join(sorted(missing_tables))
+                    "待迁移的 V2 数据库结构不完整：" + ", ".join(sorted(missing_tables))
                 )
             for table, column, declaration in SCHEMA_V2_COLUMNS:
                 _add_column_if_missing(db, table, column, declaration)
             updated = db.execute(
-                "UPDATE app_meta SET value = '2' "
-                "WHERE key = 'schema_version' AND value = '1'",
+                "UPDATE app_meta SET value = '2' WHERE key = 'schema_version' AND value = '1'",
             )
             if updated.rowcount != 1:
                 raise DatabaseGenerationError("数据库 schema_version 迁移写入失败")
             missing = _missing_v2_columns(db)
             if missing:
-                raise DatabaseGenerationError(
-                    "数据库迁移后仍缺少列：" + ", ".join(missing)
-                )
+                raise DatabaseGenerationError("数据库迁移后仍缺少列：" + ", ".join(missing))
             db.execute("COMMIT")
             return True
         except Exception:
@@ -626,19 +609,14 @@ def migrate_schema_v2_to_v3(path: Path) -> bool:
                 db.execute("COMMIT")
                 return False
             if version != "2":
-                raise DatabaseGenerationError(
-                    f"不支持从 schema {version or '缺失'} 迁移到 3"
-                )
+                raise DatabaseGenerationError(f"不支持从 schema {version or '缺失'} 迁移到 3")
             missing_tables = EXPECTED_TABLES - tables
             if missing_tables:
                 raise DatabaseGenerationError(
-                    "待迁移的 V2 数据库结构不完整："
-                    + ", ".join(sorted(missing_tables))
+                    "待迁移的 V2 数据库结构不完整：" + ", ".join(sorted(missing_tables))
                 )
             if "reminder_receipts" not in tables:
-                raise DatabaseGenerationError(
-                    "待迁移的 V2 数据库缺少 reminder_receipts 表"
-                )
+                raise DatabaseGenerationError("待迁移的 V2 数据库缺少 reminder_receipts 表")
             for table, column, declaration in SCHEMA_V3_COLUMNS:
                 _add_column_if_missing(db, table, column, declaration)
             db.execute(NOTICE_RECEIPTS_TABLE_DDL)
@@ -668,9 +646,7 @@ def migrate_schema_v2_to_v3(path: Path) -> bool:
                 raise DatabaseGenerationError("数据库 schema_version 迁移写入失败")
             missing = _missing_v2_columns(db) + _missing_v3_columns(db)
             if missing:
-                raise DatabaseGenerationError(
-                    "数据库迁移后仍缺少列：" + ", ".join(missing)
-                )
+                raise DatabaseGenerationError("数据库迁移后仍缺少列：" + ", ".join(missing))
             if "notice_receipts" not in _table_names(db):
                 raise DatabaseGenerationError("数据库迁移后仍缺少 notice_receipts 表")
             db.execute("COMMIT")
@@ -714,8 +690,7 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
                     missing += _missing_v5_requirements(tables)
                 if missing:
                     raise DatabaseGenerationError(
-                        f"已标记为 schema v{version} 的数据库缺少结构："
-                        + ", ".join(missing)
+                        f"已标记为 schema v{version} 的数据库缺少结构：" + ", ".join(missing)
                     )
                 db.execute("COMMIT")
                 return False
@@ -726,13 +701,10 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
             missing_tables = EXPECTED_TABLES - tables
             if missing_tables:
                 raise DatabaseGenerationError(
-                    "待迁移的 V2 数据库结构不完整："
-                    + ", ".join(sorted(missing_tables))
+                    "待迁移的 V2 数据库结构不完整：" + ", ".join(sorted(missing_tables))
                 )
             if "notice_receipts" not in tables:
-                raise DatabaseGenerationError(
-                    "待迁移的 schema v3 数据库缺少 notice_receipts 表"
-                )
+                raise DatabaseGenerationError("待迁移的 schema v3 数据库缺少 notice_receipts 表")
             if "handover_requests" in tables:
                 raise DatabaseGenerationError(
                     "待迁移的 schema v3 数据库已包含 handover_requests 表"
@@ -750,9 +722,7 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
                 """
             )
             db.execute("DROP TABLE reservation_events")
-            db.execute(
-                "ALTER TABLE reservation_events_new RENAME TO reservation_events"
-            )
+            db.execute("ALTER TABLE reservation_events_new RENAME TO reservation_events")
             db.execute(
                 "CREATE INDEX idx_events_reservation "
                 "ON reservation_events(reservation_id, occurred_at)"
@@ -774,9 +744,7 @@ def migrate_schema_v3_to_v4(path: Path) -> bool:
                 + _missing_v4_requirements(db, _table_names(db))
             )
             if missing:
-                raise DatabaseGenerationError(
-                    "数据库迁移后仍缺少结构：" + ", ".join(missing)
-                )
+                raise DatabaseGenerationError("数据库迁移后仍缺少结构：" + ", ".join(missing))
             if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise DatabaseGenerationError("数据库迁移后存在外键引用错误")
             db.execute("COMMIT")
@@ -829,9 +797,7 @@ def migrate_schema_v4_to_v5(path: Path) -> bool:
                 )
             present = [name for name in V5_TABLES if name in tables]
             if present and len(present) != len(V5_TABLES):
-                raise DatabaseGenerationError(
-                    "待迁移的 schema v4 数据库已包含不完整的对话预约表"
-                )
+                raise DatabaseGenerationError("待迁移的 schema v4 数据库已包含不完整的对话预约表")
             if not present:
                 for statement in (
                     CONVERSATION_SETTINGS_DDL,
@@ -842,9 +808,7 @@ def migrate_schema_v4_to_v5(path: Path) -> bool:
                     CONVERSATION_SETTINGS_SEED,
                 ):
                     db.execute(statement)
-            elif db.execute(
-                "SELECT 1 FROM conversation_settings WHERE id = 1"
-            ).fetchone() is None:
+            elif db.execute("SELECT 1 FROM conversation_settings WHERE id = 1").fetchone() is None:
                 db.execute(CONVERSATION_SETTINGS_SEED)
             updated = db.execute(
                 """
