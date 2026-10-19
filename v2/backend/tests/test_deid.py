@@ -25,10 +25,10 @@ from v2app.services.deid import (
     deidentify,
     encode_preview,
     lexicon_categories,
+    is_grammar_token,
     release_outbound,
     satisfies_outbound_invariant,
 )
-from v2app.services.deid import _NUM_TOKEN_RE
 
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "deid-cases.json"
@@ -92,6 +92,14 @@ def _context_from_fixture(payload: dict) -> DeidContext:
         room_names=tuple(raw["room_names"]),
         purpose_names=("询问笔录", "谈话笔录"),
     )
+
+
+def _looks_like_clock(token: str) -> bool:
+    return ":" in token
+
+
+def _looks_like_date(token: str) -> bool:
+    return "-" in token or "/" in token
 
 
 def _assert_secret_hidden(
@@ -196,6 +204,131 @@ class EncoderInvariantTests(unittest.TestCase):
         self.assertIn(
             "1号笔录室", deidentify("明天1号笔录室", DeidContext(room_names=("笔录室 1",))).text
         )
+
+    def test_colon_clocks_and_dates_are_structured_tokens(self) -> None:
+        context = DeidContext(room_names=("笔录室 1",))
+        allowed = allowed_surface(context)
+        clock = deidentify("明天14:00到15:30，笔录室1", context)
+        self.assertIn("14:00", clock.text)
+        self.assertIn("15:30", clock.text)
+        self.assertEqual(
+            [token.category for token in clock.tokens if token.text == "14:00"],
+            ["clock"],
+        )
+        wide = deidentify("明天１４：３０笔录室1", context)
+        self.assertIn("14:30", wide.text)
+        self.assertNotIn("１４", wide.text)
+        dated = deidentify("2026-08-20 09:30笔录室1", context)
+        self.assertIn("2026-08-20", dated.text)
+        self.assertIn("09:30", dated.text)
+        self.assertEqual(
+            [token.category for token in dated.tokens if token.text == "2026-08-20"],
+            ["day"],
+        )
+        self.assertIn("10/28", deidentify("10/28上午", context).text)
+        self.assertIn("10-28", deidentify("10-28上午", context).text)
+        self.assertIn("10月", deidentify("10月28日", context).text)
+        self.assertIn("28日", deidentify("10月28日", context).text)
+        for result in (clock, wide, dated):
+            self.assertTrue(satisfies_outbound_invariant(result.text, allowed), result.text)
+
+    def test_invalid_clocks_and_extra_times_stay_masked(self) -> None:
+        context = DeidContext()
+        allowed = allowed_surface(context)
+        smuggled = deidentify("13:81 23:45 6:7", context)
+        self.assertIn("23:45", smuggled.text)
+        self.assertNotIn("13:81", smuggled.text)
+        self.assertNotIn("6:7", smuggled.text)
+        self.assertTrue(satisfies_outbound_invariant(smuggled.text, allowed))
+        with self.assertRaises(OutboundBlocked):
+            release_outbound("13:81 23:45 6:7", allowed)
+        capped = deidentify("08:30 09:00 10:15 11:20", context)
+        released_clocks = [token for token in capped.text.split(" ") if ":" in token]
+        self.assertEqual(released_clocks, ["08:30", "09:00"])
+        self.assertNotIn("10:15", capped.text)
+        self.assertNotIn("11:20", capped.text)
+        both = deidentify("2026-10-28 14:00 15:30", context)
+        self.assertIn("2026-10-28", both.text)
+        self.assertIn("14:00", both.text)
+        self.assertNotIn("15:30", both.text)
+        self.assertNotIn("14:00:30", deidentify("14:00:30", context).text)
+        self.assertNotIn("10/28", deidentify("10/28/2026", context).text)
+        self.assertNotIn("1123", deidentify("2026-1123 那个", context).text)
+        self.assertNotIn("64321234", deidentify("021-64321234", context).text)
+        with self.assertRaises(OutboundBlocked):
+            release_outbound("08:30 09:00 10:00", allowed)
+        self.assertEqual(
+            release_outbound("2026-10-28 14:00", allowed),
+            "2026-10-28 14:00",
+        )
+
+    def test_durations_up_to_the_business_max_are_released(self) -> None:
+        context = DeidContext()
+        allowed = allowed_surface(context)
+        samples = {
+            "90分钟": "duration",
+            "120分钟": "duration",
+            "180分钟": "duration",
+            "1.5小时": "duration",
+            "１．５小时": "duration",
+            "一个半小时": "clock",
+            "两个小时": "clock",
+            "两个半小时": "clock",
+        }
+        for text, category in samples.items():
+            result = deidentify(f"明天上午{text}", context)
+            self.assertIn(text.replace("１．５小时", "1.5小时"), result.text, text)
+            found = [token for token in result.tokens if token.text in {text, "1.5小时"}]
+            self.assertTrue(found, result.text)
+            self.assertEqual(found[0].category, category, text)
+            self.assertTrue(satisfies_outbound_invariant(result.text, allowed), result.text)
+        for blocked in ("200分钟", "181分钟", "90点", "1234号", "3.5小时", "999分钟"):
+            result = deidentify(f"明天{blocked}", context)
+            self.assertNotIn(blocked, result.text, blocked)
+            self.assertTrue(result.confident, result.reasons)
+        self.assertNotIn("5小时", deidentify("3.5小时", context).text)
+        self.assertEqual(release_outbound("90分钟", allowed), "90分钟")
+        self.assertEqual(release_outbound("120分钟", allowed), "120分钟")
+        self.assertEqual(release_outbound("1.5小时", allowed), "1.5小时")
+        with self.assertRaises(OutboundBlocked):
+            release_outbound("200分钟", allowed)
+        shared = deidentify("2026-10-28 1点2点3点4点", context)
+        self.assertIn("2026-10-28", shared.text)
+        self.assertIn("4点", shared.text)
+        number_digits = sum(
+            sum(char.isdigit() for char in token)
+            for token in shared.text.split(" ")
+            if token[:1].isdigit() and ":" not in token and "-" not in token
+        )
+        self.assertLessEqual(number_digits, MAX_RELEASED_DIGITS)
+
+    def test_separator_splits_cannot_smuggle_a_phone(self) -> None:
+        context = DeidContext()
+        allowed = allowed_surface(context)
+        rng = random.Random(20261019)
+        phones = ("13812345678", "13900001111", "02164321234")
+        separators = (":", "/", "-", "")
+        for _ in range(10_000):
+            phone = rng.choice(phones)
+            pieces: list[str] = []
+            cursor = 0
+            while cursor < len(phone):
+                take = rng.randint(1, 4)
+                pieces.append(phone[cursor : cursor + take])
+                cursor += take
+                if cursor < len(phone):
+                    pieces.append(rng.choice(separators))
+            text = "明天" + "".join(pieces)
+            result = deidentify(text, context)
+            self.assertTrue(result.confident, (text, result.reasons))
+            self.assertTrue(satisfies_outbound_invariant(result.text, allowed), (text, result.text))
+            self.assertNotIn(phone, result.text, text)
+            clocks = [token.text for token in result.tokens if _looks_like_clock(token.text)]
+            dates = [token.text for token in result.tokens if _looks_like_date(token.text)]
+            self.assertLessEqual(len(clocks), 2, text)
+            self.assertLessEqual(len(dates), 1, text)
+            structured = sum(sum(char.isdigit() for char in token) for token in clocks + dates)
+            self.assertLessEqual(structured, 12, text)
 
     def test_gate_blocks_a_forged_name_and_accepts_encoder_output(self) -> None:
         allowed = allowed_surface(DeidContext(room_names=("笔录室 1",)))
@@ -307,7 +440,7 @@ class DeidFixtureTests(unittest.TestCase):
                     continue
                 tokens = result.text.split(" ")
                 if any(
-                    needle in token and (token in allowed or _NUM_TOKEN_RE.fullmatch(token))
+                    needle in token and (token in allowed or is_grammar_token(token))
                     for token in tokens
                 ):
                     continue
