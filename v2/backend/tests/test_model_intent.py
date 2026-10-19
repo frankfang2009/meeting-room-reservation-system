@@ -275,6 +275,51 @@ class ModelIntentTests(_NoNetwork):
         self.assertEqual(kept.refs, ())
         self.assertIsNone(kept.purpose)
 
+    def test_colon_clock_date_and_long_duration_can_be_cited(self) -> None:
+        sentence = "2026-08-20 14:30笔录室1用90分钟"
+        encoded = deidentify(sentence, DeidContext(room_names=ROOMS))
+        indexes = {token.text: index for index, token in enumerate(encoded.tokens)}
+        self.assertEqual(encoded.tokens[indexes["2026-08-20"]].category, "day")
+        self.assertEqual(encoded.tokens[indexes["14:30"]].category, "clock")
+        self.assertEqual(encoded.tokens[indexes["90分钟"]].category, "duration")
+        body = {
+            "intent": "book",
+            "day": {"month": 8, "day": 20},
+            "start": {"period": "any", "time": "14:30"},
+            "duration": {"minutes": 90},
+            "room": "笔录室 1",
+            "purpose": None,
+            "refs": [],
+            "evidence": {
+                "day": [indexes["2026-08-20"]],
+                "start": [indexes["14:30"]],
+                "duration": [indexes["90分钟"]],
+                "room": [indexes["笔录室1"]],
+            },
+            "unknown": [],
+            "missing": [],
+            "need_clarification": False,
+        }
+        parsed = parse_booking_intent(
+            json.dumps(body, ensure_ascii=False),
+            room_names=ROOMS,
+            purpose_names=PURPOSES,
+            tokens=encoded.tokens,
+        )
+        self.assertEqual(parsed.date.month, 8)
+        self.assertEqual(parsed.date.day, 20)
+        self.assertEqual(parsed.time_start, "14:30")
+        self.assertEqual(parsed.duration_minutes, 90)
+        body["evidence"]["duration"] = [indexes["14:30"]]
+        body["evidence"]["start"] = [indexes["90分钟"]]
+        with self.assertRaises(Exception):
+            parse_booking_intent(
+                json.dumps(body, ensure_ascii=False),
+                room_names=ROOMS,
+                purpose_names=PURPOSES,
+                tokens=encoded.tokens,
+            )
+
     def test_invalid_json_falls_back_and_audits_the_encoded_text(self) -> None:
         encoded = deidentify(RAW, CONTEXT)
         cases = [

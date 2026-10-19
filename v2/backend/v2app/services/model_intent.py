@@ -91,6 +91,9 @@ _SYSTEM_RULES = (
     '{"month":1到12,"day":1到31} 或 null。不要输出公历日期。\n'
     "start.period 是 morning、noon、afternoon、evening、any 之一；"
     "start.time 是 HH:MM 或 null。时段只约束开始时间。\n"
+    "用户消息里的 HH:MM、YYYY-MM-DD、M/D、M-D 是钟点或日期词；"
+    "不超过 180 的 N分钟 和 N.N小时是时长词。day 引用日期词，"
+    "start.time 引用钟点词，duration.minutes 引用时长词。\n"
     'duration 是 {"minutes":整数或null}。room 和 purpose 只能是上下文列出的值或 null。\n'
     'refs 是 [{"ph":"P1","role":"被询问人|当事人|案号|其他"}]，ph 必须是本句出现过的占位符。\n'
     "evidence 把 day、start、duration、room、purpose 映射到用户消息词元下标，"
