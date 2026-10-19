@@ -355,7 +355,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
         "partyName": "孙某", "caseNumber": "2026-087", "purpose": "询问笔录",
         "notes": "", "tagId": "tag-1"
       },
-      "inferred": ["start", "roomId", "caseNumber", "purpose"],
+      "inferred": ["start", "roomId", "duration", "caseNumber", "purpose"],
       "missing": [],
       "relativeDay": "明天"
     }
@@ -364,8 +364,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 ```
 
 `inferred` 只列出程序补上的字段。`missing` 列出仍空着的 `party`、`case`、`purpose`。
-事项只从请求者本人的历史预约，或句子里已经出现的事项词带回；不采用模型的
-`purpose_hint`，也不接受模型自由文本。事项为空时仍签发凭证，但 `commit` 会走
+事项只从请求者本人的历史预约，或句子里已经出现的事项词带回；不采用模型的 `purpose_hint`，也不接受模型自由文本。事项为空时仍签发凭证，但 `commit` 会走
 现有创建校验，返回 `422 VALIDATION_ERROR` 且 `error.fields.purpose="请输入事项"`。
 用户可再调 `prepare` 提交事项。相对日期以服务器业务日为准，回复正文不写案号。
 

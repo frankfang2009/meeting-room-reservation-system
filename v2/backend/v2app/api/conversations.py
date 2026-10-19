@@ -16,4 +16,10 @@ bp = Blueprint("conversation_api", __name__, url_prefix="/api/v1/conversations")
 @login_required
 def post_message(conversation_id: str):
     body = parse_json_object()
-    return jsonify(quick_booking.send_message(conversation_id, body.get("text")))
+    return jsonify(
+        quick_booking.send_message(
+            conversation_id,
+            body.get("text"),
+            mentions=body.get("mentions"),
+        )
+    )

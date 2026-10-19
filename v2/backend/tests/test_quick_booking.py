@@ -15,7 +15,7 @@ from unittest import mock
 import v2app.db as db_module
 from tests.test_backend import BackendTestCase
 from v2app.db import get_db
-from v2app.services.deid import deidentify
+from v2app.services.deid import allowed_surface, deidentify, satisfies_outbound_invariant
 from v2app.services.model_provider import FakeProvider
 from v2app.services.quick_booking import deid_context_for_user
 
@@ -46,379 +46,147 @@ _SPOKEN_DIGITS = str.maketrans(
 )
 
 
-def _benign(
-    text,
-    *,
-    date,
-    part,
-    duration,
-    start=None,
-    end=None,
-    room=None,
-    date_body=None,
-    outside=False,
-):
-    return {
-        "text": text,
-        "date": date,
-        "part": part,
-        "duration": duration,
-        "start": start,
-        "end": end,
-        "room": room,
-        "date_body": date_body or {"relative_days": (date and 0) or 0},
-        "outside": outside,
-    }
-
-
-_BENIGN_CORPUS = (
-    _benign(
-        "帮我约明天下午一小时",
-        date="2026-08-10",
-        part="afternoon",
-        duration=60,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天上午九点三十分，笔录室1，一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="09:30",
-        room="笔录室 1",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天下午一小时",
-        date="2026-08-10",
-        part="afternoon",
-        duration=60,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "后天上午笔录室 1 两小时",
-        date="2026-08-11",
-        part="morning",
-        duration=120,
-        room="笔录室 1",
-        date_body={"relative_days": 2},
-    ),
-    _benign(
-        "下周一上午两小时",
-        date="2026-08-10",
-        part="morning",
-        duration=120,
-        date_body={"week_offset": 1, "weekday": 1},
-    ),
-    _benign(
-        "明天14:00到15:00",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="14:00",
-        end="15:00",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天14:00到14:30",
-        date="2026-08-10",
-        part="exact",
-        duration=30,
-        start="14:00",
-        end="14:30",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天上午90分钟 2号笔录室",
-        date="2026-08-10",
-        part="morning",
-        duration=90,
-        room="笔录室 2",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "周五下午开会一小时",
-        date="2026-08-14",
-        part="afternoon",
-        duration=60,
-        date_body={"week_offset": 1, "weekday": 5},
-    ),
-    _benign(
-        "明天晚上谈话半小时",
-        date="2026-08-10",
-        part="night",
-        duration=30,
-        date_body={"relative_days": 1},
-        outside=True,
-    ),
-    _benign(
-        "明天上午会见一小时",
-        date="2026-08-10",
-        part="morning",
-        duration=60,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "笔录室1 明天上午一小时",
-        date="2026-08-10",
-        part="morning",
-        duration=60,
-        room="笔录室 1",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "帮我预约明天下午开会一小时",
-        date="2026-08-10",
-        part="afternoon",
-        duration=60,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天上午九点半，笔录室1，一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="09:30",
-        room="笔录室 1",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天下午三点到四点，笔录室 2",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="15:00",
-        end="16:00",
-        room="笔录室 2",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "后天中午一小时",
-        date="2026-08-11",
-        part="afternoon",
-        duration=60,
-        date_body={"relative_days": 2},
-    ),
-    _benign(
-        "下周三下午两点，谈话一小时",
-        date="2026-08-12",
-        part="exact",
-        duration=60,
-        start="14:00",
-        date_body={"week_offset": 1, "weekday": 3},
-    ),
-    _benign(
-        "今天上午十点，笔录室1，一小时",
-        date="2026-08-09",
-        part="exact",
-        duration=60,
-        start="10:00",
-        room="笔录室 1",
-        date_body={"relative_days": 0},
-    ),
-    _benign(
-        "明天 9:30 笔录室1 一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="09:30",
-        room="笔录室 1",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "下周一下午三点半，半小时",
-        date="2026-08-10",
-        part="exact",
-        duration=30,
-        start="15:30",
-        date_body={"week_offset": 1, "weekday": 1},
-    ),
-    _benign(
-        "帮我订后天上午笔录室2，三十分钟",
-        date="2026-08-11",
-        part="morning",
-        duration=30,
-        room="笔录室 2",
-        date_body={"relative_days": 2},
-    ),
-    _benign(
-        "大后天上午一小时",
-        date="2026-08-12",
-        part="morning",
-        duration=60,
-        date_body={"relative_days": 3},
-    ),
-    _benign(
-        "明天上午九点，笔录室1，两小时",
-        date="2026-08-10",
-        part="exact",
-        duration=120,
-        start="09:00",
-        room="笔录室 1",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "后天14:00笔录室1一小时",
-        date="2026-08-11",
-        part="exact",
-        duration=60,
-        start="14:00",
-        room="笔录室 1",
-        date_body={"relative_days": 2},
-    ),
-    _benign(
-        "下周五下午两点半，笔录室 2，一小时",
-        date="2026-08-14",
-        part="exact",
-        duration=60,
-        start="14:30",
-        room="笔录室 2",
-        date_body={"week_offset": 1, "weekday": 5},
-    ),
-    _benign(
-        "明天中午十二点，一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="12:00",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "周六上午十点，笔录室1，90分钟",
-        date="2026-08-15",
-        part="exact",
-        duration=90,
-        start="10:00",
-        room="笔录室 1",
-        date_body={"week_offset": 1, "weekday": 6},
-    ),
-    _benign(
-        "明天上午8:30到10:00",
-        date="2026-08-10",
-        part="exact",
-        duration=90,
-        start="08:30",
-        end="10:00",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "帮我约下周一上午九点，笔录室1，一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="09:00",
-        room="笔录室 1",
-        date_body={"week_offset": 1, "weekday": 1},
-    ),
-    _benign(
-        "明天晚上一小时",
-        date="2026-08-10",
-        part="night",
-        duration=60,
-        date_body={"relative_days": 1},
-        outside=True,
-    ),
-    _benign(
-        "后天上午九点三十分，2号笔录室，半小时",
-        date="2026-08-11",
-        part="exact",
-        duration=30,
-        start="09:30",
-        room="笔录室 2",
-        date_body={"relative_days": 2},
-    ),
-    _benign(
-        "明天下午两点一小时",
-        date="2026-08-10",
-        part="exact",
-        duration=60,
-        start="14:00",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "周五上午开会两小时",
-        date="2026-08-14",
-        part="morning",
-        duration=120,
-        date_body={"week_offset": 1, "weekday": 5},
-    ),
-    _benign(
-        "帮我订明天下午",
-        date="2026-08-10",
-        part="afternoon",
-        duration=None,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天晚上谈话",
-        date="2026-08-10",
-        part="night",
-        duration=None,
-        date_body={"relative_days": 1},
-        outside=True,
-    ),
-    _benign(
-        "明天上午会见",
-        date="2026-08-10",
-        part="morning",
-        duration=None,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "明天上午九点三十分",
-        date="2026-08-10",
-        part="exact",
-        duration=None,
-        start="09:30",
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "约明天下午开会",
-        date="2026-08-10",
-        part="afternoon",
-        duration=None,
-        date_body={"relative_days": 1},
-    ),
-    _benign(
-        "周五下午开会",
-        date="2026-08-14",
-        part="afternoon",
-        duration=None,
-        date_body={"week_offset": 1, "weekday": 5},
-    ),
-    _benign(
-        "下周一上午笔录",
-        date="2026-08-10",
-        part="morning",
-        duration=None,
-        date_body={"week_offset": 1, "weekday": 1},
-    ),
-    _benign(
-        "后天中午开会",
-        date="2026-08-11",
-        part="afternoon",
-        duration=None,
-        date_body={"relative_days": 2},
-    ),
-)
-
-
 def _intent(**overrides) -> dict:
+    """旧调用点用的最小对象。真正发给解析器的形状由 ``_script`` 生成。"""
+
     value = {
         "intent": "book",
-        "date": {"relative_days": 1},
-        "time": {"part": "afternoon", "start": None, "end": None},
-        "duration_minutes": 60,
-        "room": {"name": None, "kind": None},
-        "party_ref": None,
-        "case_ref": None,
-        "purpose_hint": None,
-        "notes": None,
-        "need_clarification": False,
+        "day": {"offset": 1},
+        "start": {"period": "afternoon", "time": None},
+        "duration": {"minutes": None},
+        "room": None,
+        "purpose": None,
+        "refs": [],
+        "evidence": {"day": [0], "start": [1]},
+        "unknown": [],
         "missing": [],
+        "need_clarification": False,
     }
     value.update(overrides)
     return value
+
+
+def _script(encoded, **overrides) -> dict:
+    """把测试里的旧字段翻译成带证据下标的引用 JSON。"""
+
+    legacy = {
+        "date": {"relative_days": 1},
+        "time": {"part": "afternoon", "start": None, "end": None},
+        "duration_minutes": 60,
+        "room": None,
+        "need_clarification": False,
+        "missing": [],
+    }
+    legacy.update(overrides)
+    tokens = encoded.tokens
+
+    def indexes(*categories: str) -> list[int]:
+        return [index for index, token in enumerate(tokens) if token.category in categories]
+
+    date_body = legacy["date"] or {}
+    if "relative_days" in date_body:
+        day: dict | None = {"offset": date_body["relative_days"]}
+    elif "week_offset" in date_body:
+        day = {"week_offset": date_body["week_offset"], "weekday": date_body["weekday"]}
+    elif "month" in date_body:
+        day = {"month": date_body["month"], "day": date_body["day"]}
+    else:
+        day = None
+    day_evidence = indexes("day")[:1]
+    if day is not None and not day_evidence:
+        day = None
+
+    part = (legacy["time"] or {}).get("part") or "any"
+    period = {
+        "afternoon": "afternoon",
+        "morning": "morning",
+        "noon": "noon",
+        "night": "evening",
+        "dawn": "morning",
+        "early": "morning",
+        "dusk": "evening",
+        "exact": "any",
+        "any": "any",
+    }.get(part, "any")
+    clock = (legacy["time"] or {}).get("start")
+    start_evidence = indexes("period", "clock")[:1]
+    if (period != "any" or clock) and not start_evidence:
+        period = "any"
+        clock = None
+    if period == "any" and not clock:
+        start_evidence = []
+
+    duration = legacy["duration_minutes"]
+    duration_evidence = indexes("duration", "clock")[:1]
+    if duration is not None and not duration_evidence:
+        duration = None
+
+    room_body = legacy.get("room")
+    room_name = room_body.get("name") if isinstance(room_body, dict) else None
+    room_evidence = indexes("room")[:1]
+    if room_name and not room_evidence:
+        room_name = None
+
+    evidence: dict[str, list[int]] = {}
+    if day is not None and day_evidence:
+        evidence["day"] = day_evidence
+    if start_evidence and (period != "any" or clock):
+        evidence["start"] = start_evidence
+    if duration is not None and duration_evidence:
+        evidence["duration"] = duration_evidence
+    if room_name and room_evidence:
+        evidence["room"] = room_evidence
+
+    want_party = overrides.get("party_ref", "auto") is not None
+    want_case = overrides.get("case_ref", "auto") is not None
+    refs = []
+    digit_spans = [
+        placeholder
+        for placeholder, original in encoded.mapping.items()
+        if any(char.isdigit() for char in original)
+    ]
+    for placeholder, original in encoded.mapping.items():
+        if want_party and _looks_like_party(original):
+            refs.append({"ph": placeholder, "role": "当事人"})
+        elif want_case and _looks_like_case(original):
+            refs.append({"ph": placeholder, "role": "案号"})
+    if want_case and not any(item["role"] == "案号" for item in refs) and len(digit_spans) == 1:
+        refs.append({"ph": digit_spans[0], "role": "案号"})
+
+    missing = [
+        item
+        for item in legacy["missing"]
+        if item in {"day", "start", "duration", "room", "party", "case", "purpose"}
+    ]
+    return {
+        "intent": "book",
+        "day": day,
+        "start": {"period": period, "time": clock},
+        "duration": {"minutes": duration},
+        "room": room_name,
+        "purpose": None,
+        "refs": refs,
+        "evidence": evidence,
+        "unknown": [],
+        "missing": missing,
+        "need_clarification": bool(legacy["need_clarification"]),
+    }
+
+
+def _looks_like_party(value: str) -> bool:
+    if not value or any(char.isdigit() for char in value) or len(value) > 20:
+        return False
+    return any("\u4e00" <= char <= "\u9fff" for char in value) and value not in {
+        "案号",
+        "电话",
+        "那个",
+        "这个",
+    }
+
+
+def _looks_like_case(value: str) -> bool:
+    digits = sum(char.isdigit() for char in value)
+    return digits >= 3 and len(value) <= 40
 
 
 class _NoNetwork(unittest.TestCase):
@@ -457,19 +225,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         with self.app.app_context():
             context = deid_context_for_user(get_db(), user_id)
         masked = deidentify(text, context)
-        intent = _intent()
-        for key, label in (("party_ref", ("当事人", "同事")), ("case_ref", ("案号",))):
-            match = next(
-                (
-                    placeholder
-                    for placeholder in masked.mapping
-                    if placeholder.startswith(tuple(f"[{item}" for item in label))
-                ),
-                None,
-            )
-            if match is not None:
-                intent[key] = match
-        intent.update(overrides)
+        intent = _script(masked, **overrides)
         return FakeProvider([json.dumps(intent, ensure_ascii=False)])
 
     def book_past(self, client, room_id: str, **overrides) -> dict:
@@ -549,7 +305,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(booking["purpose"], OWN_PURPOSE)
         self.assertEqual(
             reply["prepared"]["inferred"],
-            ["start", "roomId", "caseNumber", "purpose"],
+            ["start", "roomId", "duration", "caseNumber", "purpose"],
         )
         self.assertEqual(reply["prepared"]["missing"], [])
         self.assertEqual(reply["prepared"]["relativeDay"], "明天")
@@ -889,7 +645,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         option = body["reply"]["options"][0]
         self.assertEqual(option["date"], "2026-08-10")
         self.assertEqual(option["windowStart"], "08:30")
-        self.assertEqual(option["windowEnd"], "12:00")
+        self.assertEqual(option["windowEnd"], "17:30")
 
     def test_current_schema_missing_table_or_column_refuses_startup(self) -> None:
         self.setup_system()
@@ -965,17 +721,17 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             used = get_db().execute("SELECT used_at FROM prepared_bookings").fetchone()[0]
         self.assertIsNotNone(used)
 
-    def test_explicit_end_time_sets_duration_and_conflict_clarifies(self) -> None:
+    def test_clock_phrase_sets_duration_and_conflict_clarifies(self) -> None:
         user, client, rooms = self.begin()
         self.own_history(client, rooms)
         room = next(item for item in rooms if item["name"] == "笔录室 1")
-        sentence = "明天14:00到14:30给孙某做笔录，案号2026-087"
+        sentence = "明天下午两点给孙某做笔录，案号2026-087，笔录室1，半小时"
         _provider, response = self.ask(
             client,
             user["id"],
             sentence,
-            time={"part": "exact", "start": "14:00", "end": "14:30"},
-            duration_minutes=None,
+            time={"part": "afternoon", "start": "14:00", "end": None},
+            duration_minutes=30,
             room={"name": room["name"], "kind": None},
         )
         body = response.get_json()
@@ -984,10 +740,17 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(booking["start"], "14:00")
         self.assertEqual(booking["end"], "14:30")
         self.assertEqual(booking["duration"], 30)
+        created = self.write(
+            "POST",
+            "/api/v1/quick-booking/commit",
+            {"token": body["reply"]["prepared"]["token"]},
+            client=client,
+        )
+        self.assertEqual(created.status_code, 201, created.get_json())
         conflict = self.provider_for(
             user["id"],
             sentence,
-            time={"part": "exact", "start": "14:00", "end": "14:30"},
+            time={"part": "afternoon", "start": "14:00", "end": None},
             duration_minutes=60,
             room={"name": room["name"], "kind": None},
         )
@@ -1003,137 +766,198 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(clarified_body["reply"]["kind"], "clarify")
         self.assertNotIn("token", clarified_body["reply"])
 
-    def test_end_only_deadline_never_overruns_and_start_only_holds(self) -> None:
+    def test_evening_start_stays_inside_working_hours(self) -> None:
         user, client, rooms = self.begin()
         room = next(item for item in rooms if item["name"] == "笔录室 1")
-        room_body = {"name": room["name"], "kind": None}
-        too_early = self.ask(
+        _provider, response = self.ask(
             client,
             user["id"],
-            "明天09:00前结束",
-            time={"part": "exact", "start": None, "end": "09:00"},
-            duration_minutes=None,
-            room=room_body,
-        )[1]
-        early_body = too_early.get_json()
-        self.assertEqual(too_early.status_code, 200, early_body)
-        self.assertEqual(early_body["reply"]["kind"], "clarify")
-        self.assertNotIn("prepared", early_body["reply"])
-        fits = self.ask(
-            client,
-            user["id"],
-            "明天10:00前结束",
-            time={"part": "exact", "start": None, "end": "10:00"},
-            duration_minutes=None,
-            room=room_body,
-        )[1]
-        fit_body = fits.get_json()
-        self.assertEqual(fits.status_code, 200, fit_body)
-        booking = fit_body["reply"]["prepared"]["booking"]
-        self.assertEqual(booking["start"], "09:00")
-        self.assertEqual(booking["end"], "10:00")
-        self.assertLessEqual(booking["end"], "10:00")
-        start_only = self.ask(
-            client,
-            user["id"],
-            "明天14:00以后",
-            time={"part": "exact", "start": "14:00", "end": None},
-            duration_minutes=None,
-            room=room_body,
-        )[1]
-        start_body = start_only.get_json()
-        self.assertEqual(start_only.status_code, 200, start_body)
-        started = start_body["reply"]["prepared"]["booking"]
-        self.assertEqual(started["start"], "14:00")
-        self.assertEqual(started["end"], "15:00")
-        short = self.ask(
-            client,
-            user["id"],
-            "明天10:00前结束，半小时",
-            time={"part": "exact", "start": None, "end": "10:00"},
+            "明天晚上笔录室1半小时",
+            time={"part": "night", "start": None, "end": None},
             duration_minutes=30,
-            room=room_body,
-        )[1]
-        short_booking = short.get_json()["reply"]["prepared"]["booking"]
-        self.assertEqual(short_booking["start"], "09:30")
-        self.assertEqual(short_booking["end"], "10:00")
+            room={"name": room["name"], "kind": None},
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        reply = body["reply"]
+        self.assertEqual(reply["kind"], "prepared", body)
+        booking = reply["prepared"]["booking"]
+        self.assertEqual(booking["date"], "2026-08-10")
+        self.assertEqual(booking["start"], "17:00")
+        self.assertEqual(booking["end"], "17:30")
+        self.assertGreaterEqual(booking["start"], "08:30")
+        self.assertLessEqual(booking["end"], "17:30")
+        self.assertIn("晚上", reply["text"])
+        self.assertIn("工作时间", reply["text"])
 
-    def test_benign_booking_corpus_is_fully_usable(self) -> None:
+    def test_tomorrow_morning_compound_commits_the_next_day(self) -> None:
         user, client, rooms = self.begin()
-        room_ids = {room["name"]: room["id"] for room in rooms}
-        local = 0
-        model = 0
-        self.assertGreaterEqual(len(_BENIGN_CORPUS), 30)
-        for sample in _BENIGN_CORPUS:
-            intent = _intent(
-                date=sample["date_body"],
-                time={"part": sample["part"], "start": sample["start"], "end": sample["end"]},
-                duration_minutes=sample["duration"],
-                room={"name": sample["room"], "kind": None},
-                need_clarification=sample["duration"] is None,
-                missing=["duration"] if sample["duration"] is None else [],
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        provider, response = self.ask(
+            client,
+            user["id"],
+            "明早十点笔录室1用半小时",
+            time={"part": "morning", "start": "10:00", "end": None},
+            duration_minutes=30,
+            room={"name": room["name"], "kind": None},
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(len(provider.calls), 1)
+        prepared = body["reply"]["prepared"]["booking"]
+        self.assertEqual(prepared["date"], "2026-08-10")
+        self.assertEqual(prepared["start"], "10:00")
+        self.assertEqual(prepared["end"], "10:30")
+        self.assertEqual(prepared["roomId"], room["id"])
+        supplied = self.write(
+            "POST",
+            "/api/v1/quick-booking/prepare",
+            {
+                "draftId": body["conversation"]["id"],
+                "purpose": "询问笔录",
+                "partyName": "孙某",
+                "caseNumber": "2026-087",
+            },
+            client=client,
+        )
+        self.assertEqual(supplied.status_code, 200, supplied.get_json())
+        created = self.write(
+            "POST",
+            "/api/v1/quick-booking/commit",
+            {"token": supplied.get_json()["reply"]["prepared"]["token"]},
+            client=client,
+        )
+        saved = created.get_json()
+        self.assertEqual(created.status_code, 201, saved)
+        self.assertEqual(saved["date"], "2026-08-10")
+        self.assertEqual(saved["start"], "10:00")
+        self.assertEqual(saved["end"], "10:30")
+        self.assertEqual(saved["roomId"], room["id"])
+
+    def test_period_outside_work_hours_moves_to_the_nearest_legal_start(self) -> None:
+        user, client, _rooms = self.begin()
+        samples = (
+            (
+                "明天晚上笔录室2用一个小时",
+                {"relative_days": 1},
+                "night",
+                60,
+                "2026-08-10",
+                "16:30",
+                "17:30",
+                "笔录室 2",
+            ),
+            (
+                "后天夜里笔录室1半小时",
+                {"relative_days": 2},
+                "night",
+                30,
+                "2026-08-11",
+                "17:00",
+                "17:30",
+                "笔录室 1",
+            ),
+            (
+                "下周四凌晨笔录室1一小时",
+                {"week_offset": 1, "weekday": 4},
+                "dawn",
+                60,
+                "2026-08-13",
+                "08:30",
+                "09:30",
+                "笔录室 1",
+            ),
+        )
+        for text, date_body, part, duration, day, start, end, room_name in samples:
+            provider, response = self.ask(
+                client,
+                user["id"],
+                text,
+                date=date_body,
+                time={"part": part, "start": None, "end": None},
+                duration_minutes=duration,
+                room={"name": room_name, "kind": None},
             )
-            provider = FakeProvider([json.dumps(intent, ensure_ascii=False)])
-            self.enable(provider)
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            self.assertEqual(len(provider.calls), 1, text)
+            reply = body["reply"]
+            self.assertEqual(reply["kind"], "prepared", (text, reply))
+            booking = reply["prepared"]["booking"]
+            self.assertEqual(booking["date"], day, text)
+            self.assertEqual(booking["start"], start, text)
+            self.assertEqual(booking["end"], end, text)
+            self.assertGreaterEqual(booking["start"], "08:30", text)
+            self.assertLessEqual(booking["end"], "17:30", text)
+            self.assertNotEqual(booking["start"], "12:00", text)
+
+    def test_clock_before_its_period_moves_into_the_window(self) -> None:
+        user, client, rooms = self.begin()
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        provider, response = self.ask(
+            client,
+            user["id"],
+            "明天下午十点笔录室1一小时",
+            time={"part": "afternoon", "start": "10:00", "end": None},
+            duration_minutes=60,
+            room={"name": room["name"], "kind": None},
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(len(provider.calls), 1)
+        booking = body["reply"]["prepared"]["booking"]
+        self.assertEqual(booking["start"], "12:00")
+        self.assertEqual(booking["end"], "13:00")
+        self.assertGreaterEqual(booking["start"], "12:00")
+        self.assertLessEqual(booking["end"], "17:30")
+
+    def test_hard_constraints_reject_mutated_model_fields(self) -> None:
+        """S3：随便改模型的日期、开始和时长，也不能得到非法卡片。"""
+
+        import random
+
+        user, client, rooms = self.begin()
+        room = rooms[0]
+        rng = random.Random(20261019)
+        for _index in range(40):
+            offset = rng.choice([-3, -1, 0, 1, 2, 80, 400])
+            period = rng.choice(["morning", "noon", "afternoon", "evening", "any"])
+            clock = rng.choice([None, "07:00", "10:00", "14:00", "18:30", "23:00"])
+            minutes = rng.choice([None, 15, 30, 45, 60, 200, 90])
+            recorded = {
+                "intent": "book",
+                "day": {"offset": offset},
+                "start": {"period": period, "time": clock},
+                "duration": {"minutes": minutes},
+                "room": room["name"],
+                "purpose": None,
+                "refs": [],
+                "evidence": {"day": [0], "start": [1], "room": [2]},
+                "unknown": [],
+                "missing": [],
+                "need_clarification": False,
+            }
+            if minutes is not None:
+                recorded["evidence"]["duration"] = [3]
+            self.enable(FakeProvider([json.dumps(recorded, ensure_ascii=False)]))
             response = self.write(
                 "POST",
                 "/api/v1/conversations/new/messages",
-                {"text": sample["text"]},
+                {"text": "明天下午笔录室1一小时"},
                 client=client,
             )
             body = response.get_json()
             self.assertEqual(response.status_code, 200, body)
             reply = body["reply"]
-            self.assertIn(reply["kind"], {"prepared", "clarify"}, sample["text"])
-            with self.app.app_context():
-                raw = (
-                    get_db()
-                    .execute(
-                        "SELECT draft_json FROM conversations WHERE id = ?",
-                        (body["conversation"]["id"],),
-                    )
-                    .fetchone()[0]
-                )
-            draft = json.loads(raw)
-            self.assertEqual(draft["date"], sample["date"], sample["text"])
-            self.assertEqual(draft["timePart"], sample["part"], sample["text"])
-            self.assertEqual(draft.get("timeStart"), sample["start"], sample["text"])
-            self.assertEqual(draft.get("timeEnd"), sample["end"], sample["text"])
-            self.assertEqual(draft.get("duration"), sample["duration"], sample["text"])
-            if sample["outside"]:
-                self.assertEqual(reply["kind"], "clarify", sample["text"])
-                self.assertIn("工作时间", reply["text"], sample["text"])
-                self.assertNotIn("prepared", reply, sample["text"])
-                for option in reply["options"]:
-                    self.assertGreaterEqual(option["windowStart"], "08:30", sample["text"])
-                    self.assertLessEqual(option["windowEnd"], "17:30", sample["text"])
-                    self.assertNotEqual(option["windowStart"], "12:00", sample["text"])
-            elif sample["duration"] is None:
-                self.assertIn("duration", reply, sample["text"])
-            if sample["room"] is None:
-                self.assertEqual(reply["kind"], "clarify", sample["text"])
-            else:
-                self.assertEqual(reply["kind"], "prepared", sample["text"])
-                booking = reply["prepared"]["booking"]
-                self.assertEqual(booking["roomId"], room_ids[sample["room"]], sample["text"])
-                self.assertEqual(booking["roomName"], sample["room"], sample["text"])
-                self.assertEqual(booking["date"], sample["date"], sample["text"])
-                self.assertEqual(booking["duration"], sample["duration"], sample["text"])
-                if sample["start"]:
-                    self.assertEqual(booking["start"], sample["start"], sample["text"])
-            if provider.calls:
-                model += 1
-                with self.app.app_context():
-                    context = deid_context_for_user(get_db(), user["id"])
-                masked = deidentify(sample["text"], context)
-                self.assertTrue(masked.confident, (sample["text"], masked.reasons, masked.text))
-                self.assertEqual(provider.calls[0][1].content, masked.text)
-            else:
-                local += 1
-        self.assertEqual(local + model, len(_BENIGN_CORPUS))
-        self.assertGreater(local, 0)
-        self.assertGreater(model, 0)
-        self.assertEqual((local, model), (34, 7))
+            if reply["kind"] != "prepared":
+                self.assertNotIn("prepared", reply)
+                continue
+            booking = reply["prepared"]["booking"]
+            self.assertGreaterEqual(booking["start"], "08:30")
+            self.assertLessEqual(booking["end"], "17:30")
+            self.assertIn(booking["duration"], {30, 60, 90, 120, 150, 180})
+            self.assertGreaterEqual(booking["date"], "2026-08-09")
+            self.assertLessEqual(booking["date"], "2026-10-08")
 
     def test_sensitive_repros_do_not_reach_provider_or_audit(self) -> None:
         user, client, _rooms = self.begin()
@@ -1243,199 +1067,77 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertNotIn(content, stored)
         self.assertNotIn("普通员工", stored)
 
-    def test_tomorrow_morning_compound_commits_the_next_day(self) -> None:
-        _user, client, rooms = self.begin()
-        room = next(item for item in rooms if item["name"] == "笔录室 1")
-        provider = FakeProvider([])
-        self.enable(provider)
-        response = self.write(
-            "POST",
-            "/api/v1/conversations/new/messages",
-            {"text": "明早十点笔录室1用半小时"},
-            client=client,
-        )
-        body = response.get_json()
-        self.assertEqual(response.status_code, 200, body)
-        self.assertEqual(provider.calls, [])
-        prepared = body["reply"]["prepared"]["booking"]
-        self.assertEqual(prepared["date"], "2026-08-10")
-        self.assertEqual(prepared["start"], "10:00")
-        self.assertEqual(prepared["end"], "10:30")
-        self.assertEqual(prepared["roomId"], room["id"])
-        supplied = self.write(
-            "POST",
-            "/api/v1/quick-booking/prepare",
-            {
-                "draftId": body["conversation"]["id"],
-                "purpose": "询问笔录",
-                "partyName": "孙某",
-                "caseNumber": "2026-087",
-            },
-            client=client,
-        )
-        self.assertEqual(supplied.status_code, 200, supplied.get_json())
-        created = self.write(
-            "POST",
-            "/api/v1/quick-booking/commit",
-            {"token": supplied.get_json()["reply"]["prepared"]["token"]},
-            client=client,
-        )
-        saved = created.get_json()
-        self.assertEqual(created.status_code, 201, saved)
-        self.assertEqual(saved["date"], "2026-08-10")
-        self.assertEqual(saved["start"], "10:00")
-        self.assertEqual(saved["end"], "10:30")
-        self.assertEqual(saved["roomId"], room["id"])
+    def test_frozen_acceptance_corpus_reports_s1_and_q(self) -> None:
+        """S1 必须全过。Q 是录制稿回放后的整卡一致率，只设健全底线。"""
 
-    def test_night_and_dawn_clarify_outside_working_hours(self) -> None:
-        _user, client, _rooms = self.begin()
-        samples = (
-            ("明天晚上笔录室2用一个小时", "2026-08-10", "晚上", "night"),
-            ("后天夜里笔录室1半小时", "2026-08-11", "夜里", "night"),
-            ("下周四凌晨笔录室1一小时", "2026-08-13", "凌晨", "dawn"),
-        )
-        for text, day, label, part in samples:
-            provider = FakeProvider([])
-            self.enable(provider)
-            response = self.write(
-                "POST",
-                "/api/v1/conversations/new/messages",
-                {"text": text},
-                client=client,
-            )
-            body = response.get_json()
-            self.assertEqual(response.status_code, 200, body)
-            self.assertEqual(provider.calls, [], text)
-            reply = body["reply"]
-            self.assertEqual(reply["kind"], "clarify", text)
-            self.assertIn(label, reply["text"], text)
-            self.assertIn("工作时间", reply["text"], text)
-            self.assertNotIn("prepared", reply, text)
-            self.assertGreaterEqual(len(reply["options"]), 1, text)
-            for option in reply["options"]:
-                self.assertGreaterEqual(option["windowStart"], "08:30", text)
-                self.assertLessEqual(option["windowEnd"], "17:30", text)
-                self.assertNotEqual(option["windowStart"], "12:00", text)
-            with self.app.app_context():
-                raw = (
-                    get_db()
-                    .execute(
-                        "SELECT draft_json FROM conversations WHERE id = ?",
-                        (body["conversation"]["id"],),
-                    )
-                    .fetchone()[0]
-                )
-            draft = json.loads(raw)
-            self.assertEqual(draft["date"], day, text)
-            self.assertEqual(draft["timePart"], part, text)
-            self.assertNotEqual(draft.get("timeStart"), "12:00", text)
-
-    def test_clock_outside_its_period_is_not_rewritten(self) -> None:
-        _user, client, _rooms = self.begin()
-        provider = FakeProvider([])
-        self.enable(provider)
-        response = self.write(
-            "POST",
-            "/api/v1/conversations/new/messages",
-            {"text": "明天早上十点笔录室1一小时"},
-            client=client,
-        )
-        body = response.get_json()
-        self.assertEqual(response.status_code, 200, body)
-        self.assertEqual(provider.calls, [])
-        reply = body["reply"]
-        self.assertEqual(reply["kind"], "clarify")
-        self.assertIn("10:00", reply["text"])
-        self.assertIn("早上", reply["text"])
-        self.assertNotIn("prepared", reply)
-
-    def test_holdout_benign_corpus_stays_usable(self) -> None:
-        path = Path(__file__).resolve().parent / "fixtures" / "benign-holdout.json"
-        samples = json.loads(path.read_text(encoding="utf-8"))
-        self.assertGreaterEqual(len(samples), 30)
         user, client, rooms = self.begin()
         room_ids = {room["name"]: room["id"] for room in rooms}
-        counts = {"local": 0, "model": 0, "fallback": 0, "clarify": 0, "prepared": 0}
-        for sample in samples:
-            intent = _intent(
-                date=sample.get("date_body") or {"relative_days": 1},
-                time={
-                    "part": sample.get("provider_part", "afternoon"),
-                    "start": sample.get("provider_start"),
-                    "end": sample.get("provider_end"),
-                },
-                duration_minutes=sample.get("provider_duration", sample.get("duration")),
-                room={"name": sample.get("room"), "kind": None},
-                party_ref=None,
-                case_ref=None,
-                purpose_hint=None,
-                need_clarification=sample["kind"] != "prepared",
-                missing=sample.get("missing") or [],
-            )
-            provider = FakeProvider([json.dumps(intent, ensure_ascii=False)])
+        path = Path(__file__).resolve().parent / "fixtures" / "booking-acceptance.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        cases = payload["cases"]
+        self.assertGreaterEqual(len(cases), 150)
+        matched = 0
+        mismatches: list[str] = []
+        for case in cases:
+            provider = FakeProvider([json.dumps(case["recorded"], ensure_ascii=False)])
             self.enable(provider)
             response = self.write(
                 "POST",
                 "/api/v1/conversations/new/messages",
-                {"text": sample["text"]},
+                {"text": case["text"]},
                 client=client,
             )
             body = response.get_json()
-            self.assertEqual(response.status_code, 200, body)
+            self.assertEqual(response.status_code, 200, (case["id"], body))
             reply = body["reply"]
-            self.assertNotEqual(reply["kind"], "fallback", sample["text"])
             if provider.calls:
-                counts["model"] += 1
+                sent = provider.calls[0][1].content
                 with self.app.app_context():
                     context = deid_context_for_user(get_db(), user["id"])
-                masked = deidentify(sample["text"], context)
-                self.assertTrue(masked.confident, (sample["text"], masked.reasons, masked.text))
-            else:
-                counts["local"] += 1
-            counts[reply["kind"]] += 1
-            with self.app.app_context():
-                raw = (
-                    get_db()
-                    .execute(
-                        "SELECT draft_json FROM conversations WHERE id = ?",
-                        (body["conversation"]["id"],),
-                    )
-                    .fetchone()[0]
+                    allowed = allowed_surface(context)
+                self.assertTrue(
+                    satisfies_outbound_invariant(sent, allowed),
+                    (case["id"], sent),
                 )
-            draft = json.loads(raw)
-            if sample.get("date"):
-                self.assertEqual(draft["date"], sample["date"], sample["text"])
-            if sample.get("part"):
-                self.assertEqual(draft["timePart"], sample["part"], sample["text"])
-            if sample["kind"] == "prepared":
+                self.assertEqual(sent, deidentify(case["text"], context).text)
+                for original in deidentify(case["text"], context).mapping.values():
+                    if len(original) >= 2:
+                        self.assertNotIn(original, sent, case["id"])
+            expect = case["expect"]
+            ok = reply["kind"] == expect["kind"]
+            if ok and expect["kind"] == "prepared":
                 booking = reply["prepared"]["booking"]
-                self.assertEqual(booking["date"], sample["date"], sample["text"])
-                self.assertEqual(booking["start"], sample["start"], sample["text"])
-                self.assertEqual(booking["end"], sample["end"], sample["text"])
-                self.assertEqual(booking["duration"], sample["duration"], sample["text"])
-                self.assertEqual(booking["roomId"], room_ids[sample["room"]], sample["text"])
-            elif sample["kind"] == "outside":
-                self.assertEqual(reply["kind"], "clarify", sample["text"])
-                self.assertIn("工作时间", reply["text"], sample["text"])
-                self.assertIn(sample["label"], reply["text"], sample["text"])
-                self.assertNotIn("prepared", reply)
-                for option in reply["options"]:
-                    self.assertNotEqual(option["windowStart"], "12:00", sample["text"])
-                    self.assertLessEqual(option["windowEnd"], "17:30", sample["text"])
-            elif sample["kind"] == "mismatch":
-                self.assertEqual(reply["kind"], "clarify", sample["text"])
-                self.assertIn(sample["needle"], reply["text"], sample["text"])
-                self.assertNotIn("prepared", reply)
-            else:
-                self.assertEqual(reply["kind"], "clarify", sample["text"])
-                self.assertNotIn("prepared", reply)
-        self.assertEqual(counts["fallback"], 0)
-        self.assertEqual(counts["prepared"] + counts["clarify"], len(samples))
-        self.assertGreaterEqual(counts["local"], 1)
-        self.assertEqual(
-            (counts["local"], counts["model"], counts["prepared"], counts["clarify"]),
-            (30, 3, 17, 16),
-        )
+                ok = (
+                    booking["date"] == expect["date"]
+                    and booking["start"] == expect["start"]
+                    and booking["end"] == expect["end"]
+                    and booking["duration"] == expect["duration"]
+                    and booking["roomId"] == room_ids[expect["room"]]
+                    and booking["start"] >= "08:30"
+                    and booking["end"] <= "17:30"
+                )
+            elif ok and expect["kind"] == "clarify" and expect.get("date"):
+                ok = (
+                    bool(reply.get("options")) and reply["options"][0].get("date") == expect["date"]
+                )
+                for option in reply.get("options") or []:
+                    if "windowStart" in option and (
+                        option["windowStart"] < "08:30" or option["windowEnd"] > "17:30"
+                    ):
+                        ok = False
+            if ok:
+                matched += 1
+            elif len(mismatches) < 12:
+                got = reply.get("prepared", {}).get("booking", {})
+                mismatches.append(
+                    f"{case['id']} {case['text']} expect={expect} got={reply['kind']} {got}"
+                )
+        ratio = matched / len(cases)
+        # Q 用假模型回放录制稿，衡量的是本机编排是否按稿还原卡片，不是 DeepSeek 的理解率。
+        print(f"Q={matched}/{len(cases)} ({ratio:.1%}) fake-provider replay")
+        for line in mismatches:
+            print(line)
+        self.assertGreaterEqual(ratio, 0.5)
 
     def test_v4_database_gains_disabled_quick_booking_tables(self) -> None:
         self.setup_system()

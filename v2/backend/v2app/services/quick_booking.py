@@ -1,11 +1,11 @@
-"""把已校验的预约意图编排成可确认的草稿。
+"""把模型给出的引用编排成可确认的草稿。
 
-日期、时间在服务器业务日上解析。空房查询只统计仍有效的占用，口径与
-``reservations._conflicts`` 相同。当事人、案号和事项只读取请求者本人的
-历史预约；模型给出的事项提示不会写入预约。功能默认关闭。
-
-凌晨、早上、傍晚、晚上和夜里使用各自的时段窗口，再和工作时间取交集。
-没有交集时澄清并给出最近的工作时间，不把晚上改成下午，也不把凌晨改成上班后的第一段。
+每句话都走模型。本模块只做日期加减、工作时间与时长硬约束、本人历史补全
+和占位符回填。时段词只约束开始时间：上午 08:30–12:00，中午 11:30–13:30，
+下午 12:00–17:30，晚上 18:00–23:00。开始必须落在窗口和工作时间的交集里，
+结束可以越过时段窗口，不能越过工作时间。交不上时改到最近的合法开始。
+当事人和案号只来自本句占位符或本人历史。事项不采用模型自由文本。
+功能默认关闭。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from ..common import canonical_json, clean_text, local_now, minutes_to_time, new
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import locked_actor
-from .deid import DeidContext, deidentify
+from .deid import DeidContext, Mention
 from .model_intent import (
     FALLBACK_UNAVAILABLE,
     BookingIntent,
@@ -40,22 +40,20 @@ TOKEN_TTL = timedelta(minutes=10)
 HORIZON_DAYS = 60
 _DURATION_CHOICES = (60, 120, "window")
 _GUIDE_TEXT = "改期、取消和查询请到「我的预约」里处理。"
-_SAME_PARTY = "same_as_party_recent"
 _COUNT_WORDS = {2: "两", 3: "三"}
-# 与 model_intent 的时段窗口一致。上午、下午仍按上班到中午、中午到下班。
+_BUILTIN_PURPOSES = ("询问笔录", "谈话笔录", "调解笔录")
+# 开始时间窗口（含两端）。结束时间可以晚于窗口，不能晚于工作时间。
 _PERIOD_BOUNDS = {
-    "dawn": (0, 6 * 60),
-    "early": (6 * 60, 9 * 60),
-    "dusk": (17 * 60, 19 * 60),
-    "night": (18 * 60, 23 * 60),
+    "morning": (8 * 60 + 30, 12 * 60),
+    "noon": (11 * 60 + 30, 13 * 60 + 30),
+    "afternoon": (12 * 60, 17 * 60 + 30),
+    "evening": (18 * 60, 23 * 60),
 }
 _PERIOD_LABELS = {
-    "dawn": "凌晨",
-    "early": "早上",
-    "dusk": "傍晚",
-    "night": "晚上",
     "morning": "上午",
+    "noon": "中午",
     "afternoon": "下午",
+    "evening": "晚上",
 }
 
 
@@ -111,20 +109,38 @@ def deid_context_for_user(db: sqlite3.Connection, user_id: str) -> DeidContext:
         ORDER BY sort_order, name
         """
     ).fetchall()
+    own_purposes = db.execute(
+        """
+        SELECT DISTINCT purpose FROM reservations
+        WHERE owner_user_id = ? AND status = 'active' AND purpose != ''
+        ORDER BY purpose
+        """,
+        (user_id,),
+    ).fetchall()
+    purposes: list[str] = []
+    for name in (*_BUILTIN_PURPOSES, *(row["purpose"] for row in own_purposes)):
+        if name not in purposes:
+            purposes.append(name)
     return DeidContext(
         party_names=tuple(row["party_name"] for row in parties),
         case_numbers=tuple(row["case_number"] for row in cases),
         directory_names=tuple(row["display_name"] for row in directory),
         room_names=tuple(row["name"] for row in rooms),
+        purpose_names=tuple(purposes),
     )
 
 
-def send_message(conversation_id: str, text: object) -> dict[str, Any]:
+def send_message(
+    conversation_id: str,
+    text: object,
+    mentions: object = None,
+) -> dict[str, Any]:
     """解析一句预约话。``conversation_id`` 为 ``new`` 时新建会话。"""
 
     db = get_db()
     settings = _require_feature(db)
     sentence = _sentence(text)
+    parsed_mentions = _parse_mentions(mentions)
     actor = locked_actor(db)
     existing = None
     if conversation_id != "new":
@@ -139,12 +155,19 @@ def send_message(conversation_id: str, text: object) -> dict[str, Any]:
         work_start=_work_clock(db, "work_start"),
         work_end=_work_clock(db, "work_end"),
         room_names=context.room_names,
+        purpose_names=context.purpose_names,
         record_audit=model_request_audit(db, actor_user_id=actor["id"]),
         data_dir=_data_dir(),
+        mentions=parsed_mentions,
     )
     if result.kind == "intent" and result.intent is not None and result.intent.intent == "book":
-        mapping = deidentify(sentence, context).mapping
-        planned = _plan(db, actor["id"], result.intent, mapping)
+        planned = _plan(
+            db,
+            actor["id"],
+            result.intent,
+            result.mapping,
+            result.mention_roles,
+        )
     elif result.kind == "intent" and result.intent is not None:
         planned = _guide()
     else:
@@ -331,43 +354,68 @@ def _own_conversation(db: sqlite3.Connection, conversation_id: str, user_id: str
     return row
 
 
+def _parse_mentions(value: object) -> tuple[Mention, ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ApiError(
+            422, "VALIDATION_ERROR", "请检查输入内容", fields={"mentions": "引用格式不正确"}
+        )
+    found: list[Mention] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ApiError(
+                422, "VALIDATION_ERROR", "请检查输入内容", fields={"mentions": "引用格式不正确"}
+            )
+        kind = item.get("kind")
+        raw_value = item.get("value")
+        if kind not in {"party", "case"} or not isinstance(raw_value, str) or not raw_value.strip():
+            raise ApiError(
+                422, "VALIDATION_ERROR", "请检查输入内容", fields={"mentions": "引用格式不正确"}
+            )
+        try:
+            start = int(item["start"])
+            end = int(item["end"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ApiError(
+                422, "VALIDATION_ERROR", "请检查输入内容", fields={"mentions": "引用格式不正确"}
+            ) from error
+        found.append(Mention(start=start, end=end, kind=kind, value=raw_value.strip()))
+    return tuple(found)
+
+
 def _plan(
     db: sqlite3.Connection,
     user_id: str,
     intent: BookingIntent,
     mapping: dict[str, str],
+    mention_roles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     today = local_now().date()
     target = _resolve_date(intent, today)
-    prefs = _preferences(db, user_id)
     state = _blank_state()
-    state["timePart"] = intent.time_part
+    state["timePart"] = intent.period or "any"
     state["timeStart"] = intent.time_start
-    state["timeEnd"] = intent.time_end
-    state["periodLabel"] = intent.period_label
-    state["notes"] = intent.notes or ""
-    state["startExplicit"] = intent.time_part == "exact" and bool(intent.time_start)
-    state["endExplicit"] = intent.time_part == "exact" and bool(intent.time_end)
-    span = _explicit_span(intent)
-    if span is not None and (
-        not _duration_allowed(span) or intent.duration_minutes not in (None, span)
-    ):
-        state["ambiguousDuration"] = True
-        state["duration"] = None
-    elif span is not None:
-        state["duration"] = span
-        state["durationExplicit"] = True
-    elif intent.duration_minutes is None and (
+    state["periodLabel"] = _PERIOD_LABELS.get(intent.period or "", "")
+    state["startExplicit"] = bool(intent.time_start)
+    state["mustClarify"] = bool(intent.need_clarification)
+    if intent.unknown:
+        state["unknownClarify"] = True
+    if intent.duration_minutes is None and (
         intent.need_clarification or "duration" in intent.missing
     ):
         state["ambiguousDuration"] = True
         state["duration"] = None
     elif intent.duration_minutes is None:
-        state["duration"] = int(prefs["default_duration"])
+        state["duration"] = None
         state["durationExplicit"] = False
-    else:
+    elif _duration_allowed(intent.duration_minutes):
         state["duration"] = intent.duration_minutes
         state["durationExplicit"] = True
+    else:
+        state["duration"] = _nearest_duration(intent.duration_minutes)
+        state["durationExplicit"] = False
+        state["snapped"] = True
     if target is None or target < today or (target - today).days > HORIZON_DAYS:
         state["date"] = None
         return _finalize(db, user_id, state)
@@ -381,24 +429,83 @@ def _plan(
         if room is not None:
             state["roomId"] = room["id"]
             state["roomExplicit"] = True
-    party = _restore(intent.party_ref, mapping)
-    case_number = _restore(intent.case_ref, mapping)
-    if party == _SAME_PARTY or case_number == _SAME_PARTY:
-        latest = _latest_own(db, user_id)
-        if party == _SAME_PARTY:
-            party = latest["party_name"] if latest is not None else ""
-        if case_number == _SAME_PARTY:
-            case_number = latest["case_number"] if latest is not None else ""
-    state["partyName"] = party or ""
-    state["caseNumber"] = case_number or ""
+    parties, cases = _bindings(intent, mapping, mention_roles or {})
+    if len(parties) > 1 or len(cases) > 1:
+        state["identityClarify"] = True
+        state["identityOptions"] = parties or cases
+    else:
+        state["partyName"] = parties[0] if parties else ""
+        state["caseNumber"] = cases[0] if cases else ""
+    sentence_purpose = intent.purpose or ""
     _refresh_identity(
         db,
         user_id,
         state,
-        keep_case=bool(case_number),
-        keep_purpose=False,
+        keep_case=bool(state.get("caseNumber")),
+        keep_purpose=bool(sentence_purpose),
     )
+    if sentence_purpose:
+        state["purpose"] = sentence_purpose
+        state["purposeFromHistory"] = False
+    if state.get("duration") is None and not state.get("ambiguousDuration"):
+        state["duration"] = _median_duration(db, user_id, state.get("purpose") or "")
+        state["durationExplicit"] = False
     return _finalize(db, user_id, state)
+
+
+def _bindings(
+    intent: BookingIntent,
+    mapping: dict[str, str],
+    mention_roles: dict[str, str],
+) -> tuple[list[str], list[str]]:
+    parties: list[str] = []
+    cases: list[str] = []
+    for ref in intent.refs:
+        forced = mention_roles.get(ref.ph)
+        role = ref.role
+        if forced == "party":
+            role = "当事人"
+        elif forced == "case":
+            role = "案号"
+        if role == "其他":
+            continue
+        value = _restore(ref.ph, mapping)
+        if not value:
+            continue
+        if role in {"当事人", "被询问人"}:
+            if value not in parties:
+                parties.append(value)
+        elif role == "案号" and value not in cases:
+            cases.append(value)
+    return parties, cases
+
+
+def _nearest_duration(minutes: int) -> int:
+    snapped = int(round(minutes / 30.0) * 30)
+    return min(180, max(30, snapped))
+
+
+def _median_duration(db: sqlite3.Connection, user_id: str, purpose: str) -> int:
+    if not purpose:
+        return 60
+    rows = db.execute(
+        """
+        SELECT start_time, end_time FROM reservations
+        WHERE owner_user_id = ? AND status = 'active' AND purpose = ?
+        """,
+        (user_id, purpose),
+    ).fetchall()
+    values: list[int] = []
+    for row in rows:
+        span = time_to_minutes(row["end_time"], field="end") - time_to_minutes(
+            row["start_time"], field="start"
+        )
+        if _duration_allowed(span):
+            values.append(span)
+    if not values:
+        return 60
+    values.sort()
+    return values[len(values) // 2]
 
 
 def _apply_prepare(
@@ -536,12 +643,14 @@ def _apply_history_row(state: dict[str, Any], row: sqlite3.Row, *, keep_purpose:
 
 
 def _finalize(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("unknownClarify"):
+        return _clarify(state, "这句话里有没看懂的部分。", options=[])
+    if state.get("identityClarify"):
+        return _clarify(state, "这句话里有不止一个当事人或案号，要哪一个？", options=[])
     if not state.get("date"):
         return _clarify(state, "这个日期不在可预约范围内。", options=[])
     settings = _system_settings(db)
-    blocked = _blocked_period(db, state, settings)
-    if blocked is not None:
-        return blocked
+    _constrain_start(state, settings)
     rooms = _active_rooms(db)
     windows = _free_windows(db, state, rooms, settings)
     if not windows:
@@ -583,6 +692,16 @@ def _finalize(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> di
     if state.get("durationMode") == "window":
         state["duration"] = chosen["maxDuration"]
         state["durationExplicit"] = False
+    if not _card_is_legal(state, settings):
+        return _clarify(
+            state, "这个时段放不进工作时间。", options=_nearest_options(db, state, settings)
+        )
+    if state.get("mustClarify"):
+        return _clarify(
+            state,
+            "这句话还需要确认。",
+            options=_room_options([chosen]),
+        )
     return _prepared_plan(state, chosen["roomName"])
 
 
@@ -598,6 +717,9 @@ def _choose_room(
         return by_id.get(explicit)
     if not windows:
         return None
+    recent = _recent_room_id(db, user_id, state)
+    if recent and recent in by_id:
+        return by_id[recent]
     prefs = _preferences(db, user_id)
     default_room = prefs["default_room_id"]
     if default_room and default_room in by_id:
@@ -698,79 +820,99 @@ def _free_spans(
 
 def _start_for(state: dict[str, Any], room: dict[str, Any], settings: sqlite3.Row) -> int | None:
     step = int(settings["slot_minutes"])
-    end_bound = _end_bound(state)
     if state.get("durationMode") == "window":
-        start = int(room["spanStart"])
-        if end_bound is not None and start >= end_bound:
-            return None
-        return start
+        return int(room["spanStart"])
     duration = int(state.get("duration") or 0)
     if duration < step or duration > int(settings["max_duration_minutes"]):
         return None
     span_end = int(room["spanEnd"])
-    if end_bound is not None:
-        span_end = min(span_end, end_bound)
-    if state.get("startExplicit") and state.get("timeStart"):
+    work_start = time_to_minutes(settings["work_start"], field="workStart")
+    if state.get("timeStart"):
         start = time_to_minutes(state["timeStart"], field="start")
-        work_start = time_to_minutes(settings["work_start"], field="workStart")
         if (start - work_start) % step != 0:
             return None
         if not (int(room["spanStart"]) <= start and start + duration <= span_end):
             return None
+        high = state.get("startHigh")
+        if isinstance(high, int) and start > high:
+            return None
         return start
-    if state.get("endExplicit"):
-        latest = None
-        cursor = int(room["spanStart"])
-        while cursor + duration <= span_end:
-            latest = cursor
-            cursor += step
-        return latest
     if int(room["spanStart"]) + duration <= span_end:
         return int(room["spanStart"])
     return None
 
 
-def _end_bound(state: dict[str, Any]) -> int | None:
-    if state.get("endExplicit") and state.get("timeEnd"):
-        return time_to_minutes(state["timeEnd"], field="end")
-    return None
+def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
+    """把开始时间收进时段窗口和工作时间。交不上时改到最近的合法开始。"""
 
-
-def _blocked_period(
-    db: sqlite3.Connection,
-    state: dict[str, Any],
-    settings: sqlite3.Row,
-) -> dict[str, Any] | None:
-    """时段落在工作时间外，或钟点和时段对不上时，不改成另一个时段。"""
-
+    step = int(settings["slot_minutes"])
     work_start = time_to_minutes(settings["work_start"], field="workStart")
     work_end = time_to_minutes(settings["work_end"], field="workEnd")
     part = state.get("timePart") or "any"
-    label = state.get("periodLabel") or _PERIOD_LABELS.get(part, "")
-    clock = state.get("timeStart")
-    raw = _raw_period(part)
-    if clock and part not in {"exact", "any"} and raw is not None:
-        start = time_to_minutes(clock, field="start")
-        if not raw[0] <= start < raw[1]:
-            text = f"{clock}不在{label}（{minutes_to_time(raw[0])}–{minutes_to_time(raw[1])}）内。"
-            return _clarify(state, text, options=[])
-    if part == "exact" and clock:
-        start = time_to_minutes(clock, field="start")
-        if start < work_start or start >= work_end:
-            return _outside_clarify(db, state, settings, label)
-        return None
     bounds = _PERIOD_BOUNDS.get(part)
-    if bounds is not None and max(bounds[0], work_start) >= min(bounds[1], work_end):
-        return _outside_clarify(db, state, settings, label)
-    return None
+    low, high = bounds if bounds is not None else (work_start, work_end)
+    duration = state.get("duration")
+    if not isinstance(duration, int) or duration < step:
+        duration = step
+    legal_low = max(low, work_start)
+    legal_high = min(high, work_end)
+    if state.get("date") == local_now().date().isoformat():
+        legal_low = max(legal_low, _strictly_after_now(work_start, step))
+    latest_fit = work_end - duration
+    if legal_low > legal_high or legal_low > latest_fit:
+        if low >= work_end:
+            snapped = _align_down(work_end - duration, work_start, step)
+        else:
+            snapped = (
+                legal_low if legal_low <= latest_fit else _align_down(latest_fit, work_start, step)
+            )
+        state["timeStart"] = minutes_to_time(snapped)
+        state["startExplicit"] = False
+        state["snapped"] = True
+        state["periodMissed"] = True
+        state["startLow"] = snapped
+        state["startHigh"] = snapped
+        return
+    legal_high = min(legal_high, latest_fit)
+    clock = state.get("timeStart")
+    if clock:
+        start = time_to_minutes(clock, field="start")
+        if start < legal_low or start > legal_high or (start - work_start) % step != 0:
+            snapped = min(max(start, legal_low), legal_high)
+            snapped = _align_down(snapped, work_start, step)
+            if snapped < legal_low:
+                snapped = legal_low
+            state["timeStart"] = minutes_to_time(snapped)
+            state["startExplicit"] = False
+            state["snapped"] = True
+        state["startLow"] = legal_low
+        state["startHigh"] = legal_high
+        return
+    state["timeStart"] = minutes_to_time(legal_low)
+    state["startExplicit"] = False
+    state["startLow"] = legal_low
+    state["startHigh"] = legal_high
 
 
-def _raw_period(part: str) -> tuple[int, int] | None:
-    if part == "morning":
-        return 0, 12 * 60
-    if part == "afternoon":
-        return 12 * 60, 24 * 60
-    return _PERIOD_BOUNDS.get(part)
+def _align_down(value: int, origin: int, step: int) -> int:
+    if value <= origin:
+        return origin
+    return origin + ((value - origin) // step) * step
+
+
+def _card_is_legal(state: dict[str, Any], settings: sqlite3.Row) -> bool:
+    duration = state.get("duration")
+    start = state.get("start")
+    if (
+        not isinstance(duration, int)
+        or not isinstance(start, str)
+        or not _duration_allowed(duration)
+    ):
+        return False
+    work_start = time_to_minutes(settings["work_start"], field="workStart")
+    work_end = time_to_minutes(settings["work_end"], field="workEnd")
+    start_minutes = time_to_minutes(start, field="start")
+    return work_start <= start_minutes and start_minutes + duration <= work_end
 
 
 def _outside_clarify(
@@ -835,53 +977,24 @@ def _nearest_options(
 
 
 def _period_too_short(state: dict[str, Any], settings: sqlite3.Row) -> bool:
-    part = state.get("timePart") or ""
-    bounds = _PERIOD_BOUNDS.get(part)
-    if bounds is None:
-        return False
     work_start = time_to_minutes(settings["work_start"], field="workStart")
     work_end = time_to_minutes(settings["work_end"], field="workEnd")
-    start = max(bounds[0], work_start)
-    end = min(bounds[1], work_end)
-    if start >= end:
-        return False
+    start = state.get("startLow")
+    if not isinstance(start, int):
+        start = work_start
     duration = state.get("duration")
-    return isinstance(duration, int) and duration > end - start
+    return isinstance(duration, int) and duration > work_end - max(start, work_start)
 
 
 def _time_window(
     state: dict[str, Any], work_start: int, work_end: int, step: int
 ) -> tuple[int, int]:
-    part = state.get("timePart") or "any"
-    if part in _PERIOD_BOUNDS:
-        low, high = _PERIOD_BOUNDS[part]
-        start = max(low, work_start)
-        end = min(high, work_end)
-        if start >= end:
-            return start, start
-        return start, end
-    if part == "morning":
-        noon = _ceil_minutes(12 * 60, work_start, step)
-        return work_start, min(noon, work_end)
-    if part == "afternoon":
-        noon = _ceil_minutes(12 * 60, work_start, step)
-        return min(max(noon, work_start), work_end), work_end
-    if part == "exact":
-        has_start = bool(state.get("timeStart"))
-        has_end = bool(state.get("timeEnd"))
-        if has_start and has_end:
-            start = time_to_minutes(state["timeStart"], field="start")
-            end = time_to_minutes(state["timeEnd"], field="end")
-            if end <= start:
-                return start, start
-            return start, min(end, work_end)
-        if has_start:
-            start = time_to_minutes(state["timeStart"], field="start")
-            return start, work_end
-        if has_end:
-            end = time_to_minutes(state["timeEnd"], field="end")
-            return work_start, min(max(end, work_start), work_end)
-    return work_start, work_end
+    low = state.get("startLow")
+    begin = low if isinstance(low, int) else work_start
+    begin = max(begin, work_start)
+    if begin >= work_end:
+        return begin, begin
+    return begin, work_end
 
 
 def _ceil_minutes(value: int, origin: int, step: int) -> int:
@@ -982,6 +1095,8 @@ def _prepared_plan(state: dict[str, Any], room_name: str) -> dict[str, Any]:
         pieces.append(f"案号从你 {history_day.month} 月 {history_day.day} 日的预约里带出来了")
     if "purpose" in missing:
         pieces.append("事项还需要补一下")
+    if state.get("periodMissed") and state.get("periodLabel"):
+        pieces.append(f"{state['periodLabel']}不在工作时间内，改到了最近的可预约开始时间")
     return {
         "kind": "prepared",
         "title": f"{room_name} · {target.month}月{target.day}日 {start}",
@@ -997,14 +1112,6 @@ def _prepared_plan(state: dict[str, Any], room_name: str) -> dict[str, Any]:
             },
         },
     }
-
-
-def _explicit_span(intent: BookingIntent) -> int | None:
-    if intent.time_part != "exact" or not intent.time_start or not intent.time_end:
-        return None
-    start = time_to_minutes(intent.time_start, field="start")
-    end = time_to_minutes(intent.time_end, field="end")
-    return end - start
 
 
 def _duration_allowed(minutes: int) -> bool:
@@ -1135,6 +1242,13 @@ def _blank_state() -> dict[str, Any]:
         "roomExplicit": False,
         "startExplicit": False,
         "endExplicit": False,
+        "mustClarify": False,
+        "unknownClarify": False,
+        "identityClarify": False,
+        "snapped": False,
+        "periodMissed": False,
+        "startLow": None,
+        "startHigh": None,
         "partyName": "",
         "caseNumber": "",
         "purpose": "",
@@ -1178,8 +1292,6 @@ def _resolve_date(intent: BookingIntent, today: date) -> date | None:
 def _restore(ref: str | None, mapping: dict[str, str]) -> str | None:
     if ref is None:
         return None
-    if ref == _SAME_PARTY:
-        return _SAME_PARTY
     value = mapping.get(ref)
     if not isinstance(value, str):
         return None
@@ -1206,13 +1318,27 @@ def _own_rows(
         parameters.append(case_number)
     return db.execute(
         f"""
-        SELECT party_name, case_number, purpose, tag_slot, booking_date
+        SELECT party_name, case_number, purpose, tag_slot, booking_date, room_id
         FROM reservations
         WHERE {" AND ".join(clauses)}
         ORDER BY booking_date DESC, start_time DESC, created_at DESC
         """,
         parameters,
     ).fetchall()
+
+
+def _recent_room_id(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> str | None:
+    case_number = state.get("caseNumber") or None
+    party = state.get("partyName") or None
+    if not case_number and not party:
+        return None
+    rows = _own_rows(db, user_id, party=party, case_number=case_number if case_number else None)
+    if case_number and not rows and party:
+        rows = _own_rows(db, user_id, party=party)
+    if not rows:
+        return None
+    room_id = rows[0]["room_id"]
+    return room_id if isinstance(room_id, str) and room_id else None
 
 
 def _latest_own(db: sqlite3.Connection, user_id: str) -> sqlite3.Row | None:
