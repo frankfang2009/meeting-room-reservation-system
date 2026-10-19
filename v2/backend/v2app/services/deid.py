@@ -1,34 +1,21 @@
-"""本机脱敏网关（一句话预约，文本）。
+"""本机出站编码器（一句话预约）。
 
-原则：外发决定是白名单。预约词、调用方交来的房间名、以及严格识别的日期时间
-可以留下；其余字母、汉字和数字默认遮住。拿不准就返回 ``confident=False``，
-调用方不得把文本发出本机。宁可多遮，不可漏遮。
+外发决定是白名单，不是姓名或案号识别。归一化之后只做正向最长匹配：
+词表里的预约词、调用方交来的房间名和事项名、以及紧邻时间单位的 1–2 位
+数字可以留下；其余连续片段换成 ``[P1]``、``[P2]``。同一片段在一次编码里
+共用一个占位符。
 
-威胁模型（后续验收按这条，而不是按故意混淆）：网关防范的是普通工作人员在
-正常书写时的意外泄露。要挡住常见姓名、案号、电话、证件号，以及常见输入变体
-（空格、全角、零宽字符、常见分隔符、中文和口语数字、NFKC 兼容字符）。
-故意混淆是已知残余风险，不作为本阶段的阻断项，包括：
+不变式 I1：每个外发词元要么在词表（含本次房间名、事项名和合法数字单位）里，
+要么是占位符。``release_outbound`` 是发 HTTP 之前要再验一次的闸门。映射只
+留在本机，审计不记原文。
 
-- 非拉丁、非汉字的十进制数字，例如阿拉伯-印度数字、泰文数字；
-- 数字与汉字交错，例如「1甲3乙8丙」；
-- 混合文字编码。
+本模块只使用标准库，不联网，也不读取数据库。案号、当事人、目录姓名、房间名
+和事项名全部由调用方按现行权限放进 :class:`DeidContext`。已知姓名和案号按
+整段精确匹配收成占位符，供 ``@`` / ``#`` 引用回填；它们不是词表词。
 
-首要安全边界在架构上：当事人、案号和事项不采用模型输出，模型只解析意图。
-脱敏是第二道防线。
-
-本模块只使用标准库，不联网，也不读取数据库。案号、当事人、同事姓名和
-房间名全部由调用方按现行权限放进 :class:`DeidContext`：
-
-- ``case_numbers``：请求者已经可见的案号（本人历史，以及共享日历上的
-  active 预约）。不要放入他人已取消记录。
-- ``party_names``：只放请求者本人预约上的当事人（``owner_user_id`` 为
-  请求者），可以包含已经结束的 active 预约。共享日历上看得到的他人当事人
-  不在此列，避免把别人的案子回填到这句话上。
-- ``directory_names``：启用账号的显示名，与用户目录同一人群。
-- ``room_names``：应保持可读的房间名，通常是 ``rooms`` 表里启用中的
-  ``name``。网关只保护调用方交来的这些名字及其写法变体。
-
-第一期没有语音；这里只处理已经写下来的句子。
+残余风险：完全由词表词拼成的名字（如「周五」）会以词表词离开本机。单字姓氏
+不进词表，所以姓氏本身不会作为单字放行。阿拉伯-印度数字、泰文数字和故意
+交错的编码不在本词表的归一化范围内。
 """
 
 from __future__ import annotations
@@ -36,38 +23,12 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Iterable
-
-from ..common import DOUBLE_CHARACTER_SURNAMES, mask_party_name
-
-
-CJK = "\u4e00-\u9fa5"
-OPEN = r"[(（〔\[【]"
-CLOSE = r"[)）〕\]】]"
-SENT_P0, SENT_P1 = "\ue000", "\ue001"
-SENT_W0, SENT_W1 = "\ue002", "\ue003"
-_SENTINEL_PAIR = re.compile(
-    f"{re.escape(SENT_P0)}.{re.escape(SENT_P1)}|{re.escape(SENT_W0)}.{re.escape(SENT_W1)}"
-)
+from typing import Iterable, Mapping, Sequence
 
 MAX_SOURCE_CHARS = 500
-MAX_MASKED_CHARS = 200
-MAX_REPLACEMENTS = 6
+MAX_RELEASED_DIGITS = 8
 
-# 这些原因表示“不要外发”。ambiguous_person 只记审计，不单独拦截。
-BLOCKING_REASONS = frozenset(
-    {
-        "unknown_name",
-        "email_marker",
-        "document_keyword",
-        "source_too_long",
-        "masked_too_long",
-        "too_many_replacements",
-        "unknown_digit_run",
-    }
-)
-
-_SINGLE_SURNAME_TEXT = (
+_SURNAME_TEXT = (
     "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
     "戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐"
     "费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄"
@@ -82,944 +43,601 @@ _SINGLE_SURNAME_TEXT = (
     "国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾"
     "毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓阳肖闫覃"
 )
-_SINGLE_SURNAMES = frozenset(char for char in _SINGLE_SURNAME_TEXT if "\u4e00" <= char <= "\u9fff")
-_COMPOUND_SURNAMES = tuple(sorted(set(DOUBLE_CHARACTER_SURNAMES), key=len, reverse=True))
-_SURNAME_ALT = "|".join(
-    re.escape(item)
-    for item in sorted(
-        (*_COMPOUND_SURNAMES, *_SINGLE_SURNAMES),
-        key=len,
-        reverse=True,
-    )
-)
-_TITLE_RE = re.compile(rf"(?:{_SURNAME_ALT})(?:某某|女士|先生|老师|同志|某)")
-_XIAO_RE = re.compile(rf"(?:小|老)(?:{_SURNAME_ALT})")
-_XIAO_LAO_STOP = frozenset(
-    {
-        "小时",
-        "小姐",
-        "小伙",
-        "小心",
-        "小说",
-        "小朋友",
-        "老师",
-        "老板",
-        "老实",
-        "老人",
-        "老年",
-        "老公",
-        "老婆",
-        "老百姓",
-        "老鼠",
-        "老虎",
-        "老家",
-    }
-)
+SURNAMES = frozenset(char for char in _SURNAME_TEXT if "\u4e00" <= char <= "\u9fff")
 
-# 预约句子里的时间、房间和工作词。先把这些吃掉，剩下的短汉字串才当成人名。
-_LEXICON_TEXT = """
-今天 明天 后天 大后天 昨天 前天 今晚 明早 明晚 今早 今儿 明儿 后儿 当天 当日 次日
-上午 下午 中午 晚上 早上 凌晨 傍晚 夜里
+_DAY_TEXT = """
+今天 明天 后天 大后天 昨天 前天 当晚 当天 当日 次日
+今早 今晚 明早 明晚 今儿 明儿 后儿
 星期一 星期二 星期三 星期四 星期五 星期六 星期日 星期天
 周一 周二 周三 周四 周五 周六 周日 周天
-下周 上周 这周 本周
+礼拜一 礼拜二 礼拜三 礼拜四 礼拜五 礼拜六 礼拜日 礼拜天
+下周 上周 这周 本周 下月 上月 这个月 下个月 上个月
 下周一 下周二 下周三 下周四 下周五 下周六 下周日
-下个月 上个月 这个月 下月 上月 明年 去年 今年
-一点 两点 三点 四点 五点 六点 七点 八点 九点 十点 十一点 十二点
-两点半 三点半 四点半 一点半 点半 半个 一刻 三刻
-小时 钟头 分钟 半小时 一小时 两小时 一个小时 两个小时 三个小时 个小时
-一个半小时 半个小时 三十分钟 十五分钟 四十五分钟 三十分 十五分 四十五分
-笔录 笔录室 询问 询问室 调解 调解室 谈话 谈话笔录 会见 会议室 小会议室
-案子 案件 预约 预订 记录 开庭 开会 帮我 帮我约 帮我订 楼上 楼下
-案号 案件号 案件编号 编号 卷号 文号 文号是 卷宗 身份证 证件 电话
-联系电话 当事人电话 当事人 同事
-找个 那个 这个 这些 那些 还是 一起 帮忙 再约 再约一次 一次
-两个 三个 一个 两个案子 那个案子 个人
-结束 开始 使用 联系 改到 下个 要用 前结束
-以前 以后 之前 之后
-具体 几点 都可以 随便 差不多 大概 左右 尽量 最好 空的 有空 就行
-一个钟头 个把小时 个把 就行吧 一下
-明天下午 明天上午 后天上午 周五上午 周四下午 下周三上午 上午两小时
-这个案子 下周一
+月初 月底 一会儿 半天
 """
-_PARTICLE_TEXT = (
-    "的了和是在要与及或到去用来请把被从对给就也再不没会能为个向往做约看帮找让很及我订室吧呀"
-)
-_LEXICON = frozenset(word for word in _LEXICON_TEXT.split() if len(word) >= 2) | frozenset(
-    char for char in _PARTICLE_TEXT if char not in _SINGLE_SURNAMES or char == "和"
+_PERIOD_TEXT = "上午 下午 中午 晚上 早上 凌晨 傍晚 夜里"
+_CLOCK_TEXT = """
+一点 两点 三点 四点 五点 六点 七点 八点 九点 十点 十一点 十二点
+一点半 两点半 三点半 四点半 五点半 六点半 七点半 八点半 九点半 十点半 十一点半 十二点半
+半小时 半个小时 半个钟头 一个小时 两个小时 三个小时 一个半小时
+一小时 两小时 三小时 一钟头 两钟头 一个钟头 两个钟头 个把小时
+三十分钟 十五分钟 四十五分钟 三十分 十五分 四十五分 一刻钟 三刻钟
+"""
+_DURATION_EXTRA = "半个 一刻 三刻"
+_VERB_TEXT = """
+预约 预订 取消 做个 补个 找个 约个 要个
+笔录 询问 谈话 调解 案子 案件 房间 会议室 笔录室
+开会 记录 会见 开庭
+"""
+_PURPOSE_TEXT = "询问笔录 谈话笔录 调解笔录"
+_FUNCTION_TEXT = """
+那个 这个 这些 那些 还是 一下 帮我 左右 之前 之后 以后 以前
+都可以 具体 几点 随便 差不多 大概 尽量 最好 有空 就行 空的
+什么 怎么 哪里 一起 然后 如果 或者 麻烦 谢谢 再约 一次 两个 三个 一个
+给我 请帮 帮我约 帮我订 使用 开始 结束 改到 要用 个人
+"""
+_PUNCT_TEXT = "， 。 、 ； ！ ？ , . ! ? …"
+_SINGLE_WANTED = (
+    "的了是在要与到去用请把被从对给就也再不没会能为个做约看帮找让很吗吧呀呢啊订留改换空"
 )
 
-_DOC_KEYWORDS = ("护照号", "户籍地址", "护照", "户籍", "住址", "住所")
-_DOC_DELIMITERS = frozenset("，。,.;；、！？!?\n")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+")
-_CJK_RUN_RE = re.compile(rf"[{CJK}]+")
-_LONG_DIGIT_RE = re.compile(r"\d{3,}")
-_SHORT_DIGIT_RE = re.compile(r"(?<=第)\d{2,}|\d{2,}(?=[号字])")
-_ID_RE = r"(?<![0-9A-Za-z])\d{17}[\dXx](?![0-9A-Za-z])|(?<![0-9])\d{15}(?![0-9])"
-_MOBILE_RE = r"(?<![0-9])(?:\+?86[-\s]?)?1[3-9]\d[-\s]?\d{4}[-\s]?\d{4}(?![0-9])"
-_LANDLINE_RE = r"(?<![0-9])0\d{2,3}[-\s]?\d{7,8}(?![0-9])"
-# 外发前按“像数字”处理的字符。分隔符收掉之后，连续出现就要遮。
-_DIGIT_CHARS = frozenset(
-    "0123456789〇零一二三四五六七八九十百千两幺洞壹贰貳叁參肆伍陆陸柒捌玖拾佰仟"
+_UNITS = ("点钟", "分钟", "小时", "钟头", "点半", "点", "时", "分", "号", "日", "月", "天", "周")
+_CN_DIGIT = "零一二三四五六七八九"
+_PLACEHOLDER_RE = re.compile(r"^\[P([1-9]\d{0,2})\]$")
+_NUM_TOKEN_RE = re.compile(
+    r"^(?:60|[1-5][0-9]|[0-9]|半|两|零|〇|"
+    r"[一二三四五六七八九]?十[一二三四五六七八九]?|[一二三四五六七八九])"
+    r"(?:点钟|分钟|小时|钟头|点半|点|时|分|号|日|月|天|周)$"
 )
-# 「no」只留给案号标记 No.。min / h / am / pm / ai 不在这里全局放行。
-_LATIN_ALLOW = frozenset({"no"})
-_NAME_MARKS = (
-    "当事人",
-    "同事",
-    "老师",
-    "律师",
-    "经理",
-    "先生",
-    "女士",
-    "客户",
+
+
+def _cn_forms() -> list[tuple[str, int]]:
+    forms: list[tuple[str, int]] = [("零", 0), ("〇", 0), ("半", 0), ("两", 2)]
+    for number in range(0, 61):
+        if number < 10:
+            forms.append((_CN_DIGIT[number], number))
+            continue
+        if number == 10:
+            forms.append(("十", number))
+            continue
+        if number < 20:
+            forms.append((f"十{_CN_DIGIT[number - 10]}", number))
+            continue
+        tens, ones = divmod(number, 10)
+        base = f"{_CN_DIGIT[tens]}十"
+        forms.append((base if ones == 0 else base + _CN_DIGIT[ones], number))
+    forms.sort(key=lambda item: len(item[0]), reverse=True)
+    return forms
+
+
+_CN_FORMS = _cn_forms()
+
+
+def _catalog(*groups: tuple[str, str]) -> dict[str, str]:
+    words: dict[str, str] = {}
+    for category, blob in groups:
+        for word in blob.split():
+            if len(word) == 1 and word in SURNAMES:
+                continue
+            words.setdefault(word, category)
+    singles = "".join(char for char in _SINGLE_WANTED if char not in SURNAMES)
+    for char in singles:
+        words.setdefault(char, "function")
+    return words
+
+
+LEXICON: dict[str, str] = _catalog(
+    ("day", _DAY_TEXT),
+    ("period", _PERIOD_TEXT),
+    ("clock", _CLOCK_TEXT),
+    ("duration", _DURATION_EXTRA),
+    ("verb", _VERB_TEXT),
+    ("purpose", _PURPOSE_TEXT),
+    ("function", _FUNCTION_TEXT),
+    ("punct", _PUNCT_TEXT),
 )
-_NAME_CHARS = frozenset("和跟与给找同约")
-_KEYWORD_TAILS = (
-    ("联系电话", "电话"),
-    ("当事人电话", "电话"),
-    ("手机", "电话"),
-    ("电话", "电话"),
-    ("身份证", "证件号"),
-    ("证件号", "证件号"),
-    ("证件", "证件号"),
-    ("案件编号", "案号"),
-    ("案件号", "案号"),
-    ("案号", "案号"),
-    ("编号", "案号"),
-    ("卷号", "案号"),
-    ("文号", "案号"),
-)
+_BY_FIRST: dict[str, tuple[tuple[str, str], ...]] = {}
+for _word, _category in LEXICON.items():
+    _BY_FIRST.setdefault(_word[0], []).append((_word, _category))
+for _key, _items in list(_BY_FIRST.items()):
+    _BY_FIRST[_key] = tuple(sorted(_items, key=lambda item: len(item[0]), reverse=True))
+
+
+@dataclass(frozen=True)
+class Mention:
+    """用户用 ``@`` / ``#`` 插入的引用。下标是原句偏移，``value`` 是规范值。"""
+
+    start: int
+    end: int
+    kind: str
+    value: str
 
 
 @dataclass(frozen=True)
 class DeidContext:
-    """调用方已经按权限收好的词表。网关不会再去查库。"""
+    """调用方已经按权限收好的词表。编码器不会再去查库。"""
 
     case_numbers: tuple[str, ...] = ()
     party_names: tuple[str, ...] = ()
     directory_names: tuple[str, ...] = ()
     room_names: tuple[str, ...] = ()
+    purpose_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_numbers", _as_strings(self.case_numbers))
         object.__setattr__(self, "party_names", _as_strings(self.party_names))
         object.__setattr__(self, "directory_names", _as_strings(self.directory_names))
         object.__setattr__(self, "room_names", _as_strings(self.room_names))
+        object.__setattr__(self, "purpose_names", _as_strings(self.purpose_names))
+
+
+@dataclass(frozen=True)
+class OutboundToken:
+    text: str
+    category: str
+    start: int
+    end: int
 
 
 @dataclass
 class DeidResult:
-    """一次脱敏的结果。``mapping`` 只留在本机，用来把占位符填回原值。"""
+    """一次编码的结果。``mapping`` 只留在本机。"""
 
     text: str
     mapping: dict[str, str]
     confident: bool
     reasons: list[str]
+    tokens: tuple[OutboundToken, ...] = ()
+    mention_roles: dict[str, str] | None = None
 
 
-def deidentify(text: str, context: DeidContext | None = None) -> DeidResult:
-    """把一句预约话脱敏。``confident`` 为假时调用方不得外发 ``text``。"""
+class OutboundBlocked(Exception):
+    """闸门拒绝外发。``outcome`` 是固定短码，不含原文。"""
+
+    outcome = "blocked_invariant"
+
+    def __str__(self) -> str:
+        return self.outcome
+
+
+def deidentify(
+    text: str,
+    context: DeidContext | None = None,
+    *,
+    prior: Mapping[str, str] | None = None,
+    mentions: Sequence[Mention] | None = None,
+) -> DeidResult:
+    """把一句预约话编成词表词和占位符。``confident`` 为假时不得外发。"""
 
     if not isinstance(text, str):
-        raise TypeError("待脱敏文本必须是字符串")
+        raise TypeError("待编码文本必须是字符串")
     if context is None:
         context = DeidContext()
     elif not isinstance(context, DeidContext):
-        raise TypeError("脱敏上下文必须是 DeidContext")
-    return _Session(context).run(text)
+        raise TypeError("编码上下文必须是 DeidContext")
+    if len(text) > MAX_SOURCE_CHARS:
+        return DeidResult(text="", mapping={}, confident=False, reasons=["source_too_long"])
+    if not text.strip():
+        return DeidResult(text="", mapping={}, confident=False, reasons=["empty"])
+    normalized, spans = _normalize(text)
+    pieces = _scan(normalized, spans, text, context, mentions or ())
+    tokens, mapping, roles = _assign(pieces, prior or {})
+    encoded = " ".join(token.text for token in tokens)
+    allowed = allowed_surface(context)
+    if not tokens or not satisfies_outbound_invariant(encoded, allowed):
+        return DeidResult(text="", mapping={}, confident=False, reasons=["invariant"], tokens=())
+    return DeidResult(
+        text=encoded,
+        mapping=mapping,
+        confident=True,
+        reasons=[],
+        tokens=tuple(tokens),
+        mention_roles=roles,
+    )
+
+
+def encode_preview(
+    text: str,
+    context: DeidContext | None = None,
+    *,
+    mentions: Sequence[Mention] | None = None,
+) -> dict[str, object]:
+    """给将来的输入框用的同一编码器。不返回映射里的原文。"""
+
+    result = deidentify(text, context, mentions=mentions)
+    local = 0
+    shown: list[dict[str, object]] = []
+    for token in result.tokens:
+        kept = token.category == "placeholder"
+        if kept:
+            local += 1
+        shown.append({"text": token.text, "local": kept})
+    return {
+        "text": result.text,
+        "localCount": local,
+        "tokens": shown,
+        "confident": result.confident,
+    }
+
+
+def allowed_surface(context: DeidContext | None = None) -> frozenset[str]:
+    """闸门认可的表面形式：固定词表、本次房间变体、本次事项名。"""
+
+    words = set(LEXICON)
+    if context is None:
+        return frozenset(words)
+    for name in context.room_names:
+        words.update(room_forms(name))
+    for name in context.purpose_names:
+        if name and not (len(name) == 1 and name in SURNAMES):
+            words.add(name)
+    return frozenset(words)
+
+
+def room_forms(name: str) -> set[str]:
+    """启用房间的可读变体。只由配置生成，不进固定词表。"""
+
+    stripped = " ".join(name.split())
+    if not stripped:
+        return set()
+    forms = {stripped, stripped.replace(" ", "")}
+    compact = stripped.replace(" ", "")
+    matched = re.fullmatch(r"(.+?)(\d+)", compact)
+    if matched and matched.group(1):
+        forms.add(f"{matched.group(2)}号{matched.group(1)}")
+    return {item for item in forms if item}
+
+
+def satisfies_outbound_invariant(text: str, allowed: Iterable[str]) -> bool:
+    """I1：每个词元在词表、合法数字单位或占位符里，且放行数字不超过 8 位。"""
+
+    if not isinstance(text, str) or not text.strip():
+        return False
+    allowed_set = allowed if isinstance(allowed, (set, frozenset)) else set(allowed)
+    tokens = text.split(" ")
+    if any(not token for token in tokens):
+        return False
+    digits = 0
+    for token in tokens:
+        if _PLACEHOLDER_RE.fullmatch(token):
+            continue
+        if token in allowed_set:
+            if _static_digit_run(token):
+                return False
+            # 房间名里的数字是管理员配置的公开名称，不计入用户句子的 8 位上限。
+            continue
+        if _NUM_TOKEN_RE.fullmatch(token) and _number_value(token) is not None:
+            digits += sum(char.isdigit() for char in token)
+            continue
+        return False
+    return digits <= MAX_RELEASED_DIGITS
+
+
+def release_outbound(text: str, allowed: Iterable[str]) -> str:
+    """唯一出站闸门。不满足 I1 就不把文本交还给调用方去发 HTTP。"""
+
+    if not satisfies_outbound_invariant(text, allowed):
+        raise OutboundBlocked()
+    return text
+
+
+def lexicon_categories() -> Mapping[str, str]:
+    return LEXICON
 
 
 def _as_strings(values: Iterable[str]) -> tuple[str, ...]:
     items: list[str] = []
     for value in values:
         if not isinstance(value, str):
-            raise TypeError("脱敏上下文只接受字符串")
+            raise TypeError("编码上下文只接受字符串")
         items.append(value)
     return tuple(items)
 
 
-def _halfwidth(text: str) -> str:
-    out: list[str] = []
-    for char in text:
-        code = ord(char)
-        if (
-            0xFF10 <= code <= 0xFF19
-            or 0xFF21 <= code <= 0xFF3A
-            or 0xFF41 <= code <= 0xFF5A
-            or char in "－／＿"
-        ):
-            out.append(chr(code - 0xFEE0))
-        elif char == "＠":
-            out.append("@")
-        elif "\ue000" <= char <= "\uf8ff":
+def _normalize(text: str) -> tuple[str, list[tuple[int, int]]]:
+    chars: list[str] = []
+    spans: list[tuple[int, int]] = []
+    for index, char in enumerate(text):
+        if unicodedata.category(char) == "Cf":
             continue
-        else:
-            out.append(char)
-    return "".join(out)
-
-
-def _nfkc_keep(char: str) -> bool:
-    if char == " " or unicodedata.category(char) == "Zs":
-        return True
-    if _is_han(char):
-        return True
-    return char.isascii() and char.isalnum()
-
-
-def _normalize_text(text: str) -> str:
-    """整句做兼容归一，再去掉格式字符和组合记号。
-
-    汉字的兼容形式（例如兼容区里的姓）和变成字母、数字的 NFKC 结果都会采纳，
-    这样已知姓名在匹配前已经折成同一字形。中文标点仍留在原文里，避免逗号被
-    折成英文逗号。非拉丁十进制数字不在这里折成 ASCII，那是已知残余风险。
-    """
-
-    out: list[str] = []
-    for char in text:
-        category = unicodedata.category(char)
-        if category == "Cf" or category.startswith("M"):
+        norm = unicodedata.normalize("NFKC", char)
+        if not norm or norm.isspace() or char.isspace():
+            chars.append(" ")
+            spans.append((index, index + 1))
             continue
-        folded = unicodedata.normalize("NFKC", char)
-        if folded != char and folded and all(_nfkc_keep(item) for item in folded):
-            for item in folded:
-                out.append(" " if unicodedata.category(item) == "Zs" else item)
+        for piece in norm:
+            chars.append(piece)
+            spans.append((index, index + 1))
+    collapsed: list[str] = []
+    collapsed_spans: list[tuple[int, int]] = []
+    for char, span in zip(chars, spans, strict=True):
+        if char == " " and collapsed and collapsed[-1] == " ":
+            start, _end = collapsed_spans[-1]
+            collapsed_spans[-1] = (start, span[1])
             continue
-        if category == "Zs" and char != " ":
-            out.append(" ")
-        else:
-            out.append(char)
-    return _halfwidth("".join(out))
+        collapsed.append(char)
+        collapsed_spans.append(span)
+    return "".join(collapsed), collapsed_spans
 
 
-def _is_han(char: str) -> bool:
-    code = ord(char)
-    return 0x4E00 <= code <= 0x9FFF or 0x3400 <= code <= 0x4DBF or 0xF900 <= code <= 0xFAFF
-
-
-def _is_basic_latin(char: str) -> bool:
-    return char.isascii() and char.isalpha()
-
-
-def _is_other_letter(char: str) -> bool:
-    return (
-        unicodedata.category(char).startswith("L")
-        and not _is_han(char)
-        and not _is_basic_latin(char)
-    )
-
-
-def _is_digit_like(char: str) -> bool:
-    return char in _DIGIT_CHARS
-
-
-def _is_private(char: str) -> bool:
-    return "\ue000" <= char <= "\uf8ff"
-
-
-def _is_gap(char: str) -> bool:
-    """字母或数字以外的字符，都可能被拿来拆开姓名、关键词或号码。"""
-
-    if _is_private(char):
-        return False
-    if _is_han(char) or _is_basic_latin(char) or _is_other_letter(char):
-        return False
-    if _is_digit_like(char):
-        return False
-    return True
-
-
-def _collapse_between(text: str, is_core) -> tuple[str, list[int]]:
-    """去掉夹在同类字符之间的任意分隔，并记下每个保留字符的原位置。
-
-    检测在收紧后的文本上进行，替换仍落回原文，所以没被遮住的空格保持原样。
-    """
-
-    out: list[str] = []
-    origins: list[int] = []
+def _scan(
+    normalized: str,
+    spans: list[tuple[int, int]],
+    original: str,
+    context: DeidContext,
+    mentions: Sequence[Mention],
+) -> list[dict[str, object]]:
+    rooms = []
+    for name in context.room_names:
+        for form in room_forms(name):
+            rooms.append((form, "room"))
+    rooms.sort(key=lambda item: len(item[0]), reverse=True)
+    purposes = [(name, "purpose") for name in context.purpose_names if name]
+    purposes.sort(key=lambda item: len(item[0]), reverse=True)
+    entities = _entities(context)
+    mention_list = [
+        item for item in mentions if isinstance(item, Mention) and item.start < item.end
+    ]
+    pieces: list[dict[str, object]] = []
+    digits_used = 0
     index = 0
-    size = len(text)
-    while index < size:
-        if is_core(text[index]):
-            out.append(text[index])
-            origins.append(index)
+    limit = len(normalized)
+    while index < limit:
+        if normalized[index] == " ":
             index += 1
             continue
-        gap_end = index
-        while gap_end < size and _is_gap(text[gap_end]):
-            gap_end += 1
-        between_cores = (
-            bool(out)
-            and is_core(text[origins[-1]])
-            and gap_end > index
-            and gap_end < size
-            and is_core(text[gap_end])
-        )
-        if between_cores:
-            index = gap_end
+        mention = _mention_at(spans[index][0], mention_list)
+        if mention is not None:
+            end = index
+            while end < limit and spans[end][0] < mention.end:
+                end += 1
+            start = _pull_marks(normalized, index)
+            pieces.append(
+                {
+                    "kind": "placeholder",
+                    "start": spans[start][0],
+                    "end": spans[end - 1][1],
+                    "key": f"mention:{mention.kind}:{mention.value}",
+                    "value": mention.value.strip(),
+                    "role": mention.kind,
+                }
+            )
+            index = end
             continue
-        if gap_end == index:
-            out.append(text[index])
-            origins.append(index)
+        match = _longest(normalized, index, rooms, purposes, entities, digits_used)
+        if match is None:
+            pieces.append(
+                {
+                    "kind": "gap",
+                    "start": spans[index][0],
+                    "end": spans[index][1],
+                    "key": normalized[index],
+                    "value": original[spans[index][0] : spans[index][1]],
+                }
+            )
             index += 1
             continue
-        for cursor in range(index, gap_end):
-            out.append(text[cursor])
-            origins.append(cursor)
-        index = gap_end
-    return "".join(out), origins
+        length, _rank, kind, surface, category = match
+        start = _pull_marks(normalized, index)
+        orig_start = spans[start][0]
+        orig_end = spans[index + length - 1][1]
+        if kind == "entity":
+            pieces.append(
+                {
+                    "kind": "placeholder",
+                    "start": orig_start,
+                    "end": orig_end,
+                    "key": surface,
+                    "value": original[spans[index][0] : orig_end].strip() or surface,
+                    "role": category if category in {"party", "case"} else "",
+                }
+            )
+        else:
+            if category == "clock":
+                digits_used += sum(char.isdigit() for char in surface)
+            pieces.append(
+                {
+                    "kind": "lex",
+                    "text": surface.replace(" ", ""),
+                    "category": category,
+                    "start": orig_start,
+                    "end": orig_end,
+                }
+            )
+        index += length
+    return _merge_gaps(pieces, original)
 
 
-def _crosses_sentinel(fragment: str) -> bool:
-    return SENT_P0 in fragment or SENT_W0 in fragment or bool(_SENTINEL_PAIR.search(fragment))
+def _pull_marks(normalized: str, index: int) -> int:
+    start = index
+    while start > 0 and normalized[start - 1] in "@#":
+        start -= 1
+    return start
 
 
-def _letter_core(char: str) -> bool:
-    return _is_han(char) or _is_basic_latin(char) or _is_other_letter(char)
+def _longest(
+    text: str,
+    index: int,
+    rooms: list[tuple[str, str]],
+    purposes: list[tuple[str, str]],
+    entities: list[tuple[str, str]],
+    digits_used: int,
+) -> tuple[int, int, str, str, str] | None:
+    candidates: list[tuple[int, int, str, str, str]] = []
+    for word, category in _BY_FIRST.get(text[index], ()):
+        if text.startswith(word, index):
+            candidates.append((len(word), 1, "lex", word, category))
+            break
+    for word, category in rooms:
+        if text.startswith(word, index):
+            candidates.append((len(word), 1, "lex", word, category))
+            break
+    for word, category in purposes:
+        if text.startswith(word, index):
+            candidates.append((len(word), 1, "lex", word, category))
+            break
+    clock = _clock_at(text, index, digits_used)
+    if clock is not None:
+        surface, _value = clock
+        candidates.append((len(surface), 0, "lex", surface, "clock"))
+    for surface, kind in entities:
+        if surface and text.startswith(surface, index):
+            candidates.append((len(surface), 2, "entity", surface, kind))
+            break
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))
 
 
-def _han_name_position(text: str, index: int) -> bool:
-    """短汉字挨着「和 / 给 / 约 / 老师」这类位置时，按姓名处理。"""
-
-    if index > 0 and text[index - 1] in _NAME_CHARS:
-        return True
-    if index + 1 < len(text) and text[index + 1] in _NAME_CHARS:
-        return True
-    before = text[:index]
-    after = text[index + 1 :]
-    if before.endswith("总"):
-        return True
-    return any(before.endswith(mark) or after.startswith(mark) for mark in _NAME_MARKS)
-
-
-def _anchor_label(text: str, origin_start: int) -> str | None:
-    window = text[max(0, origin_start - 16) : origin_start]
-    collapsed, _origins = _collapse_between(window, _letter_core)
-    for keyword, label in _KEYWORD_TAILS:
-        if collapsed.endswith(keyword):
-            return label
+def _clock_at(text: str, index: int, digits_used: int) -> tuple[str, int] | None:
+    arabic_end = _arabic_end(text, index)
+    if arabic_end is not None:
+        number = int(text[index:arabic_end])
+        unit = _unit_at(text, arabic_end)
+        if unit is not None:
+            added = arabic_end - index
+            if digits_used + added <= MAX_RELEASED_DIGITS:
+                return text[index : arabic_end + len(unit)], number
+    for surface, value in _CN_FORMS:
+        if not text.startswith(surface, index):
+            continue
+        unit = _unit_at(text, index + len(surface))
+        if unit is None:
+            continue
+        if digits_used > MAX_RELEASED_DIGITS:
+            return None
+        return text[index : index + len(surface) + len(unit)], value
     return None
 
 
-def _digit_run_present(text: str, minimum: int) -> bool:
-    run = 0
-    for char in text:
-        if _is_digit_like(char):
-            run += 1
-            if run >= minimum:
-                return True
-        else:
-            run = 0
-    return False
+def _arabic_end(text: str, index: int) -> int | None:
+    """1–2 位、且不接在别的数字后面、值在 0–60 的数字。3 位及以上整段不放行。"""
+
+    if index > 0 and text[index - 1].isdigit():
+        return None
+    end = index
+    while end < len(text) and text[end].isdigit():
+        end += 1
+    length = end - index
+    if length < 1 or length > 2:
+        return None
+    number = int(text[index:end])
+    if number > 60:
+        return None
+    return end
 
 
-def _lexicon_prefix_length(text: str, index: int) -> int:
-    best = 0
-    for word in _LEXICON:
-        if len(word) < 2 or len(word) <= best:
-            continue
-        if text.startswith(word, index):
-            best = len(word)
-    return best
+def _unit_at(text: str, index: int) -> str | None:
+    for unit in _UNITS:
+        if text.startswith(unit, index):
+            return unit
+    return None
 
 
-def _identity(value: str) -> str:
-    text, _origins = _collapse_between(_normalize_text(value), _letter_core)
-    text = text.replace(" ", "")
-    for full, half in (
-        ("（", "("),
-        ("）", ")"),
-        ("〔", "("),
-        ("〕", ")"),
-        ("【", "("),
-        ("】", ")"),
-        ("[", "("),
-        ("]", ")"),
-    ):
-        text = text.replace(full, half)
-    return text
-
-
-def _case_variants(value: str) -> set[str]:
-    base = _halfwidth(value.strip())
-    variants = {base, base.replace(" ", "")}
-    swaps = (
-        ("（", "("),
-        ("）", ")"),
-        ("〔", "("),
-        ("〕", ")"),
-        ("[", "("),
-        ("]", ")"),
-        ("【", "("),
-        ("】", ")"),
+def _entities(context: DeidContext) -> list[tuple[str, str]]:
+    labeled = (
+        *((item, "party") for item in context.party_names),
+        *((item, "case") for item in context.case_numbers),
+        *((item, "directory") for item in context.directory_names),
     )
-    for source in list(variants):
-        folded = source
-        for full, half in swaps:
-            folded = folded.replace(full, half)
-        variants.add(folded)
-        variants.add(folded.replace("(", "（").replace(")", "）"))
-    return {item for item in variants if item}
+    found: list[tuple[str, str]] = []
+    for value, kind in labeled:
+        normalized, _spans = _normalize(value)
+        surface = normalized.strip()
+        if surface:
+            found.append((surface, kind))
+    found.sort(key=lambda item: len(item[0]), reverse=True)
+    return found
 
 
-def _room_variants(name: str) -> set[str]:
-    normalized = _halfwidth(name.strip())
-    variants = {normalized, normalized.replace(" ", "")}
-    match = re.fullmatch(rf"([{CJK}]+)\s*(\d+)", normalized)
-    if match:
-        prefix, number = match.groups()
-        variants |= {
-            f"{number}号{prefix}",
-            f"{prefix}{number}号",
-            f"{number}号{prefix[-1]}",
-        }
-    return {item for item in variants if len(item) >= 2}
-
-
-def _unique_stripped(values: tuple[str, ...], *, minimum: int = 2) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        cleaned = value.strip()
-        if len(cleaned) < minimum or cleaned in seen:
+def _mention_at(orig_index: int, mentions: Sequence[Mention]) -> Mention | None:
+    for mention in mentions:
+        if mention.kind not in {"party", "case"}:
             continue
-        seen.add(cleaned)
-        result.append(cleaned)
-    return result
+        if mention.start <= orig_index < mention.end:
+            return mention
+    return None
 
 
-def _lexicon_covers(text: str, index: int, length: int) -> bool:
-    """单字已知姓名落在「明天」这类预约词里面时，不要把它抠出来。"""
-
-    for word in _LEXICON:
-        if len(word) < 2:
+def _merge_gaps(pieces: list[dict[str, object]], original: str) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    for piece in pieces:
+        if piece["kind"] == "gap" and merged and merged[-1]["kind"] == "gap":
+            merged[-1]["end"] = piece["end"]
             continue
-        start = max(0, index - len(word) + 1)
-        for cursor in range(start, index + 1):
-            if text.startswith(word, cursor) and cursor + len(word) >= index + length:
-                return True
+        if piece["kind"] == "gap" and str(piece.get("value") or "") in "@#":
+            if merged and merged[-1]["kind"] == "placeholder":
+                continue
+            continue
+        merged.append(dict(piece))
+    for piece in merged:
+        if piece["kind"] == "gap":
+            piece["kind"] = "placeholder"
+            piece["value"] = original[int(piece["start"]) : int(piece["end"])].strip()
+            piece["key"] = str(piece["value"])
+            piece["role"] = ""
+    return [
+        piece for piece in merged if not (piece["kind"] == "placeholder" and not piece.get("value"))
+    ]
+
+
+def _assign(
+    pieces: list[dict[str, object]],
+    prior: Mapping[str, str],
+) -> tuple[list[OutboundToken], dict[str, str], dict[str, str]]:
+    mapping = {key: value for key, value in prior.items() if _PLACEHOLDER_RE.fullmatch(key)}
+    inverse = {value: key for key, value in mapping.items()}
+    next_id = 1 + max((int(_PLACEHOLDER_RE.fullmatch(key).group(1)) for key in mapping), default=0)
+    tokens: list[OutboundToken] = []
+    roles: dict[str, str] = {}
+    for piece in pieces:
+        if piece["kind"] == "lex":
+            tokens.append(
+                OutboundToken(
+                    text=str(piece["text"]),
+                    category=str(piece["category"]),
+                    start=int(piece["start"]),
+                    end=int(piece["end"]),
+                )
+            )
+            continue
+        value = str(piece.get("value") or "")
+        key = inverse.get(value)
+        if key is None:
+            key = f"[P{next_id}]"
+            next_id += 1
+            inverse[value] = key
+            mapping[key] = value
+        role = str(piece.get("role") or "")
+        if role:
+            roles[key] = role
+        tokens.append(
+            OutboundToken(
+                text=key, category="placeholder", start=int(piece["start"]), end=int(piece["end"])
+            )
+        )
+    return tokens, mapping, roles
+
+
+def _static_digit_run(token: str) -> bool:
+    if token in LEXICON:
+        return bool(re.search(r"\d{3,}", token))
     return False
 
 
-def _usable_mask(masked: str, original: str) -> bool:
-    return bool(masked) and masked != original and masked != "访客" and "*" in masked
-
-
-def _is_personal_name(chunk: str) -> bool:
-    if len(chunk) < 2 or chunk in _LEXICON:
-        return False
-    for compound in _COMPOUND_SURNAMES:
-        if chunk.startswith(compound):
-            given = len(chunk) - len(compound)
-            return given == 0 or given in (1, 2)
-    return chunk[0] in _SINGLE_SURNAMES and len(chunk) in (2, 3)
-
-
-def _lexicon_cover(run: str, *, minimum: int = 1) -> tuple[list[bool], list[int]]:
-    consumed = [False] * len(run)
-    cover = [0] * len(run)
-    found: list[tuple[int, int]] = []
-    for word in _LEXICON:
-        if len(word) < minimum:
-            continue
-        start = 0
-        while True:
-            index = run.find(word, start)
-            if index < 0:
-                break
-            found.append((len(word), index))
-            start = index + 1
-    found.sort(key=lambda item: (-item[0], item[1]))
-    for length, index in found:
-        if any(consumed[index : index + length]):
-            continue
-        for offset in range(length):
-            consumed[index + offset] = True
-            cover[index + offset] = length
-    return consumed, cover
-
-
-class _Session:
-    def __init__(self, context: DeidContext) -> None:
-        self.context = context
-        self.mapping: dict[str, str] = {}
-        self.reasons: list[str] = []
-        self._reason_set: set[str] = set()
-        self._counts: dict[str, int] = {}
-        self._seen: dict[tuple[str, str], str] = {}
-        self._placeholders: list[str] = []
-        self._white: list[str] = []
-        self.replacements = 0
-
-    def run(self, raw: str) -> DeidResult:
-        if len(raw) > MAX_SOURCE_CHARS:
-            self._add_reason("source_too_long")
-        text = _normalize_text(raw)
-        if "@" in text:
-            self._add_reason("email_marker")
-            text = _EMAIL_RE.sub(lambda match: self._placeholder("编号", match.group(0)), text)
-
-        text = self._exact(text)
-        text = self._party_patterns(text)
-        text = self._keyword_tails(text)
-        text = self._protect_whitelist(text)
-        text = self._structural(text)
-        text = self._sub(_ID_RE, "证件号", text)
-        text = self._sub(_MOBILE_RE, "电话", text)
-        text = self._sub(_LANDLINE_RE, "电话", text)
-        text = self._catchall_digits(text)
-        text = self._mask_digit_like(text)
-        text = self._document_tails(text)
-        text = self._han_residual(text)
-        text = self._mask_script(
-            text,
-            _is_other_letter,
-            allow=frozenset(),
-            reason="unknown_name",
-            label="当事人",
-        )
-        text = self._mask_script(
-            text,
-            _is_basic_latin,
-            allow=self._latin_allow(),
-            reason="unknown_name",
-            label="当事人",
-        )
-        text = self._digit_backstop(text)
-        text = self._restore(text)
-
-        if len(text) > MAX_MASKED_CHARS:
-            self._add_reason("masked_too_long")
-        if self.replacements > MAX_REPLACEMENTS:
-            self._add_reason("too_many_replacements")
-        confident = not any(reason in BLOCKING_REASONS for reason in self.reasons)
-        return DeidResult(
-            text=text,
-            mapping=dict(self.mapping),
-            confident=confident,
-            reasons=list(self.reasons),
-        )
-
-    def _add_reason(self, reason: str) -> None:
-        if reason not in self._reason_set:
-            self._reason_set.add(reason)
-            self.reasons.append(reason)
-
-    def _placeholder(self, label: str, original: str) -> str:
-        group = "案号/编号" if label in ("案号", "编号") else label
-        key = (group, _identity(original))
-        self.replacements += 1
-        cached = self._seen.get(key)
-        if cached is not None:
-            return cached
-        self._counts[label] = self._counts.get(label, 0) + 1
-        name = f"[{label}{self._counts[label]}]"
-        index = len(self._placeholders)
-        self._placeholders.append(name)
-        self.mapping[name] = original
-        token = SENT_P0 + chr(0xE100 + index) + SENT_P1
-        self._seen[key] = token
-        return token
-
-    def _protect(self, match: re.Match[str]) -> str:
-        index = len(self._white)
-        self._white.append(match.group(0))
-        return SENT_W0 + chr(0xE100 + index) + SENT_W1
-
-    def _sub(self, pattern: str, label: str, text: str, group: int = 0) -> str:
-        def replace(match: re.Match[str]) -> str:
-            if group == 0:
-                return self._placeholder(label, match.group(0))
-            whole, part = match.group(0), match.group(group)
-            if _SENTINEL_PAIR.search(part):
-                return whole
-            start = match.start(group) - match.start(0)
-            end = match.end(group) - match.start(0)
-            return whole[:start] + self._placeholder(label, part) + whole[end:]
-
-        return re.sub(pattern, replace, text)
-
-    def _exact(self, text: str) -> str:
-        parties = _unique_stripped(self.context.party_names, minimum=1)
-        directory = _unique_stripped(self.context.directory_names, minimum=1)
-        party_keys = {_identity(name) for name in parties}
-        directory_only: list[str] = []
-        for name in directory:
-            if _identity(name) in party_keys:
-                self._add_reason("ambiguous_person")
-            else:
-                directory_only.append(name)
-
-        entries: list[tuple[str, str, str]] = []
-        for case_number in _unique_stripped(self.context.case_numbers):
-            for variant in _case_variants(case_number):
-                entries.append((variant, "案号", case_number))
-        for name in parties:
-            if len(name) < 2:
-                continue
-            folded = _normalize_text(name)
-            entries.append((folded, "当事人", name))
-            masked = mask_party_name(name)
-            if _usable_mask(masked, name):
-                entries.append((masked, "当事人", name))
-        for name in directory_only:
-            if len(name) < 2:
-                continue
-            entries.append((_normalize_text(name), "同事", name))
-
-        entries.sort(key=lambda item: len(item[0]), reverse=True)
-        for variant, label, restore in entries:
-            if label == "案号" or not re.search(rf"[{CJK}]", variant):
-                pattern = rf"(?<![A-Za-z0-9]){re.escape(variant)}(?![A-Za-z0-9])"
-            else:
-                pattern = re.escape(variant)
-            text = re.sub(
-                pattern,
-                lambda _match, item_label=label, item_restore=restore: self._placeholder(
-                    item_label, item_restore
-                ),
-                text,
-            )
-        named = [(item, "当事人") for item in parties]
-        named.extend((item, "同事") for item in directory_only)
-        for name, label in named:
-            text = self._mask_collapsed_name(text, name, label, name)
-        return text
-
-    def _mask_collapsed_name(self, text: str, name: str, label: str, restore: str) -> str:
-        """在收掉分隔符之后的文本里找已知姓名，再把原文那一段换成占位符。
-
-        单字姓名也要遮。它若是「明天」这类预约词的一部分，则留在词里。
-        """
-
-        target, _origins = _collapse_between(_normalize_text(name), _letter_core)
-        target = "".join(char for char in target if _letter_core(char))
-        if not target:
-            return text
-        search_from = 0
-        while True:
-            collapsed, origins = _collapse_between(text, _letter_core)
-            index = collapsed.find(target, search_from)
-            if index < 0:
-                return text
-            if len(target) == 1 and _lexicon_covers(collapsed, index, 1):
-                search_from = index + 1
-                continue
-            origin_start = origins[index]
-            origin_end = origins[index + len(target) - 1] + 1
-            if _crosses_sentinel(text[origin_start:origin_end]):
-                return text
-            replacement = self._placeholder(label, restore)
-            updated = text[:origin_start] + replacement + text[origin_end:]
-            if updated == text:
-                return text
-            text = updated
-            search_from = 0
-
-    def _keyword_tails(self, text: str) -> str:
-        """敏感词按收掉分隔符之后的样子匹配，后面没被词表解释掉的内容整段遮住。
-
-        「案 号」「联系电 话」和「案号 A B C」都不能只遮住其中一个字。
-        预约常用词（明天、下午）会截断尾巴。
-        """
-
-        collapsed, origins = _collapse_between(text, _letter_core)
-        occupied = [False] * len(collapsed)
-        found: list[tuple[int, int, str]] = []
-        for keyword, label in _KEYWORD_TAILS:
-            start = 0
-            while True:
-                index = collapsed.find(keyword, start)
-                if index < 0:
-                    break
-                end = index + len(keyword)
-                if any(occupied[index:end]):
-                    start = index + 1
-                    continue
-                if not all(_letter_core(collapsed[offset]) for offset in range(index, end)):
-                    start = index + 1
-                    continue
-                for offset in range(index, end):
-                    occupied[offset] = True
-                found.append((index, end, label))
-                start = end
-        spans: list[tuple[int, int, str]] = []
-        for index, end, label in found:
-            tail_start = origins[end - 1] + 1
-            while tail_start < len(text) and text[tail_start] in " \t":
-                tail_start += 1
-            if tail_start < len(text) and text[tail_start] in "是为:：":
-                tail_start += 1
-                while tail_start < len(text) and text[tail_start] in " \t:：":
-                    tail_start += 1
-            tail_end = tail_start
-            while tail_end < len(text):
-                if text[tail_end] in _DOC_DELIMITERS or text[tail_end] in (SENT_P0, SENT_W0):
-                    break
-                if text[tail_end] in "和与及或的":
-                    break
-                if _lexicon_prefix_length(text, tail_end) >= 2:
-                    break
-                tail_end += 1
-            while tail_end > tail_start and text[tail_end - 1] in " \t":
-                tail_end -= 1
-            residue = text[tail_start:tail_end]
-            if residue and not _crosses_sentinel(residue):
-                spans.append((tail_start, tail_end, label))
-        for start, end, label in sorted(spans, key=lambda item: item[0], reverse=True):
-            text = text[:start] + self._placeholder(label, text[start:end]) + text[end:]
-        return text
-
-    def _party_patterns(self, text: str) -> str:
-        def title(match: re.Match[str]) -> str:
-            return self._placeholder("当事人", match.group(0))
-
-        def xiao(match: re.Match[str]) -> str:
-            token = match.group(0)
-            if token in _XIAO_LAO_STOP:
-                return token
-            return self._placeholder("当事人", token)
-
-        text = _TITLE_RE.sub(title, text)
-        return _XIAO_RE.sub(xiao, text)
-
-    def _protect_whitelist(self, text: str) -> str:
-        variants = {variant for name in self.context.room_names for variant in _room_variants(name)}
-        for room in sorted(variants, key=len, reverse=True):
-            text = re.sub(re.escape(room) + r"(?!\d)", self._protect, text)
-        patterns = (
-            r"(?:(?:19|20)\d{2}\s*年\s*)?\d{1,2}\s*月\s*\d{1,2}\s*[日号]?",
-            r"(?<![0-9A-Za-z\-/])(?:19|20)\d{2}-(?:0?[1-9]|1[0-2])-(?:0?[1-9]|[12]\d|3[01])(?![0-9\-])",
-            r"(?<![0-9/])(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?![0-9/])",
-            rf"(?:(?<=[月到至和或是在])|(?<![{CJK}A-Za-z0-9\-_/]))(?:0?[1-9]|[12]\d|3[01])\s*号(?![{CJK}]*?[0-9])(?=[上下早中晚那当的有开\s,，。]|$)",
-            r"(?<![0-9A-Za-z])(?:[01]?\d|2[0-3])\s*[:：]\s*[0-5]\d\s*(?:[AaPp][Mm])?(?![A-Za-z0-9])",
-            r"(?<![A-Za-z])[AaPp][Mm]\s*(?=(?:[01]?\d|2[0-3])(?:\s*[:：]\s*[0-5]\d)?)",
-            r"(?<![A-Za-z0-9])(?:[01]?\d|2[0-3])\s*[AaPp][Mm](?![A-Za-z])",
-            r"(?<![0-9])(?:[01]?\d|2[0-3])\s*点\s*(?:半|一刻|三刻|[0-5]?\d\s*分?)?",
-            r"(?:十[一二]|[一二三四五六七八九两]|十)\s*点\s*(?:半|一刻|三刻|[零〇一二三四五六七八九十两]{1,3}\s*分)?",
-            r"(?:一个半小时|半个小时|[一二两三]\s*个\s*半\s*小时|[一二两三]\s*个?\s*小时|半\s*小时|[零〇一二三四五六七八九十两]{1,3}\s*分钟)",
-            r"(?<![0-9])\d{1,3}(?:\.\d)?\s*个?\s*(?:小时|钟头|分钟|[Mm][Ii][Nn]|[Hh])(?![A-Za-z])",
-            r"(?<![0-9])\d{1,2}\s*(?:个人|人|位)",
-            r"(?<![0-9])\d{1,2}\s*楼",
-        )
-        for pattern in patterns:
-            text = re.sub(pattern, self._protect, text)
-        return text
-
-    def _structural(self, text: str) -> str:
-        token = (
-            rf"(?:{OPEN}\s*(?:19|20)\d{{2}}\s*{CLOSE}|[{CJK}]{{0,6}}?(?:{OPEN}\s*(?:19|20)\d{{2}}\s*{CLOSE}"
-            rf"|[A-Za-z0-9][A-Za-z0-9\-_/]*))+(?:\s*号)?"
-        )
-        text = self._sub(
-            rf"(?:案号|案件号|案件编号|编号|卷号|文号|(?i:no\.?|№))\s*(?:是|为|[:：])?\s*({token})",
-            "案号",
-            text,
-            group=1,
-        )
-        text = self._sub(
-            rf"{OPEN}\s*(?:19|20)\d{{2}}\s*{CLOSE}\s*(?:[{CJK}A-Za-z0-9]{{0,15}}?\d+\s*号|[{CJK}A-Za-z0-9]{{0,15}}\d+)",
-            "案号",
-            text,
-        )
-        text = self._sub(
-            rf"(?:[{CJK}]{{1,6}}|(?:19|20)\d{{2}})字第\s*\d+\s*号|第\s*\d{{1,6}}\s*号",
-            "案号",
-            text,
-        )
-        text = self._sub(
-            r"(?<![A-Za-z0-9])(?:19|20)\d{2}\s*[-_/—–]\s*[A-Za-z0-9]+(?:[-_/][A-Za-z0-9]+)*",
-            "案号",
-            text,
-        )
-        text = self._sub(
-            r"(?<![A-Za-z0-9])(?=[A-Za-z0-9\-_/]*[A-Za-z])(?=[A-Za-z0-9\-_/]*\d)[A-Za-z0-9][A-Za-z0-9\-_/]{2,}",
-            "编号",
-            text,
-        )
-        return text
-
-    def _catchall_digits(self, text: str) -> str:
-        text = self._sub(r"\d{3,}", "编号", text)
-        return self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
-
-    def _latin_allow(self) -> frozenset[str]:
-        # 房间名里的拉丁字母只随整段房间名保护，不把 ai / min 之类单独放行。
-        return _LATIN_ALLOW
-
-    def _mask_script(
-        self, text: str, is_core, *, allow: frozenset[str], reason: str, label: str
-    ) -> str:
-        """非白名单的字母串整段遮住。分隔符先收掉，所以 L i M i n g 不会漏。"""
-
-        collapsed, origins = _collapse_between(text, is_core)
-        spans: list[tuple[int, int]] = []
-        index = 0
-        while index < len(collapsed):
-            if not is_core(collapsed[index]):
-                index += 1
-                continue
-            end = index
-            while end < len(collapsed) and is_core(collapsed[end]):
-                end += 1
-            token = collapsed[index:end]
-            if token.casefold() in allow:
-                index = end
-                continue
-            origin_start = origins[index]
-            origin_end = origins[end - 1] + 1
-            if not _crosses_sentinel(text[origin_start:origin_end]):
-                spans.append((origin_start, origin_end))
-            index = end
-        return self._cover_spans(text, spans, label=label, reason=reason)
-
-    def _mask_digit_like(self, text: str) -> str:
-        """任意分隔符收掉之后，未受保护的数字串都遮住。
-
-        三位及以上一律遮。关键词后面的两位也遮，避免「案号 12」留下可还原的号。
-        """
-
-        collapsed, origins = _collapse_between(text, _is_digit_like)
-        spans: list[tuple[int, int, str]] = []
-        index = 0
-        while index < len(collapsed):
-            if not _is_digit_like(collapsed[index]):
-                index += 1
-                continue
-            end = index
-            while end < len(collapsed) and _is_digit_like(collapsed[end]):
-                end += 1
-            origin_start = origins[index]
-            origin_end = origins[end - 1] + 1
-            length = end - index
-            label = _anchor_label(text, origin_start)
-            if not _crosses_sentinel(text[origin_start:origin_end]) and (
-                length >= 3 or (label is not None and length >= 2)
-            ):
-                spans.append((origin_start, origin_end, label or "编号"))
-            index = end
-        for origin_start, origin_end, label in sorted(
-            spans, key=lambda item: item[0], reverse=True
-        ):
-            text = (
-                text[:origin_start]
-                + self._placeholder(label, text[origin_start:origin_end])
-                + text[origin_end:]
-            )
-        return text
-
-    def _han_residual(self, text: str) -> str:
-        """预约词表盖不住的汉字，处在姓名位置或本身就是短串时不得外发。
-
-        不再因为里面有「月」这类单字就放行。拿不准的长串同样遮住并拒绝外发。
-        """
-
-        collapsed, origins = _collapse_between(text, _is_han)
-        spans: list[tuple[int, int]] = []
-        for match in _CJK_RUN_RE.finditer(collapsed):
-            run = match.group(0)
-            base = match.start()
-            consumed, _cover = _lexicon_cover(run, minimum=2)
-            for offset, char in enumerate(run):
-                if not consumed[offset] and char in _LEXICON:
-                    consumed[offset] = True
-            index = 0
-            while index < len(run):
-                if consumed[index]:
-                    index += 1
-                    continue
-                end = index
-                while end < len(run) and not consumed[end]:
-                    end += 1
-                chunk = run[index:end]
-                chunk_at = index
-                index = end
-                if chunk in _DOC_KEYWORDS:
-                    continue
-                name_like = len(chunk) == 1 and _han_name_position(collapsed, base + chunk_at)
-                if len(chunk) < 2 and not name_like:
-                    continue
-                origin_start = origins[base + chunk_at]
-                origin_end = origins[base + index - 1] + 1
-                if not _crosses_sentinel(text[origin_start:origin_end]):
-                    spans.append((origin_start, origin_end))
-        return self._cover_spans(text, spans, label="当事人", reason="unknown_name")
-
-    def _cover_spans(
-        self,
-        text: str,
-        spans: list[tuple[int, int]],
-        *,
-        label: str,
-        reason: str,
-    ) -> str:
-        merged: list[tuple[int, int]] = []
-        for start, end in sorted(spans):
-            if end <= start:
-                continue
-            if merged and start <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-            else:
-                merged.append((start, end))
-        for start, end in reversed(merged):
-            piece = text[start:end]
-            if not piece.strip() or _crosses_sentinel(piece):
-                continue
-            self._add_reason(reason)
-            text = text[:start] + self._placeholder(label, piece.strip()) + text[end:]
-        return text
-
-    def _document_tails(self, text: str) -> str:
-        occupied = [False] * len(text)
-        spans: list[tuple[int, int]] = []
-        for keyword in _DOC_KEYWORDS:
-            start = 0
-            while True:
-                index = text.find(keyword, start)
-                if index < 0:
-                    break
-                if any(occupied[index : index + len(keyword)]):
-                    start = index + len(keyword)
-                    continue
-                for offset in range(len(keyword)):
-                    occupied[index + offset] = True
-                tail = index + len(keyword)
-                end = tail
-                while end < len(text) and text[end] not in _DOC_DELIMITERS:
-                    end += 1
-                if _unreplaced_residue(text[tail:end]):
-                    spans.append((tail, end))
-                    self._add_reason("document_keyword")
-                start = end
-        for tail, end in sorted(spans, reverse=True):
-            residue = _unreplaced_residue(text[tail:end])
-            text = text[:tail] + self._placeholder("证件号", residue) + text[end:]
-        return text
-
-    def _digit_backstop(self, text: str) -> str:
-        visible = _SENTINEL_PAIR.sub(" ", text)
-        collapsed, _origins = _collapse_between(visible, _is_digit_like)
-        if _digit_run_present(collapsed, 3):
-            self._add_reason("unknown_digit_run")
-            text = self._mask_digit_like(text)
-        if _LONG_DIGIT_RE.search(visible) or _SHORT_DIGIT_RE.search(visible):
-            self._add_reason("unknown_digit_run")
-            text = self._sub(r"\d{3,}", "编号", text)
-            text = self._sub(r"(?<=第)\d{2,}|\d{2,}(?=[号字])", "编号", text)
-        return text
-
-    def _restore(self, text: str) -> str:
-        text = re.sub(
-            re.escape(SENT_W0) + r"(.)" + re.escape(SENT_W1),
-            lambda match: self._white[ord(match.group(1)) - 0xE100],
-            text,
-        )
-        return re.sub(
-            re.escape(SENT_P0) + r"(.)" + re.escape(SENT_P1),
-            lambda match: self._placeholders[ord(match.group(1)) - 0xE100],
-            text,
-        )
-
-
-def _unreplaced_residue(fragment: str) -> str:
-    return _SENTINEL_PAIR.sub("", fragment).strip()
+def _number_value(token: str) -> int | None:
+    matched = _NUM_TOKEN_RE.fullmatch(token)
+    if matched is None:
+        return None
+    head = token
+    for unit in _UNITS:
+        if head.endswith(unit):
+            head = head[: -len(unit)]
+            break
+    if head.isdigit():
+        value = int(head)
+        return value if 0 <= value <= 60 else None
+    for surface, value in _CN_FORMS:
+        if head == surface:
+            return value
+    return None
