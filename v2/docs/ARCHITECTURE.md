@@ -54,8 +54,12 @@ site-packages。生产入口仅以当前安装的 runtime、`app/service.py` 路
   常量，历史里的自由文本事项不能进入词表。不变式是每个外发词元要么在词表里，
   要么是占位符，并且没有超出数字额度。`confident=false`（空文本、过长或编码结果
   破坏不变式）时禁止外发，映射只留在本机。`release_outbound` 复验单条文本，
-  `release_outbound_payload` 复验整包动态文字。对话页面、模型供应商以及
-  `/conversations`、`/quick-booking` 路由不在本增量注册。第一期没有语音。
+  `release_outbound_payload` 复验整包动态文字，`guarded_complete` 是唯一调用
+  模型 HTTP 的位置。`services/model_provider.py` 是 OpenAI 兼容接口，第一家是
+  DeepSeek；密钥只来自环境变量或数据目录，不入库。`services/model_intent.py`
+  只把编码句、日期、工作时段、房间名和事项类别放进提示词。模型输出是引用和证据，
+  不能带人名、案号或自由文本；时间字段的证据下标必须落在时间类词元上。没有本地
+  规则解析，也没有字面后检查。对话路由仍不在本增量注册。第一期没有语音。
 - 验收拆成 S1 隐私不变式、S2 授权、S3 业务硬约束和 Q 理解质量。本增量只锁定
   S1：性质测试和旧夹具输入都不能把非词表的姓名、案号、电话、证件号子串发出去。
   已知残余风险：名字里由词表词组成的部分（如「周五」，「张会」→ `[P1] 会`）会离开本机，
