@@ -3,7 +3,8 @@
 每句话都走模型。本模块只做日期加减、工作时间与时长硬约束、本人历史补全
 和占位符回填。时段词只约束开始时间：上午 08:30–12:00，中午 11:30–13:30，
 下午 12:00–17:30，晚上 18:00–23:00。开始必须落在窗口和工作时间的交集里，
-结束可以越过时段窗口，不能越过工作时间。交不上时改到最近的合法开始。
+结束可以越过时段窗口，不能越过工作时间。时段窗口和工作时间没有交集时不
+直接出卡片，只给出最近的合法选项；用户点选之后才准备。
 当事人和案号只来自本句占位符或本人历史。事项不采用模型自由文本。
 功能默认关闭。
 """
@@ -547,6 +548,13 @@ def _apply_prepare(
             )
         state["roomId"] = room_id
         state["roomExplicit"] = True
+        if state.get("needsPeriodChoice") and state.get("offeredStart"):
+            state["periodChoiceAccepted"] = True
+            state["needsPeriodChoice"] = False
+            state["timePart"] = "any"
+            state["timeStart"] = state["offeredStart"]
+            state["startExplicit"] = True
+            state["periodMissed"] = False
     if "duration" in body:
         duration = body["duration"]
         if duration == "window":
@@ -651,6 +659,8 @@ def _finalize(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> di
         return _clarify(state, "这个日期不在可预约范围内。", options=[])
     settings = _system_settings(db)
     _constrain_start(state, settings)
+    if state.get("needsPeriodChoice"):
+        return _outside_clarify(db, state, settings, state.get("periodLabel") or "")
     rooms = _active_rooms(db)
     windows = _free_windows(db, state, rooms, settings)
     if not windows:
@@ -859,7 +869,16 @@ def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
     if state.get("date") == local_now().date().isoformat():
         legal_low = max(legal_low, _strictly_after_now(work_start, step))
     latest_fit = work_end - duration
-    if legal_low > legal_high or legal_low > latest_fit:
+    if legal_low > legal_high:
+        state["periodMissed"] = True
+        state["needsPeriodChoice"] = True
+        state["startExplicit"] = False
+        offered = _nearest_start_minutes(state, settings)
+        state["offeredStart"] = minutes_to_time(offered) if offered is not None else None
+        state["startLow"] = offered
+        state["startHigh"] = offered
+        return
+    if legal_low > latest_fit:
         if low >= work_end:
             snapped = _align_down(work_end - duration, work_start, step)
         else:
@@ -929,11 +948,7 @@ def _outside_clarify(
     return _clarify(state, text, options=_nearest_options(db, state, settings))
 
 
-def _nearest_options(
-    db: sqlite3.Connection,
-    state: dict[str, Any],
-    settings: sqlite3.Row,
-) -> list[dict[str, Any]]:
+def _nearest_start_minutes(state: dict[str, Any], settings: sqlite3.Row) -> int | None:
     step = int(settings["slot_minutes"])
     work_start = time_to_minutes(settings["work_start"], field="workStart")
     work_end = time_to_minutes(settings["work_end"], field="workEnd")
@@ -943,7 +958,7 @@ def _nearest_options(
         duration = 60 if step <= 60 <= maximum else step
     duration -= duration % step
     if duration < step or work_end - work_start < duration:
-        return []
+        return None
     part = state.get("timePart") or ""
     bounds = _PERIOD_BOUNDS.get(part)
     clock = state.get("timeStart")
@@ -957,7 +972,24 @@ def _nearest_options(
         after = False
     start = work_end - duration if after else work_start
     if start < work_start or (start - work_start) % step != 0:
+        return None
+    return start
+
+
+def _nearest_options(
+    db: sqlite3.Connection,
+    state: dict[str, Any],
+    settings: sqlite3.Row,
+) -> list[dict[str, Any]]:
+    start = _nearest_start_minutes(state, settings)
+    if start is None:
         return []
+    duration = state.get("duration")
+    step = int(settings["slot_minutes"])
+    maximum = int(settings["max_duration_minutes"])
+    if not isinstance(duration, int) or duration < step or duration > maximum:
+        duration = 60 if step <= 60 <= maximum else step
+    duration -= duration % step
     options = []
     for room in _active_rooms(db):
         options.append(
@@ -1247,6 +1279,9 @@ def _blank_state() -> dict[str, Any]:
         "identityClarify": False,
         "snapped": False,
         "periodMissed": False,
+        "needsPeriodChoice": False,
+        "periodChoiceAccepted": False,
+        "offeredStart": None,
         "startLow": None,
         "startHigh": None,
         "partyName": "",

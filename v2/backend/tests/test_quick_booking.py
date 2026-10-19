@@ -766,7 +766,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(clarified_body["reply"]["kind"], "clarify")
         self.assertNotIn("token", clarified_body["reply"])
 
-    def test_evening_start_stays_inside_working_hours(self) -> None:
+    def test_evening_outside_work_hours_clarifies_until_the_user_picks(self) -> None:
         user, client, rooms = self.begin()
         room = next(item for item in rooms if item["name"] == "笔录室 1")
         _provider, response = self.ask(
@@ -780,15 +780,48 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         body = response.get_json()
         self.assertEqual(response.status_code, 200, body)
         reply = body["reply"]
-        self.assertEqual(reply["kind"], "prepared", body)
-        booking = reply["prepared"]["booking"]
+        self.assertEqual(reply["kind"], "clarify", body)
+        self.assertNotIn("prepared", reply)
+        self.assertNotIn("token", reply)
+        self.assertIn("晚上", reply["text"])
+        self.assertIn("工作时间", reply["text"])
+        option = next(item for item in reply["options"] if item["roomId"] == room["id"])
+        self.assertEqual(option["date"], "2026-08-10")
+        self.assertEqual(option["windowStart"], "17:00")
+        self.assertEqual(option["windowEnd"], "17:30")
+        self.assertGreaterEqual(option["windowStart"], "08:30")
+        self.assertLessEqual(option["windowEnd"], "17:30")
+        picked = self.write(
+            "POST",
+            "/api/v1/quick-booking/prepare",
+            {
+                "draftId": body["conversation"]["id"],
+                "roomId": room["id"],
+                "purpose": "询问笔录",
+                "partyName": "孙某",
+                "caseNumber": "2026-087",
+            },
+            client=client,
+        )
+        prepared_body = picked.get_json()
+        self.assertEqual(picked.status_code, 200, prepared_body)
+        prepared = prepared_body["reply"]
+        self.assertEqual(prepared["kind"], "prepared", prepared)
+        booking = prepared["prepared"]["booking"]
         self.assertEqual(booking["date"], "2026-08-10")
         self.assertEqual(booking["start"], "17:00")
         self.assertEqual(booking["end"], "17:30")
-        self.assertGreaterEqual(booking["start"], "08:30")
-        self.assertLessEqual(booking["end"], "17:30")
-        self.assertIn("晚上", reply["text"])
-        self.assertIn("工作时间", reply["text"])
+        self.assertEqual(booking["roomId"], room["id"])
+        created = self.write(
+            "POST",
+            "/api/v1/quick-booking/commit",
+            {"token": prepared["prepared"]["token"]},
+            client=client,
+        )
+        saved = created.get_json()
+        self.assertEqual(created.status_code, 201, saved)
+        self.assertEqual(saved["start"], "17:00")
+        self.assertEqual(saved["end"], "17:30")
 
     def test_tomorrow_morning_compound_commits_the_next_day(self) -> None:
         user, client, rooms = self.begin()
@@ -834,9 +867,9 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertEqual(saved["end"], "10:30")
         self.assertEqual(saved["roomId"], room["id"])
 
-    def test_period_outside_work_hours_moves_to_the_nearest_legal_start(self) -> None:
+    def test_period_outside_work_hours_offers_the_nearest_legal_start(self) -> None:
         user, client, _rooms = self.begin()
-        samples = (
+        clarify_samples = (
             (
                 "明天晚上笔录室2用一个小时",
                 {"relative_days": 1},
@@ -857,18 +890,8 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
                 "17:30",
                 "笔录室 1",
             ),
-            (
-                "下周四凌晨笔录室1一小时",
-                {"week_offset": 1, "weekday": 4},
-                "dawn",
-                60,
-                "2026-08-13",
-                "08:30",
-                "09:30",
-                "笔录室 1",
-            ),
         )
-        for text, date_body, part, duration, day, start, end, room_name in samples:
+        for text, date_body, part, duration, day, start, end, room_name in clarify_samples:
             provider, response = self.ask(
                 client,
                 user["id"],
@@ -882,14 +905,32 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             self.assertEqual(response.status_code, 200, body)
             self.assertEqual(len(provider.calls), 1, text)
             reply = body["reply"]
-            self.assertEqual(reply["kind"], "prepared", (text, reply))
-            booking = reply["prepared"]["booking"]
-            self.assertEqual(booking["date"], day, text)
-            self.assertEqual(booking["start"], start, text)
-            self.assertEqual(booking["end"], end, text)
-            self.assertGreaterEqual(booking["start"], "08:30", text)
-            self.assertLessEqual(booking["end"], "17:30", text)
-            self.assertNotEqual(booking["start"], "12:00", text)
+            self.assertEqual(reply["kind"], "clarify", (text, reply))
+            self.assertNotIn("prepared", reply)
+            self.assertNotIn("token", reply)
+            option = next(item for item in reply["options"] if item["roomName"] == room_name)
+            self.assertEqual(option["date"], day, text)
+            self.assertEqual(option["windowStart"], start, text)
+            self.assertEqual(option["windowEnd"], end, text)
+            self.assertGreaterEqual(option["windowStart"], "08:30", text)
+            self.assertLessEqual(option["windowEnd"], "17:30", text)
+        provider, response = self.ask(
+            client,
+            user["id"],
+            "下周四凌晨笔录室1一小时",
+            date={"week_offset": 1, "weekday": 4},
+            time={"part": "dawn", "start": None, "end": None},
+            duration_minutes=60,
+            room={"name": "笔录室 1", "kind": None},
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        booking = body["reply"]["prepared"]["booking"]
+        self.assertEqual(booking["date"], "2026-08-13")
+        self.assertEqual(booking["start"], "08:30")
+        self.assertEqual(booking["end"], "09:30")
+        self.assertGreaterEqual(booking["start"], "08:30")
+        self.assertLessEqual(booking["end"], "17:30")
 
     def test_clock_before_its_period_moves_into_the_window(self) -> None:
         user, client, rooms = self.begin()
@@ -949,6 +990,14 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             body = response.get_json()
             self.assertEqual(response.status_code, 200, body)
             reply = body["reply"]
+            if period == "evening":
+                self.assertNotEqual(reply["kind"], "prepared", body)
+                self.assertNotIn("token", reply)
+                for option in reply.get("options") or []:
+                    if "windowStart" in option:
+                        self.assertGreaterEqual(option["windowStart"], "08:30")
+                        self.assertLessEqual(option["windowEnd"], "17:30")
+                continue
             if reply["kind"] != "prepared":
                 self.assertNotIn("prepared", reply)
                 continue

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model.",
+  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model. Rows c156 onward add colon clocks, structured dates, durations above 60 minutes, and out-of-hours clarification.",
   "cases": [
     {
       "text": "帮我约明天下午一小时",
@@ -4283,10 +4283,10 @@
         "missing": [],
         "need_clarification": false
       },
-  "expect": {
-    "kind": "clarify"
-  },
-  "id": "c102"
+      "expect": {
+        "kind": "clarify"
+      },
+      "id": "c102"
     },
     {
       "text": "2026-087和2026-090两个案子",
@@ -6512,6 +6512,600 @@
         "room": "笔录室 2"
       },
       "id": "c155"
+    },
+    {
+      "text": "明天14:00笔录室1一小时",
+      "source": "clock",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "any",
+          "time": "14:00"
+        },
+        "duration": {
+          "minutes": 60
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "14:00",
+        "end": "15:00",
+        "duration": 60,
+        "room": "笔录室 1"
+      },
+      "id": "c156"
+    },
+    {
+      "text": "明天１４：３０笔录室1半小时",
+      "source": "clock",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "any",
+          "time": "14:30"
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "14:30",
+        "end": "15:00",
+        "duration": 30,
+        "room": "笔录室 1"
+      },
+      "id": "c157"
+    },
+    {
+      "text": "2026-08-20 09:30笔录室1一小时",
+      "source": "date",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "month": 8,
+          "day": 20
+        },
+        "start": {
+          "period": "any",
+          "time": "09:30"
+        },
+        "duration": {
+          "minutes": 60
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-20",
+        "start": "09:30",
+        "end": "10:30",
+        "duration": 60,
+        "room": "笔录室 1"
+      },
+      "id": "c158"
+    },
+    {
+      "text": "8/20下午笔录室2一小时",
+      "source": "date",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "month": 8,
+          "day": 20
+        },
+        "start": {
+          "period": "afternoon",
+          "time": null
+        },
+        "duration": {
+          "minutes": 60
+        },
+        "room": "笔录室 2",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-20",
+        "start": "12:00",
+        "end": "13:00",
+        "duration": 60,
+        "room": "笔录室 2"
+      },
+      "id": "c159"
+    },
+    {
+      "text": "8-21上午笔录室1半小时",
+      "source": "date",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "month": 8,
+          "day": 21
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-21",
+        "start": "08:30",
+        "end": "09:00",
+        "duration": 30,
+        "room": "笔录室 1"
+      },
+      "id": "c160"
+    },
+    {
+      "text": "9/15下午笔录室1半小时",
+      "source": "date",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "month": 9,
+          "day": 15
+        },
+        "start": {
+          "period": "afternoon",
+          "time": null
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-09-15",
+        "start": "12:00",
+        "end": "12:30",
+        "duration": 30,
+        "room": "笔录室 1"
+      },
+      "id": "c161"
+    },
+    {
+      "text": "10/28下午笔录室1半小时",
+      "source": "date",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "month": 10,
+          "day": 28
+        },
+        "start": {
+          "period": "afternoon",
+          "time": null
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            3
+          ],
+          "room": [
+            2
+          ]
+        }
+      },
+      "expect": {
+        "kind": "clarify"
+      },
+      "id": "c162"
+    },
+    {
+      "text": "明天上午90分钟笔录室1",
+      "source": "duration",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 90
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            2
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "08:30",
+        "end": "10:00",
+        "duration": 90,
+        "room": "笔录室 1"
+      },
+      "id": "c163"
+    },
+    {
+      "text": "明天上午120分钟笔录室2",
+      "source": "duration",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 120
+        },
+        "room": "笔录室 2",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            2
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "08:30",
+        "end": "10:30",
+        "duration": 120,
+        "room": "笔录室 2"
+      },
+      "id": "c164"
+    },
+    {
+      "text": "明天上午1.5小时笔录室1",
+      "source": "duration",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 90
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            2
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "08:30",
+        "end": "10:00",
+        "duration": 90,
+        "room": "笔录室 1"
+      },
+      "id": "c165"
+    },
+    {
+      "text": "明天上午一个半小时笔录室1",
+      "source": "duration",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 90
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            2
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "08:30",
+        "end": "10:00",
+        "duration": 90,
+        "room": "笔录室 1"
+      },
+      "id": "c166"
+    },
+    {
+      "text": "明天上午两个小时笔录室2",
+      "source": "duration",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "morning",
+          "time": null
+        },
+        "duration": {
+          "minutes": 120
+        },
+        "room": "笔录室 2",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            2
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "prepared",
+        "date": "2026-08-10",
+        "start": "08:30",
+        "end": "10:30",
+        "duration": 120,
+        "room": "笔录室 2"
+      },
+      "id": "c167"
+    },
+    {
+      "text": "明天晚上19:00笔录室1半小时",
+      "source": "evening",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "evening",
+          "time": "19:00"
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "duration": [
+            4
+          ],
+          "room": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "clarify",
+        "date": "2026-08-10"
+      },
+      "id": "c168"
     }
   ]
 }
