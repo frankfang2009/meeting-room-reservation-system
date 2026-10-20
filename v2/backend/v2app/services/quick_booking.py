@@ -3,8 +3,9 @@
 每句话都走模型。本模块只做日期加减、工作时间与时长硬约束、本人历史补全
 和占位符回填。时段词只约束开始时间：上午 08:30–12:00，中午 11:30–13:30，
 下午 12:00–17:30，晚上 18:00–23:00。开始必须落在窗口和工作时间的交集里，
-结束可以越过时段窗口，不能越过工作时间。时段窗口和工作时间没有交集时不
-直接出卡片，只给出最近的合法选项；用户点选之后才准备。
+结束可以越过时段窗口，不能越过工作时间。用户说出的钟点、日期或时长一旦
+要被吸附、钳制或挪走，只给出最近的合法选项，不改写原话，也不发凭证。
+没说钟点时，开始时间取该时段在工作时间内的起点。用户点选之后才准备。
 当事人和案号只来自本句占位符或本人历史。事项不采用模型自由文本。
 功能默认关闭。
 """
@@ -25,7 +26,7 @@ from ..common import canonical_json, clean_text, local_now, minutes_to_time, new
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import locked_actor
-from .deid import DeidContext, Mention
+from .deid import PURPOSE_CATEGORIES, DeidContext, Mention
 from .model_intent import (
     FALLBACK_UNAVAILABLE,
     BookingIntent,
@@ -42,7 +43,7 @@ HORIZON_DAYS = 60
 _DURATION_CHOICES = (60, 120, "window")
 _GUIDE_TEXT = "改期、取消和查询请到「我的预约」里处理。"
 _COUNT_WORDS = {2: "两", 3: "三"}
-_BUILTIN_PURPOSES = ("询问笔录", "谈话笔录", "调解笔录")
+_BUILTIN_PURPOSES = PURPOSE_CATEGORIES
 # 开始时间窗口（含两端）。结束时间可以晚于窗口，不能晚于工作时间。
 _PERIOD_BOUNDS = {
     "morning": (8 * 60 + 30, 12 * 60),
@@ -110,24 +111,12 @@ def deid_context_for_user(db: sqlite3.Connection, user_id: str) -> DeidContext:
         ORDER BY sort_order, name
         """
     ).fetchall()
-    own_purposes = db.execute(
-        """
-        SELECT DISTINCT purpose FROM reservations
-        WHERE owner_user_id = ? AND status = 'active' AND purpose != ''
-        ORDER BY purpose
-        """,
-        (user_id,),
-    ).fetchall()
-    purposes: list[str] = []
-    for name in (*_BUILTIN_PURPOSES, *(row["purpose"] for row in own_purposes)):
-        if name not in purposes:
-            purposes.append(name)
     return DeidContext(
         party_names=tuple(row["party_name"] for row in parties),
         case_numbers=tuple(row["case_number"] for row in cases),
         directory_names=tuple(row["display_name"] for row in directory),
         room_names=tuple(row["name"] for row in rooms),
-        purpose_names=tuple(purposes),
+        purpose_names=tuple(_BUILTIN_PURPOSES),
     )
 
 
@@ -414,9 +403,10 @@ def _plan(
         state["duration"] = intent.duration_minutes
         state["durationExplicit"] = True
     else:
-        state["duration"] = _nearest_duration(intent.duration_minutes)
+        state["needsDurationChoice"] = True
+        state["statedDuration"] = intent.duration_minutes
+        state["duration"] = None
         state["durationExplicit"] = False
-        state["snapped"] = True
     if target is None or target < today or (target - today).days > HORIZON_DAYS:
         state["date"] = None
         return _finalize(db, user_id, state)
@@ -566,6 +556,8 @@ def _apply_prepare(
             state["durationMode"] = "fixed"
             state["ambiguousDuration"] = False
             state["durationExplicit"] = True
+            state["needsDurationChoice"] = False
+            state["statedDuration"] = None
         else:
             raise ApiError(
                 422,
@@ -658,6 +650,14 @@ def _finalize(db: sqlite3.Connection, user_id: str, state: dict[str, Any]) -> di
     if not state.get("date"):
         return _clarify(state, "这个日期不在可预约范围内。", options=[])
     settings = _system_settings(db)
+    if state.get("needsDurationChoice"):
+        return _clarify(
+            state,
+            "这段时长不在可预约范围内。",
+            options=[],
+            duration=True,
+            default_duration=int(_preferences(db, user_id)["default_duration"]),
+        )
     _constrain_start(state, settings)
     if state.get("needsPeriodChoice"):
         return _outside_clarify(db, state, settings, state.get("periodLabel") or "")
@@ -853,7 +853,11 @@ def _start_for(state: dict[str, Any], room: dict[str, Any], settings: sqlite3.Ro
 
 
 def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
-    """把开始时间收进时段窗口和工作时间。交不上时改到最近的合法开始。"""
+    """把开始时间收进时段窗口和工作时间。
+
+    用户说出的钟点如果要被吸附、钳制或挪走，只记下最近的合法开始，不改写
+    ``timeStart``。没说钟点时，开始时间取窗口和工作时间的交集起点。
+    """
 
     step = int(settings["slot_minutes"])
     work_start = time_to_minutes(settings["work_start"], field="workStart")
@@ -869,10 +873,14 @@ def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
     if state.get("date") == local_now().date().isoformat():
         legal_low = max(legal_low, _strictly_after_now(work_start, step))
     latest_fit = work_end - duration
+    stated = state.get("timeStart") if state.get("startExplicit") else None
     if legal_low > legal_high:
         state["periodMissed"] = True
         state["needsPeriodChoice"] = True
         state["startExplicit"] = False
+        if stated:
+            state["statedClock"] = stated
+            state["timeStart"] = None
         offered = _nearest_start_minutes(state, settings)
         state["offeredStart"] = minutes_to_time(offered) if offered is not None else None
         state["startLow"] = offered
@@ -885,25 +893,18 @@ def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
             snapped = (
                 legal_low if legal_low <= latest_fit else _align_down(latest_fit, work_start, step)
             )
-        state["timeStart"] = minutes_to_time(snapped)
-        state["startExplicit"] = False
-        state["snapped"] = True
-        state["periodMissed"] = True
-        state["startLow"] = snapped
-        state["startHigh"] = snapped
+        _offer_moved_start(state, snapped, stated)
         return
     legal_high = min(legal_high, latest_fit)
-    clock = state.get("timeStart")
-    if clock:
-        start = time_to_minutes(clock, field="start")
+    if stated:
+        start = time_to_minutes(stated, field="start")
         if start < legal_low or start > legal_high or (start - work_start) % step != 0:
             snapped = min(max(start, legal_low), legal_high)
             snapped = _align_down(snapped, work_start, step)
             if snapped < legal_low:
                 snapped = legal_low
-            state["timeStart"] = minutes_to_time(snapped)
-            state["startExplicit"] = False
-            state["snapped"] = True
+            _offer_moved_start(state, snapped, stated)
+            return
         state["startLow"] = legal_low
         state["startHigh"] = legal_high
         return
@@ -911,6 +912,20 @@ def _constrain_start(state: dict[str, Any], settings: sqlite3.Row) -> None:
     state["startExplicit"] = False
     state["startLow"] = legal_low
     state["startHigh"] = legal_high
+
+
+def _offer_moved_start(state: dict[str, Any], snapped: int, stated: str | None) -> None:
+    """记下最近的合法开始。原话留在 statedClock，不写进 timeStart。"""
+
+    state["needsPeriodChoice"] = True
+    state["periodMissed"] = True
+    state["startExplicit"] = False
+    state["snapped"] = False
+    state["statedClock"] = stated
+    state["timeStart"] = None
+    state["offeredStart"] = minutes_to_time(snapped)
+    state["startLow"] = snapped
+    state["startHigh"] = snapped
 
 
 def _align_down(value: int, origin: int, step: int) -> int:
@@ -941,7 +956,10 @@ def _outside_clarify(
     label: str,
 ) -> dict[str, Any]:
     hours = f"{settings['work_start']}–{settings['work_end']}"
-    if label:
+    clock = state.get("statedClock")
+    if clock:
+        text = f"{clock}不在可直接预约的时间里（{hours}）。"
+    elif label:
         text = f"{label}不在工作时间（{hours}）内。"
     else:
         text = f"这个时段不在工作时间（{hours}）内。"
@@ -981,9 +999,13 @@ def _nearest_options(
     state: dict[str, Any],
     settings: sqlite3.Row,
 ) -> list[dict[str, Any]]:
-    start = _nearest_start_minutes(state, settings)
-    if start is None:
-        return []
+    offered = state.get("offeredStart")
+    if isinstance(offered, str):
+        start = time_to_minutes(offered, field="start")
+    else:
+        start = _nearest_start_minutes(state, settings)
+        if start is None:
+            return []
     duration = state.get("duration")
     step = int(settings["slot_minutes"])
     maximum = int(settings["max_duration_minutes"])
@@ -1280,6 +1302,9 @@ def _blank_state() -> dict[str, Any]:
         "snapped": False,
         "periodMissed": False,
         "needsPeriodChoice": False,
+        "needsDurationChoice": False,
+        "statedClock": None,
+        "statedDuration": None,
         "periodChoiceAccepted": False,
         "offeredStart": None,
         "startLow": None,

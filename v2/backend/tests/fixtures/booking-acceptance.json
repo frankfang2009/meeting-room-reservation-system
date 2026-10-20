@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model. Rows c156 onward add colon clocks, structured dates, durations above 60 minutes, and out-of-hours clarification.",
+  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model. Rows c156 onward add colon clocks, structured dates, durations above 60 minutes, and out-of-hours clarification. Codex round 6 (2026-10-20): expectations for c043, c044, c050, c051, c055, c059, c071, c113, c118, c120, c152, c153, c154, and c155 changed from a prepared card to clarification. Those rows are evening periods; the approved spec says an empty intersection with working hours offers the nearest legal start and does not prepare a card. Recorded transcripts are unchanged. Other c001–c155 expectations were not edited. Rows c169 onward cover a stated clock that would otherwise be snapped, and a numeric-smuggling sentence that must not book the hidden digits.",
   "cases": [
     {
       "text": "帮我约明天下午一小时",
@@ -1777,12 +1777,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c043"
     },
@@ -1823,12 +1819,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-11",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-11"
       },
       "id": "c044"
     },
@@ -2060,12 +2052,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c050"
     },
@@ -2106,12 +2094,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-09",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-09"
       },
       "id": "c051"
     },
@@ -2291,12 +2275,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-14",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-14"
       },
       "id": "c055"
     },
@@ -2475,12 +2455,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-12",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-12"
       },
       "id": "c059"
     },
@@ -3014,12 +2990,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-15",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-15"
       },
       "id": "c071"
     },
@@ -4696,12 +4668,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-11",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-11"
       },
       "id": "c113"
     },
@@ -4927,12 +4895,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-12",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-12"
       },
       "id": "c118"
     },
@@ -5019,12 +4983,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-11",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-11"
       },
       "id": "c120"
     },
@@ -6366,12 +6326,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c152"
     },
@@ -6412,12 +6368,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "17:00",
-        "end": "17:30",
-        "duration": 30,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c153"
     },
@@ -6458,12 +6410,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 1"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c154"
     },
@@ -6504,12 +6452,8 @@
         "need_clarification": false
       },
       "expect": {
-        "kind": "prepared",
-        "date": "2026-08-10",
-        "start": "16:30",
-        "end": "17:30",
-        "duration": 60,
-        "room": "笔录室 2"
+        "kind": "clarify",
+        "date": "2026-08-10"
       },
       "id": "c155"
     },
@@ -7106,6 +7050,160 @@
         "date": "2026-08-10"
       },
       "id": "c168"
+    },
+    {
+      "text": "明天18:30笔录室1一小时",
+      "source": "clock",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "any",
+          "time": "18:30"
+        },
+        "duration": {
+          "minutes": 60
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "room": [
+            2
+          ],
+          "duration": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "clarify",
+        "date": "2026-08-10"
+      },
+      "id": "c169"
+    },
+    {
+      "text": "明天07:00笔录室1半小时",
+      "source": "clock",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "any",
+          "time": "07:00"
+        },
+        "duration": {
+          "minutes": 30
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "room": [
+            2
+          ],
+          "duration": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "clarify",
+        "date": "2026-08-10"
+      },
+      "id": "c170"
+    },
+    {
+      "text": "明天14:15笔录室1一小时",
+      "source": "clock",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [],
+        "need_clarification": false,
+        "day": {
+          "offset": 1
+        },
+        "start": {
+          "period": "any",
+          "time": "14:15"
+        },
+        "duration": {
+          "minutes": 60
+        },
+        "room": "笔录室 1",
+        "evidence": {
+          "day": [
+            0
+          ],
+          "start": [
+            1
+          ],
+          "room": [
+            2
+          ],
+          "duration": [
+            3
+          ]
+        }
+      },
+      "expect": {
+        "kind": "clarify",
+        "date": "2026-08-10"
+      },
+      "id": "c171"
+    },
+    {
+      "text": "13:38 12:34 5点6点7点",
+      "source": "smuggle",
+      "recorded": {
+        "intent": "book",
+        "purpose": null,
+        "refs": [],
+        "unknown": [],
+        "missing": [
+          "day"
+        ],
+        "need_clarification": false,
+        "day": null,
+        "start": {
+          "period": "any",
+          "time": null
+        },
+        "duration": {
+          "minutes": null
+        },
+        "room": null,
+        "evidence": {}
+      },
+      "expect": {
+        "kind": "clarify"
+      },
+      "id": "c172"
     }
   ]
 }

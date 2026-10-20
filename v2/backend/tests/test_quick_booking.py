@@ -932,7 +932,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertGreaterEqual(booking["start"], "08:30")
         self.assertLessEqual(booking["end"], "17:30")
 
-    def test_clock_before_its_period_moves_into_the_window(self) -> None:
+    def test_clock_before_its_period_clarifies_instead_of_moving(self) -> None:
         user, client, rooms = self.begin()
         room = next(item for item in rooms if item["name"] == "笔录室 1")
         provider, response = self.ask(
@@ -946,19 +946,73 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         body = response.get_json()
         self.assertEqual(response.status_code, 200, body)
         self.assertEqual(len(provider.calls), 1)
-        booking = body["reply"]["prepared"]["booking"]
-        self.assertEqual(booking["start"], "12:00")
-        self.assertEqual(booking["end"], "13:00")
-        self.assertGreaterEqual(booking["start"], "12:00")
-        self.assertLessEqual(booking["end"], "17:30")
+        reply = body["reply"]
+        self.assertEqual(reply["kind"], "clarify", body)
+        self.assertNotIn("prepared", reply)
+        self.assertNotIn("token", reply)
+        option = next(item for item in reply["options"] if item["roomId"] == room["id"])
+        self.assertEqual(option["windowStart"], "12:00")
+        self.assertEqual(option["windowEnd"], "13:00")
+        self.assertGreaterEqual(option["windowStart"], "08:30")
+        self.assertLessEqual(option["windowEnd"], "17:30")
+
+    def test_stated_clock_outside_hours_clarifies_without_a_token(self) -> None:
+        user, client, rooms = self.begin()
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        samples = (
+            ("明天18:30笔录室1一小时", "18:30", 60, "16:30", "17:30"),
+            ("明天07:00笔录室1半小时", "07:00", 30, "08:30", "09:00"),
+            ("明天14:15笔录室1一小时", "14:15", 60, "14:00", "15:00"),
+        )
+        for text, clock, duration, start, end in samples:
+            _provider, response = self.ask(
+                client,
+                user["id"],
+                text,
+                time={"part": "any", "start": clock, "end": None},
+                duration_minutes=duration,
+                room={"name": room["name"], "kind": None},
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, body)
+            reply = body["reply"]
+            self.assertEqual(reply["kind"], "clarify", (text, reply))
+            self.assertNotIn("prepared", reply)
+            self.assertNotIn("token", reply)
+            self.assertIn(clock, reply["text"])
+            option = next(item for item in reply["options"] if item["roomId"] == room["id"])
+            self.assertEqual(option["date"], "2026-08-10", text)
+            self.assertEqual(option["windowStart"], start, text)
+            self.assertEqual(option["windowEnd"], end, text)
+        picked = self.write(
+            "POST",
+            "/api/v1/quick-booking/prepare",
+            {
+                "draftId": body["conversation"]["id"],
+                "roomId": room["id"],
+                "purpose": "询问笔录",
+                "partyName": "孙某",
+                "caseNumber": "2026-087",
+            },
+            client=client,
+        )
+        prepared_body = picked.get_json()
+        self.assertEqual(picked.status_code, 200, prepared_body)
+        booking = prepared_body["reply"]["prepared"]["booking"]
+        self.assertEqual(booking["start"], "14:00")
+        self.assertEqual(booking["end"], "15:00")
+        self.assertEqual(booking["duration"], 60)
+        self.assertIn("token", prepared_body["reply"]["prepared"])
 
     def test_hard_constraints_reject_mutated_model_fields(self) -> None:
-        """S3：随便改模型的日期、开始和时长，也不能得到非法卡片。"""
+        """S3：说出的日期、钟点或时长被改动时不发凭证。"""
 
         import random
+        from datetime import date, timedelta
 
         user, client, rooms = self.begin()
         room = rooms[0]
+        today = date(2026, 8, 9)
         rng = random.Random(20261019)
         for _index in range(40):
             offset = rng.choice([-3, -1, 0, 1, 2, 80, 400])
@@ -990,23 +1044,35 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
             body = response.get_json()
             self.assertEqual(response.status_code, 200, body)
             reply = body["reply"]
-            if period == "evening":
-                self.assertNotEqual(reply["kind"], "prepared", body)
-                self.assertNotIn("token", reply)
+            stated_date = None
+            if 0 <= offset <= 60:
+                stated_date = (today + timedelta(days=offset)).isoformat()
+            prepared = reply["kind"] == "prepared"
+            if prepared and clock is not None:
+                prepared = reply["prepared"]["booking"]["start"] == clock
+            if prepared and minutes is not None:
+                prepared = reply["prepared"]["booking"]["duration"] == minutes
+            if prepared and stated_date is not None:
+                prepared = reply["prepared"]["booking"]["date"] == stated_date
+            if prepared and stated_date is None:
+                prepared = False
+            if not prepared:
+                self.assertNotIn("token", reply, body)
+                self.assertNotIn("prepared", reply, body)
                 for option in reply.get("options") or []:
                     if "windowStart" in option:
                         self.assertGreaterEqual(option["windowStart"], "08:30")
                         self.assertLessEqual(option["windowEnd"], "17:30")
                 continue
-            if reply["kind"] != "prepared":
-                self.assertNotIn("prepared", reply)
-                continue
             booking = reply["prepared"]["booking"]
+            self.assertEqual(booking["date"], stated_date)
+            if clock is not None:
+                self.assertEqual(booking["start"], clock)
+            if minutes is not None:
+                self.assertEqual(booking["duration"], minutes)
             self.assertGreaterEqual(booking["start"], "08:30")
             self.assertLessEqual(booking["end"], "17:30")
             self.assertIn(booking["duration"], {30, 60, 90, 120, 150, 180})
-            self.assertGreaterEqual(booking["date"], "2026-08-09")
-            self.assertLessEqual(booking["date"], "2026-10-08")
 
     def test_sensitive_repros_do_not_reach_provider_or_audit(self) -> None:
         user, client, _rooms = self.begin()
