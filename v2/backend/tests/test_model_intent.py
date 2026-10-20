@@ -192,8 +192,9 @@ class ModelIntentTests(_NoNetwork):
         self.assertIn("2026-10-19", system)
         self.assertIn("星期一", system)
         self.assertIn("09:30", system)
-        self.assertIn("08:30", system)
-        self.assertIn("17:30", system)
+        self.assertNotIn("08:30", system)
+        self.assertNotIn("17:30", system)
+        self.assertNotIn("工作时段", system)
         self.assertIn(ROOM, system)
         self.assertEqual(audits[0]["sentText"], masked.text)
         self.assertEqual(audits[0]["outcome"], "ok")
@@ -413,6 +414,73 @@ class ModelIntentTests(_NoNetwork):
         self.assertNotIn(PARTY, provider.calls[0][1].content)
         self.assertEqual(result.text, FALLBACK_UNAVAILABLE)
 
+    def test_field_values_must_sit_inside_the_cited_candidates(self) -> None:
+        clock = {"period": "any", "time": "14:15"}
+        samples = (
+            ("明天18:30", {"start": {"period": "any", "time": "16:30"}}, {"start": {"period": "any", "time": "18:30"}}),
+            ("明天14:15", {"start": {"period": "any", "time": "14:00"}}, {"start": clock}),
+            ("明天07:00", {"start": {"period": "any", "time": None}}, {"start": {"period": "any", "time": "07:00"}}),
+            (
+                "明天下午十点",
+                {"start": {"period": "any", "time": "12:00"}},
+                {"start": {"period": "afternoon", "time": "10:00"}},
+            ),
+            (
+                "明天14:15一小时",
+                {"day": {"offset": 2}, "start": clock, "duration": 120},
+                {"day": {"offset": 1}, "start": clock, "duration": 60},
+            ),
+        )
+        for sentence, wrong, right in samples:
+            encoded = deidentify(sentence, DeidContext())
+            with self.subTest(sentence=sentence):
+                self.assertTrue(self._parsed(encoded, **wrong).unbound)
+                self.assertFalse(self._parsed(encoded, **right).unbound)
+
+    def test_http_failure_still_writes_an_audit_row(self) -> None:
+        audits: list[dict] = []
+        provider = FakeProvider([ModelCallError("http_error")])
+        result = interpret_booking_sentence(
+            RAW,
+            context=CONTEXT,
+            settings=_settings(),
+            provider=provider,
+            now=NOW,
+            work_start="08:30",
+            work_end="17:30",
+            room_names=ROOMS,
+            record_audit=audits.append,
+        )
+        self.assertEqual(result.outcome, "http_error")
+        self.assertEqual(audits[0]["outcome"], "http_error")
+        self.assertEqual(audits[0]["sentText"], result.sent_text)
+        self.assertNotIn(PARTY, json.dumps(audits, ensure_ascii=False))
+
+    def _parsed(self, encoded, **overrides):
+        payload = _intent_for(encoded)
+        if "start" in overrides:
+            payload["start"] = overrides["start"]
+            payload["evidence"]["start"] = [
+                index
+                for index, token in enumerate(encoded.tokens)
+                if token.values and token.category in {"period", "clock"}
+            ]
+        if "duration" in overrides:
+            payload["duration"] = {"minutes": overrides["duration"]}
+            payload["evidence"]["duration"] = [
+                index
+                for index, token in enumerate(encoded.tokens)
+                if any(item.startswith("minutes:") for item in token.values)
+            ]
+        if "day" in overrides:
+            payload["day"] = overrides["day"]
+        return parse_booking_intent(
+            json.dumps(payload, ensure_ascii=False),
+            room_names=ROOMS,
+            purpose_names=PURPOSES,
+            tokens=encoded.tokens,
+        )
+
     def test_intent_module_does_not_import_the_http_client(self) -> None:
         source = Path(interpret_booking_sentence.__code__.co_filename).read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -506,6 +574,32 @@ class ModelProviderTests(_NoNetwork):
         self.assertEqual(caught.exception.outcome, "timeout")
         self.assertNotIn(KEY, str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
+
+    def test_truncated_http_bodies_become_audited_call_errors(self) -> None:
+        import http.client
+
+        for error in (
+            http.client.IncompleteRead(b"sk-secret"),
+            http.client.LineTooLong("header"),
+        ):
+            def explode(_request, timeout=None, raised=error):  # noqa: ARG001
+                raise raised
+
+            opener = _RecordingOpener(b"")
+            opener.open = explode  # type: ignore[method-assign]
+            with mock.patch("v2app.services.model_provider._opener", return_value=opener):
+                provider = DeepSeekProvider(
+                    api_key=KEY,
+                    base_url="https://api.deepseek.com/v1",
+                    model="deepseek-chat",
+                    timeout_seconds=10,
+                )
+                with self.assertRaises(ModelCallError) as caught:
+                    provider.complete((ChatMessage("user", "明天下午"),))
+            self.assertEqual(caught.exception.outcome, "http_error")
+            self.assertNotIn(KEY, str(caught.exception))
+            self.assertNotIn("sk-secret", str(caught.exception))
+            self.assertIsNone(caught.exception.__cause__)
 
     def test_redirects_are_refused_and_proxies_are_disabled(self) -> None:
         from urllib.request import build_opener

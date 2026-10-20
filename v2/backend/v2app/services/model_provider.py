@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -169,6 +170,8 @@ class DeepSeekProvider:
         except URLError as error:
             if isinstance(getattr(error, "reason", None), TimeoutError):
                 raise ModelCallError("timeout") from None
+            raise ModelCallError("http_error") from None
+        except (http.client.IncompleteRead, http.client.LineTooLong):
             raise ModelCallError("http_error") from None
         except OSError:
             raise ModelCallError("http_error") from None

@@ -1,7 +1,8 @@
 """把编码后的预约句交给模型，并只接受引用和证据。
 
-没有本地时间规则，也没有字面后检查。模型不输出当事人、案号或自由文本。
-日期加减和业务硬约束在编排层完成。功能关闭时不编码、不调用、不审计。
+词表词自己带候选值。本机只核对字段值是否落在被引用的候选里，不从原句另推时间。
+没有字面后检查。模型不输出当事人、案号或自由文本。日期加减和业务硬约束在编排层
+完成。功能关闭时不编码、不调用、不审计。
 """
 
 from __future__ import annotations
@@ -100,7 +101,8 @@ _SYSTEM_RULES = (
     'duration 是 {"minutes":整数或null}。room 和 purpose 只能是上下文列出的值或 null。\n'
     'refs 是 [{"ph":"P1","role":"被询问人|当事人|案号|其他"}]，ph 必须是本句出现过的占位符。\n'
     "evidence 把 day、start、duration、room、purpose 映射到用户消息词元下标，"
-    "而且这些词元的类别要和字段一致。看不懂的词放进 unknown。\n"
+    "而且这些词元的类别要和字段一致。字段值必须就是这些词的候选，不能改成别的钟点、"
+    "日期或时长。看不懂的词放进 unknown。\n"
     "missing 只能包含 day、start、duration、room、party、case、purpose。"
 )
 
@@ -148,6 +150,7 @@ class BookingIntent:
     unknown: tuple[str, ...]
     need_clarification: bool
     missing: tuple[str, ...]
+    unbound: bool = False
 
 
 @dataclass
@@ -177,6 +180,7 @@ def interpret_booking_sentence(
     data_dir: Path | None = None,
     environ: Mapping[str, str] | None = None,
     mentions: Sequence[Mention] | None = None,
+    prior: Mapping[str, str] | None = None,
 ) -> InterpretResult:
     """解析一句预约话。关闭时直接返回，不编码也不调用模型。"""
 
@@ -191,7 +195,7 @@ def interpret_booking_sentence(
         return InterpretResult(kind="disabled", text="", intent=None, outcome=None, sent_text=None)
 
     active_context = context if context is not None else DeidContext()
-    encoded = deidentify(text, active_context, mentions=mentions)
+    encoded = deidentify(text, active_context, prior=prior, mentions=mentions)
     counts = _placeholder_counts(encoded.mapping)
     if not encoded.confident:
         outcome = "blocked_invariant" if "invariant" in encoded.reasons else "skipped_uncertain"
@@ -433,6 +437,8 @@ def render_server_context(
     room_names: Sequence[str],
     purpose_names: Sequence[str] = (),
 ) -> str | None:
+    """工作时间只在本机校验配置，不写进提示词。"""
+
     if not isinstance(work_start, str) or not isinstance(work_end, str):
         return None
     if not _CLOCK_RE.fullmatch(work_start) or not _CLOCK_RE.fullmatch(work_end):
@@ -446,7 +452,7 @@ def render_server_context(
     weekday = _WEEKDAYS[now.weekday()]
     return (
         f"今天是{now:%Y-%m-%d}（{weekday}），当前时间{now:%H:%M}。"
-        f"工作时段{work_start}–{work_end}。可用房间：{room_line}。事项：{purpose_line}。"
+        f"可用房间：{room_line}。事项：{purpose_line}。"
     )
 
 
@@ -565,9 +571,18 @@ def _parse_booking_intent(
         purpose_set=purpose is not None,
     )
     unknown = _unknown(value["unknown"], tokens)
+    parsed_date = _date(value["day"])
+    unbound = not _values_bind(
+        tokens,
+        evidence,
+        date=parsed_date,
+        period=period,
+        clock=clock,
+        minutes=minutes,
+    )
     return BookingIntent(
         intent=intent,
-        date=_date(value["day"]),
+        date=parsed_date,
         period=period,
         time_start=clock,
         duration_minutes=minutes,
@@ -576,8 +591,9 @@ def _parse_booking_intent(
         refs=refs,
         evidence=evidence,
         unknown=unknown,
-        need_clarification=value["need_clarification"] or bool(unknown),
+        need_clarification=value["need_clarification"] or bool(unknown) or unbound,
         missing=_missing(value["missing"]),
+        unbound=unbound,
     )
 
 
@@ -630,6 +646,144 @@ def _require_evidence(
     for name, needed in required.items():
         if needed and not evidence.get(name):
             raise _SchemaError()
+
+
+_DAY_VALUE_KEYS = frozenset({"offset", "weekday", "week_offset", "month", "day"})
+_START_VALUE_KEYS = frozenset({"time", "minute", "period"})
+_DURATION_VALUE_KEYS = frozenset({"minutes"})
+
+
+def _values_bind(
+    tokens: Sequence[OutboundToken],
+    evidence: Mapping[str, tuple[int, ...]],
+    *,
+    date: IntentDate,
+    period: str,
+    clock: str | None,
+    minutes: int | None,
+) -> bool:
+    """带候选值的词元必须被对应字段引用，字段里的每个成分也必须有引用。"""
+
+    cited = {name: set(indexes) for name, indexes in evidence.items()}
+    grouped_by_field: dict[str, list[dict[str, frozenset[str]]]] = {
+        "day": [],
+        "start": [],
+        "duration": [],
+    }
+    for index, token in enumerate(tokens):
+        grouped = _grouped_values(token)
+        if not grouped:
+            continue
+        field_name = _field_for_value_keys(set(grouped))
+        if field_name is None or index not in cited.get(field_name, set()):
+            return False
+        grouped_by_field[field_name].append(grouped)
+    return (
+        _day_values_bind(date, grouped_by_field["day"])
+        and _start_values_bind(period, clock, grouped_by_field["start"])
+        and _duration_values_bind(minutes, grouped_by_field["duration"])
+    )
+
+
+def _grouped_values(token: OutboundToken) -> dict[str, frozenset[str]]:
+    grouped: dict[str, set[str]] = {}
+    for item in token.values:
+        if ":" not in item:
+            continue
+        key, raw = item.split(":", 1)
+        if key and raw:
+            grouped.setdefault(key, set()).add(raw)
+    return {key: frozenset(values) for key, values in grouped.items()}
+
+
+def _field_for_value_keys(keys: set[str]) -> str | None:
+    if keys & _DURATION_VALUE_KEYS:
+        return "duration"
+    if keys & _START_VALUE_KEYS:
+        return "start"
+    if keys & _DAY_VALUE_KEYS:
+        return "day"
+    return None
+
+
+def _day_values_bind(value: IntentDate, groups: Sequence[Mapping[str, frozenset[str]]]) -> bool:
+    components = _day_components(value)
+    covered: set[str] = set()
+    for grouped in groups:
+        for key, options in grouped.items():
+            if key not in _DAY_VALUE_KEYS or components.get(key) not in options:
+                return False
+            covered.add(key)
+    return covered == set(components)
+
+
+def _day_components(value: IntentDate) -> dict[str, str]:
+    if value.kind == "relative" and value.relative_days is not None:
+        return {"offset": str(value.relative_days)}
+    if value.kind == "week":
+        parts: dict[str, str] = {}
+        if value.week_offset is not None:
+            parts["week_offset"] = str(value.week_offset)
+        if value.weekday is not None:
+            parts["weekday"] = str(value.weekday)
+        return parts
+    if value.kind == "calendar":
+        parts = {}
+        if value.month is not None:
+            parts["month"] = str(value.month)
+        if value.day is not None:
+            parts["day"] = str(value.day)
+        return parts
+    return {}
+
+
+def _start_values_bind(
+    period: str,
+    clock: str | None,
+    groups: Sequence[Mapping[str, frozenset[str]]],
+) -> bool:
+    minute_groups = [grouped["minute"] for grouped in groups if "minute" in grouped]
+    time_groups = [grouped["time"] for grouped in groups if "time" in grouped]
+    period_groups = [grouped["period"] for grouped in groups if "period" in grouped]
+    if period == "any":
+        if period_groups:
+            return False
+    elif not period_groups or any(period not in options for options in period_groups):
+        return False
+    if clock is None:
+        return not time_groups and not minute_groups
+    hour, minute = clock.split(":")
+    waived = bool(minute_groups)
+    if any(minute not in options for options in minute_groups):
+        return False
+    if not time_groups:
+        return False
+    for options in time_groups:
+        if not _clock_in_options(hour, minute, options, minute_waived=waived):
+            return False
+    return True
+
+
+def _clock_in_options(
+    hour: str, minute: str, options: frozenset[str], *, minute_waived: bool
+) -> bool:
+    clock = f"{hour}:{minute}"
+    if clock in options:
+        return True
+    if not minute_waived:
+        return False
+    return any(candidate == f"{hour}:00" for candidate in options)
+
+
+def _duration_values_bind(
+    minutes: int | None, groups: Sequence[Mapping[str, frozenset[str]]]
+) -> bool:
+    if minutes is None:
+        return not groups
+    if not groups:
+        return False
+    expected = str(minutes)
+    return all(expected in grouped.get("minutes", frozenset()) for grouped in groups)
 
 
 def _refs(value: object, present: set[str]) -> tuple[RefBinding, ...]:
