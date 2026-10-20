@@ -16,12 +16,14 @@ from pathlib import Path
 
 from .audit import write_security_audit
 from .deid import (
+    PURPOSE_CATEGORIES,
     DeidContext,
     Mention,
     OutboundBlocked,
     OutboundToken,
     allowed_surface,
     deidentify,
+    release_outbound_payload,
 )
 from .model_provider import (
     ChatMessage,
@@ -91,9 +93,10 @@ _SYSTEM_RULES = (
     '{"month":1到12,"day":1到31} 或 null。不要输出公历日期。\n'
     "start.period 是 morning、noon、afternoon、evening、any 之一；"
     "start.time 是 HH:MM 或 null。时段只约束开始时间。\n"
-    "用户消息里的 HH:MM、YYYY-MM-DD、M/D、M-D 是钟点或日期词；"
-    "不超过 180 的 N分钟 和 N.N小时是时长词。day 引用日期词，"
-    "start.time 引用钟点词，duration.minutes 引用时长词。\n"
+    "用户消息里的 HH:MM（分钟只取 00、15、30、45）、YYYY-MM-DD、M/D、M-D 是钟点或日期词；"
+    "15 到 180 且按 15 分钟对齐的 N分钟 和 N.N小时是时长词。day 引用日期词，"
+    "start.time 引用钟点词，duration.minutes 引用时长词。"
+    "事项只能是上下文列出的类别。\n"
     'duration 是 {"minutes":整数或null}。room 和 purpose 只能是上下文列出的值或 null。\n'
     'refs 是 [{"ph":"P1","role":"被询问人|当事人|案号|其他"}]，ph 必须是本句出现过的占位符。\n'
     "evidence 把 day、start、duration、room、purpose 映射到用户消息词元下标，"
@@ -212,7 +215,7 @@ def interpret_booking_sentence(
         )
 
     rooms = clean_room_names(room_names)
-    purposes = clean_room_names(purpose_names)
+    purposes = outbound_purpose_names(purpose_names)
     context_text = render_server_context(
         now=now,
         work_start=work_start,
@@ -267,8 +270,33 @@ def interpret_booking_sentence(
             sent_text=None,
         )
 
-    messages = build_messages(masked_text=encoded.text, context_text=context_text)
     allowed = allowed_surface(active_context)
+    try:
+        messages = assemble_outbound_messages(
+            masked_text=encoded.text,
+            context_text=context_text,
+            allowed=allowed,
+        )
+    except OutboundBlocked:
+        _audit(
+            record_audit,
+            provider_name=active_settings.provider_name,
+            model=active_settings.model,
+            sent_text=None,
+            placeholder_counts=counts,
+            latency_ms=0,
+            outcome="blocked_invariant",
+        )
+        return InterpretResult(
+            kind="fallback",
+            text=FALLBACK_UNCERTAIN,
+            intent=None,
+            outcome="blocked_invariant",
+            sent_text=None,
+            mapping=encoded.mapping,
+            mention_roles=dict(encoded.mention_roles or {}),
+            tokens=encoded.tokens,
+        )
     started = time.perf_counter()
     try:
         content = guarded_complete(
@@ -276,6 +304,7 @@ def interpret_booking_sentence(
             messages,
             encoded_text=encoded.text,
             allowed=allowed,
+            system_prefix=_SYSTEM_RULES,
         )
     except OutboundBlocked:
         _audit(
@@ -370,12 +399,29 @@ def interpret_booking_sentence(
     )
 
 
+def assemble_outbound_messages(
+    *,
+    masked_text: str,
+    context_text: str,
+    allowed,
+) -> tuple[ChatMessage, ChatMessage]:
+    """唯一组包函数。固定规则是常量；上下文和用户句都要过整包闸门。"""
+
+    system = f"{_SYSTEM_RULES}\n{context_text}"
+    release_outbound_payload(system, masked_text, allowed, system_prefix=_SYSTEM_RULES)
+    return (
+        ChatMessage(role="system", content=system),
+        ChatMessage(role="user", content=masked_text),
+    )
+
+
 def build_messages(*, masked_text: str, context_text: str) -> tuple[ChatMessage, ChatMessage]:
     """系统消息是固定规则加服务器上下文；用户消息只有编码句。"""
 
-    return (
-        ChatMessage(role="system", content=f"{_SYSTEM_RULES}\n{context_text}"),
-        ChatMessage(role="user", content=masked_text),
+    return assemble_outbound_messages(
+        masked_text=masked_text,
+        context_text=context_text,
+        allowed=allowed_surface(None),
     )
 
 
@@ -394,7 +440,7 @@ def render_server_context(
     if work_start >= work_end:
         return None
     rooms = clean_room_names(room_names)
-    purposes = clean_room_names(purpose_names)
+    purposes = outbound_purpose_names(purpose_names)
     room_line = "、".join(rooms) if rooms else "（无）"
     purpose_line = "、".join(purposes) if purposes else "（无）"
     weekday = _WEEKDAYS[now.weekday()]
@@ -402,6 +448,12 @@ def render_server_context(
         f"今天是{now:%Y-%m-%d}（{weekday}），当前时间{now:%H:%M}。"
         f"工作时段{work_start}–{work_end}。可用房间：{room_line}。事项：{purpose_line}。"
     )
+
+
+def outbound_purpose_names(names: Sequence[str]) -> tuple[str, ...]:
+    """事项只留下代码里的类别。历史自由文本不进入出站上下文。"""
+
+    return tuple(name for name in clean_room_names(names) if name in PURPOSE_CATEGORIES)
 
 
 def clean_room_names(names: Sequence[str]) -> tuple[str, ...]:

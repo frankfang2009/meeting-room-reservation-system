@@ -18,7 +18,13 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler
 
 from tests.test_backend import BackendTestCase
 from v2app.db import get_db
-from v2app.services.deid import DeidContext, DeidResult, deidentify
+from v2app.services.deid import (
+    DeidContext,
+    DeidResult,
+    allowed_surface,
+    deidentify,
+    satisfies_outbound_invariant,
+)
 from v2app.services.model_intent import (
     FALLBACK_UNAVAILABLE,
     FALLBACK_UNCERTAIN,
@@ -193,6 +199,36 @@ class ModelIntentTests(_NoNetwork):
         self.assertEqual(audits[0]["outcome"], "ok")
         self.assertEqual(audits[0]["placeholderCounts"]["P"], len(masked.mapping))
         self.assertNotIn(PARTY, json.dumps(audits, ensure_ascii=False))
+
+    def test_history_purpose_text_stays_off_the_provider_payload(self) -> None:
+        secret = "询问孙某，电话13812345678，案号CASE-2026-087"
+        masked = deidentify(RAW, CONTEXT)
+        provider = FakeProvider([json.dumps(_intent_for(masked), ensure_ascii=False)])
+        result = interpret_booking_sentence(
+            RAW,
+            context=CONTEXT,
+            settings=_settings(),
+            provider=provider,
+            now=NOW,
+            work_start="08:30",
+            work_end="17:30",
+            room_names=ROOMS,
+            purpose_names=(*PURPOSES, secret),
+        )
+        self.assertEqual(result.kind, "intent", result.outcome)
+        payload = "\n".join(message.content for message in provider.calls[0])
+        self.assertNotIn(secret, payload)
+        self.assertNotIn("13812345678", payload)
+        self.assertNotIn("CASE-2026-087", payload)
+        self.assertIn("询问笔录", payload)
+        self.assertIn("谈话笔录", payload)
+        user = provider.calls[0][1].content
+        system = provider.calls[0][0].content
+        self.assertTrue(satisfies_outbound_invariant(user, allowed_surface(CONTEXT)))
+        for original in masked.mapping.values():
+            if len(original) >= 2:
+                self.assertNotIn(original, payload)
+        self.assertNotIn(secret, system)
 
     def test_unknown_name_is_a_placeholder_and_still_sent(self) -> None:
         raw = "明天下午找赵倩做笔录"

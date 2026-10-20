@@ -237,15 +237,24 @@ def guarded_complete(
     *,
     encoded_text: str,
     allowed: Iterable[str],
+    system_prefix: str,
 ) -> str:
-    """发 HTTP 之前的最后一道闸门。用户消息必须就是已经过 I1 的编码文本。"""
+    """发 HTTP 之前的最后一道闸门。系统提示和用户句都要过整包不变式。"""
 
-    from .deid import OutboundBlocked, release_outbound
+    from .deid import OutboundBlocked, release_outbound_payload
 
-    release_outbound(encoded_text, allowed)
+    system_messages = [message for message in messages if message.role == "system"]
     user_messages = [message for message in messages if message.role == "user"]
-    if len(user_messages) != 1 or user_messages[0].content != encoded_text:
+    if len(system_messages) != 1 or len(user_messages) != 1:
         raise OutboundBlocked()
+    if user_messages[0].content != encoded_text:
+        raise OutboundBlocked()
+    release_outbound_payload(
+        system_messages[0].content,
+        user_messages[0].content,
+        allowed,
+        system_prefix=system_prefix,
+    )
     return provider.complete(messages)
 
 
