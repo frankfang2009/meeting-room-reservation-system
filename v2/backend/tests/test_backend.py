@@ -265,7 +265,7 @@ class GenerationAndSetupTests(BackendTestCase):
         with closing(sqlite3.connect(self.database)) as db, db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
             self.assertEqual(meta["product_generation"], "2")
-            self.assertEqual(meta["schema_version"], "4")
+            self.assertEqual(meta["schema_version"], "5")
             self.assertEqual(meta["setup_complete"], "0")
             self.assertEqual(db.execute("SELECT COUNT(*) FROM users").fetchone()[0], 0)
             room_columns = {
@@ -330,7 +330,7 @@ class GenerationAndSetupTests(BackendTestCase):
         self.assertTrue(migrated.config["SYSTEM_READY"])
         with closing(sqlite3.connect(self.database)) as db:
             meta = dict(db.execute("SELECT key, value FROM app_meta"))
-            self.assertEqual(meta["schema_version"], "4")
+            self.assertEqual(meta["schema_version"], "5")
             self.assertEqual(
                 db.execute(
                     "SELECT party_name FROM reservations WHERE id = ?", (booking["id"],)
@@ -364,6 +364,7 @@ class GenerationAndSetupTests(BackendTestCase):
         self.assertFalse(db_module.migrate_schema_v1_to_v2(self.database))
         self.assertFalse(db_module.migrate_schema_v2_to_v3(self.database))
         self.assertFalse(db_module.migrate_schema_v3_to_v4(self.database))
+        self.assertFalse(db_module.migrate_schema_v4_to_v5(self.database))
 
     def test_schema_migration_failure_rolls_back_every_column_and_version(self):
         self.downgrade_schema_to_v1(self.database)

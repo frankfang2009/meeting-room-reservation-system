@@ -179,7 +179,9 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
     from .api.activity import bp as activity_bp
     from .api.core import bp as core_bp
     from .api.display import bp as display_bp
+    from .api.conversations import bp as conversations_bp
     from .api.preferences import bp as preferences_bp
+    from .api.quick_booking import bp as quick_booking_bp
     from .api.reports import bp as reports_bp
     from .api.handovers import bp as handovers_bp
     from .api.reminders import bp as reminders_bp
@@ -195,6 +197,8 @@ def create_app(test_config: Optional[dict[str, Any]] = None) -> Flask:
         preferences_bp,
         reminders_bp,
         handovers_bp,
+        conversations_bp,
+        quick_booking_bp,
         display_bp,
         system_bp,
     ):

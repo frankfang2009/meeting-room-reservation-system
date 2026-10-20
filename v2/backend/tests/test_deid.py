@@ -643,7 +643,9 @@ class DeidContractAmendmentTests(unittest.TestCase):
         self.assertNotIn("non-AI operational appointment product", design)
         self.assertIn("no voice input", design)
 
-        self.assertIn("本增量未暴露接口", api)
+        self.assertIn("FEATURE_DISABLED", api)
+        self.assertIn("对话预约未开启", api)
+        self.assertIn("不采用模型的 `purpose_hint`", api)
         self.assertIn("confident=false", api)
         self.assertIn("第一期没有语音", api)
         self.assertIn("services/deid.py", architecture)

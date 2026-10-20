@@ -304,6 +304,7 @@ def encode_preview(
     *,
     mentions: Sequence[Mention] | None = None,
     server_context: str | None = None,
+    prior: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """给将来的输入框用的同一编码器。不返回映射里的原文。
 
@@ -311,7 +312,7 @@ def encode_preview(
     上下文不是合法的服务器字段时，预览不带它。
     """
 
-    result = deidentify(text, context, mentions=mentions)
+    result = deidentify(text, context, prior=prior, mentions=mentions)
     local = 0
     shown: list[dict[str, object]] = []
     for token in result.tokens:
