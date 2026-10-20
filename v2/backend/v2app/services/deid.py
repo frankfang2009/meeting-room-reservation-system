@@ -1,47 +1,79 @@
 """本机出站编码器（一句话预约）。
 
 外发决定是白名单，不是姓名或案号识别。归一化之后只做正向最长匹配：
-词表里的预约词、调用方交来的房间名和事项名、紧邻时间单位的数字、冒号钟点
+词表里的预约词、调用方交来的房间名和事项类别、紧邻时间单位的数字、冒号钟点
 和结构化日期可以留下；其余连续片段换成 ``[P1]``、``[P2]``。同一片段在一次
 编码里共用一个占位符。
 
-数字预算分两笔，避免把电话拆成好几段时间放出去：
+数字预算是同一笔，覆盖每一种会带出数值的词元（ASCII、全角、中文数字），
+不论它是钟点、``N点``、``N号``、日期、时长还是数字单位。一条消息最多：
 
-- 数字单位（``14点``、``90分钟``）每条消息最多 8 个数字字符。1–2 位且值在
-  0–60 时可以挨着时间单位；3 位及以上仍然遮盖，唯一例外是 ``分钟`` 且整数值
-  在 61–180（业务时长上限）。``1.5小时`` 这类一位小数的小时数，折算后不超过
-  180 分钟也可以留下。
-- 冒号钟点（``HH:MM``，小时 0–23，分钟必须是 00–59）和结构化日期
-  （``YYYY-MM-DD``、``M/D``、``M-D``，月 1–12，日 1–31；四位年份只允许出现在
-  完整的 ``YYYY-MM-DD`` 里）另计，最多 1 个日期、2 个钟点、合计 12 个数字字符。
-  ``13:81``、``6:7``、``14:00:30``、``10/28/2026`` 这种不合格或不完整的串整段遮盖。
+- 1 个日期表达（``YYYY-MM-DD``、``M/D``、``M-D``，或 ``N月`` 再接一个 ``N日``
+  / ``N号``）。月 1–12，日 1–31。四位年份只允许出现在完整的 ``YYYY-MM-DD`` 里。
+- 2 个时刻（``HH:MM``，或 ``N点``、``N点半``、``N点N分``）。小时 0–23。
+  分钟只允许 00、15、30、45。预约格子是 30 分钟，00 和 30 可以直接落槽；
+  15 和 45 是用户会写的刻钟，本机看见后必须澄清，不能当成任意两位分钟。
+  不采用 5 的倍数：05、10、20 这类值不落在 30 分钟格子上，却能多藏一对数字。
+- 1 个时长。分钟数必须是 15 的倍数，并且在 15–180 之间（业务上限 180）。
+  ``90分钟``、``120分钟``、``1.5小时`` 可以留下；``200分钟``、``3.5小时`` 不行。
+- 1 个 ``N号``，只当作日（1–31）。
+- 1 个房间序号，而且必须是本次启用房间已经公开的号，不能是任意数字。
+- 上述词元合计最多 16 个数字字符。中文数字按它表示的十进制位数计
+  （``五`` 算 1 位，``十五`` 算 2 位），不再是零成本。
 
-不变式 I1：每个外发词元要么在词表（含本次房间名、事项名和上述合法数字）里，
-要么是占位符。``release_outbound`` 是发 HTTP 之前要再验一次的闸门。映射只
-留在本机，审计不记原文。
+``13:38``、``12:34``、``6:7``、``13:81``、``14:00:30`` 不合格。超出个数的
+``5点6点7点`` 或 ``一号三号八号`` 只留下额度内的第一段，其余是占位符。
+
+能留下来的信息量约 25 比特：日期 ``log2(12×31)``，两个刻钟
+``2×log2(24×4)``，一个 15 分钟对齐的时长 ``log2(12)``。手机号大约 33 比特，
+身份证号大约 60 比特，带法院代字的案号更长。这条通道装不下一整串电话、
+证件号或案号。见 :func:`numeric_capacity_bits`。
+
+不变式 I1：每个外发词元要么在词表（含本次房间名、事项类别和上述合法数字）里，
+要么是占位符，并且没有超出上面的额度。``release_outbound`` 复验单条文本。
+``release_outbound_payload`` 复验整包：固定系统提示是常量，每段动态文字
+（服务器上下文和用户编码句）都要过闸门。映射只留在本机，审计不记原文。
 
 本模块只使用标准库，不联网，也不读取数据库。案号、当事人、目录姓名、房间名
-和事项名全部由调用方按现行权限放进 :class:`DeidContext`。已知姓名和案号按
-整段精确匹配收成占位符，供 ``@`` / ``#`` 引用回填；它们不是词表词。
+全部由调用方按现行权限放进 :class:`DeidContext`。事项只接受代码里的类别，
+不接受历史里的自由文本。已知姓名和案号按整段精确匹配收成占位符。
 
-残余风险：完全由词表词拼成的名字（如「周五」）会以词表词离开本机。单字姓氏
-不进词表，所以姓氏本身不会作为单字放行。阿拉伯-印度数字、泰文数字和故意
-交错的编码不在本词表的归一化范围内。
+残余风险（负责人 2026-10-20 已确认）：完全由词表词拼成的名字（如「周五」，
+或「高明天」里的「明天」）会以这些词离开本机。预约词和这种名字无法区分，
+``@`` 引用可以避开；单字姓氏不进词表，所以姓本身不会作为单字放行。
+阿拉伯-印度数字、泰文数字和故意交错的编码不在本词表的归一化范围内。
 """
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from typing import Iterable, Mapping, Sequence
 
 MAX_SOURCE_CHARS = 500
-MAX_RELEASED_DIGITS = 8
-MAX_STRUCTURED_DIGITS = 12
+MAX_NUMERIC_DIGITS = 16
+MAX_RELEASED_DIGITS = MAX_NUMERIC_DIGITS
+MAX_STRUCTURED_DIGITS = MAX_NUMERIC_DIGITS
 MAX_CLOCK_TOKENS = 2
+MAX_TIME_EXPRESSIONS = 2
 MAX_DATE_TOKENS = 1
+MAX_DATE_EXPRESSIONS = 1
+MAX_DURATION_TOKENS = 1
+MAX_DAY_NUMBERS = 1
+MAX_ROOM_ORDINALS = 1
 MAX_DURATION_MINUTES = 180
+ALLOWED_MINUTES = frozenset({0, 15, 30, 45})
+PURPOSE_CATEGORIES = (
+    "询问笔录",
+    "谈话笔录",
+    "调解笔录",
+    "会见",
+    "谈话",
+    "开会",
+)
 
 _SURNAME_TEXT = (
     "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
@@ -88,7 +120,7 @@ _PURPOSE_TEXT = "询问笔录 谈话笔录 调解笔录"
 _FUNCTION_TEXT = """
 那个 这个 这些 那些 还是 一下 帮我 左右 之前 之后 以后 以前 案号
 都可以 具体 几点 随便 差不多 大概 尽量 最好 有空 就行 空的
-什么 怎么 哪里 一起 然后 如果 或者 麻烦 谢谢 再约 一次 两个 三个 一个
+什么 怎么 哪里 一起 然后 如果 或者 麻烦 谢谢 再约 一次
 给我 请帮 帮我约 帮我订 使用 开始 结束 改到 要用 个人
 """
 _PUNCT_TEXT = "， 。 、 ； ！ ？ , . ! ? …"
@@ -96,10 +128,26 @@ _SINGLE_WANTED = (
     "的了是在要与到去用请把被从对给就也再不没会能为个做约看帮找让很吗吧呀呢啊订留改换空"
 )
 
-_UNITS = ("点钟", "分钟", "小时", "钟头", "点半", "点", "时", "分", "号", "日", "月", "天", "周")
+_UNITS = ("点钟", "分钟", "小时", "钟头", "点半", "点", "时", "分", "号", "日", "月")
+_TIME_LEXICON = frozenset(
+    """
+一点 两点 三点 四点 五点 六点 七点 八点 九点 十点 十一点 十二点
+一点半 两点半 三点半 四点半 五点半 六点半 七点半 八点半 九点半 十点半
+十一点半 十二点半
+三十分 十五分 四十五分
+""".split()
+)
+_DURATION_LEXICON = frozenset(
+    """
+半小时 半个小时 半个钟头 一个小时 两个小时 三个小时 一个半小时 两个半小时
+一小时 两小时 三小时 一钟头 两钟头 一个钟头 两个钟头 个把小时
+三十分钟 十五分钟 四十五分钟 一刻钟 三刻钟
+半个 一刻 三刻
+""".split()
+)
 _CN_DIGIT = "零一二三四五六七八九"
 _PLACEHOLDER_RE = re.compile(r"^\[P([1-9]\d{0,2})\]$")
-_CLOCK_TOKEN_RE = re.compile(r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+_CLOCK_TOKEN_RE = re.compile(r"^(?:[01]?\d|2[0-3]):(?:00|15|30|45)$")
 _DECIMAL_HOUR_RE = re.compile(r"^(\d{1,2}\.\d)(小时|钟头)$")
 
 
@@ -253,8 +301,13 @@ def encode_preview(
     context: DeidContext | None = None,
     *,
     mentions: Sequence[Mention] | None = None,
+    server_context: str | None = None,
 ) -> dict[str, object]:
-    """给将来的输入框用的同一编码器。不返回映射里的原文。"""
+    """给将来的输入框用的同一编码器。不返回映射里的原文。
+
+    ``outbound`` 是会离开本机的全部动态文字：服务器上下文（如果有）和编码句。
+    上下文不是合法的服务器字段时，预览不带它。
+    """
 
     result = deidentify(text, context, mentions=mentions)
     local = 0
@@ -264,16 +317,25 @@ def encode_preview(
         if kept:
             local += 1
         shown.append({"text": token.text, "local": kept})
+    dynamic = [result.text]
+    if server_context:
+        try:
+            dynamic.insert(0, validate_server_context(server_context))
+        except OutboundBlocked:
+            dynamic = [""]
+            result = DeidResult(text="", mapping={}, confident=False, reasons=["invariant"])
+    outbound = "\n".join(part for part in dynamic if part)
     return {
         "text": result.text,
+        "outbound": outbound,
         "localCount": local,
         "tokens": shown,
-        "confident": result.confident,
+        "confident": result.confident and bool(result.text or not text.strip()),
     }
 
 
 def allowed_surface(context: DeidContext | None = None) -> frozenset[str]:
-    """闸门认可的表面形式：固定词表、本次房间变体、本次事项名。"""
+    """闸门认可的表面形式：固定词表、本次房间变体、代码里的事项类别。"""
 
     words = set(LEXICON)
     if context is None:
@@ -281,7 +343,7 @@ def allowed_surface(context: DeidContext | None = None) -> frozenset[str]:
     for name in context.room_names:
         words.update(room_forms(name))
     for name in context.purpose_names:
-        if name and not (len(name) == 1 and name in SURNAMES):
+        if name in PURPOSE_CATEGORIES:
             words.add(name)
     return frozenset(words)
 
@@ -301,7 +363,7 @@ def room_forms(name: str) -> set[str]:
 
 
 def satisfies_outbound_invariant(text: str, allowed: Iterable[str]) -> bool:
-    """I1：词元在词表、合法数字或占位符里，并且两笔数字预算都没超。"""
+    """I1：词元在词表、合法数字或占位符里，并且统一数字额度没超。"""
 
     if not isinstance(text, str) or not text.strip():
         return False
@@ -309,51 +371,127 @@ def satisfies_outbound_invariant(text: str, allowed: Iterable[str]) -> bool:
     tokens = text.split(" ")
     if any(not token for token in tokens):
         return False
-    numbers = 0
-    structured = 0
-    clocks = 0
-    dates = 0
+    budget = _fresh_budget()
+    room_numbers = _room_numbers_from_allowed(allowed_set)
+    previous_was_month = False
     for token in tokens:
         if _PLACEHOLDER_RE.fullmatch(token):
+            previous_was_month = False
             continue
-        if token in allowed_set:
-            if _static_digit_run(token):
-                return False
-            # 房间名里的数字是管理员配置的公开名称，不计入用户句子的数字上限。
-            continue
-        digits = sum(char.isdigit() for char in token)
-        if _clock_token(token):
-            clocks += 1
-            structured += digits
-            continue
-        if _date_token(token):
-            dates += 1
-            structured += digits
-            continue
-        if _number_value(token) is not None:
-            numbers += digits
-            continue
-        return False
-    return (
-        numbers <= MAX_RELEASED_DIGITS
-        and structured <= MAX_STRUCTURED_DIGITS
-        and clocks <= MAX_CLOCK_TOKENS
-        and dates <= MAX_DATE_TOKENS
-    )
+        slot = _outbound_slot(token, room_numbers)
+        if slot is None:
+            if token in allowed_set and not _static_digit_run(token):
+                previous_was_month = False
+                continue
+            return False
+        kind, digits = slot
+        if not _fits(budget, kind, token, digits, previous_was_month=previous_was_month):
+            return False
+        _charge(budget, kind, token, digits, previous_was_month=previous_was_month)
+        previous_was_month = kind == "date-month"
+    return True
 
 
 def is_grammar_token(token: str) -> bool:
-    """闸门会放行的数字词：钟点、日期或数字单位。"""
+    """闸门会放行的数字词：钟点、日期、时长或数字单位。"""
 
-    return _clock_token(token) or _date_token(token) or _number_value(token) is not None
+    return _outbound_slot(token, set(range(1, 100))) is not None
 
 
 def release_outbound(text: str, allowed: Iterable[str]) -> str:
-    """唯一出站闸门。不满足 I1 就不把文本交还给调用方去发 HTTP。"""
+    """单条文本的出站闸门。不满足 I1 就不把文本交还给调用方去发 HTTP。"""
 
     if not satisfies_outbound_invariant(text, allowed):
         raise OutboundBlocked()
     return text
+
+
+def release_outbound_payload(
+    system: str,
+    user: str,
+    allowed: Iterable[str],
+    *,
+    system_prefix: str,
+) -> None:
+    """整包闸门。系统提示必须是审过的常量，动态上下文和用户句分别复验。"""
+
+    if not isinstance(system, str) or not isinstance(user, str) or not isinstance(system_prefix, str):
+        raise OutboundBlocked()
+    prefix = system_prefix + "\n"
+    if not system.startswith(prefix):
+        raise OutboundBlocked()
+    validate_server_context(system[len(prefix) :])
+    release_outbound(user, allowed)
+
+
+def validate_server_context(text: str) -> str:
+    """服务器上下文只含日期、钟点、启用房间和事项类别。自由文本过不了。"""
+
+    if not isinstance(text, str):
+        raise OutboundBlocked()
+    matched = _SERVER_CONTEXT_RE.fullmatch(text)
+    if matched is None:
+        raise OutboundBlocked()
+    year, month, day = (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+    try:
+        found = date(year, month, day)
+    except ValueError as error:
+        raise OutboundBlocked() from error
+    if _WEEKDAY_LABELS[found.weekday()] != matched.group(4):
+        raise OutboundBlocked()
+    for clock in (matched.group(5), matched.group(6), matched.group(7)):
+        if _SERVER_CLOCK_RE.fullmatch(clock) is None:
+            raise OutboundBlocked()
+    if matched.group(6) >= matched.group(7):
+        raise OutboundBlocked()
+    rooms = matched.group(8)
+    if rooms != "（无）":
+        for room in rooms.split("、"):
+            if not room or len(room) > 80 or any(char in room for char in "\n\r"):
+                raise OutboundBlocked()
+    purposes = matched.group(9)
+    if purposes != "（无）":
+        for purpose in purposes.split("、"):
+            if purpose not in PURPOSE_CATEGORIES:
+                raise OutboundBlocked()
+    return text
+
+
+def numeric_capacity_bits() -> float:
+    """一条消息里用户还能决定的数字信息量，单位是比特。
+
+    日期是 12×31，两个时刻各是 24×4（分钟只取 00/15/30/45），时长是 15 到 180
+    的 15 分钟倍数，共 12 档。房间序号只能复述已经公开的房间号，不另计。
+    四位年份必须和月日组成真实日期，不是独立的 0000–9999。
+    """
+
+    date_space = 12 * 31
+    time_space = 24 * len(ALLOWED_MINUTES)
+    duration_space = len(range(15, MAX_DURATION_MINUTES + 1, 15))
+    return (
+        math.log2(date_space)
+        + MAX_TIME_EXPRESSIONS * math.log2(time_space)
+        + math.log2(duration_space)
+    )
+
+
+def released_number_digits(text: str, allowed: Iterable[str] | None = None) -> str:
+    """按词元顺序抽出数字通道里的十进制数字，用来证明电话拼不回去。"""
+
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    allowed_set = set() if allowed is None else set(allowed)
+    room_numbers = _room_numbers_from_allowed(allowed_set)
+    parts: list[str] = []
+    for token in text.split(" "):
+        if not token or _PLACEHOLDER_RE.fullmatch(token):
+            continue
+        if token in allowed_set and _outbound_slot(token, room_numbers) is None:
+            continue
+        digits = _digit_string(token)
+        if digits:
+            parts.append(digits)
+    return "".join(parts)
 
 
 def lexicon_categories() -> Mapping[str, str]:
@@ -407,14 +545,15 @@ def _scan(
         for form in room_forms(name):
             rooms.append((form, "room"))
     rooms.sort(key=lambda item: len(item[0]), reverse=True)
-    purposes = [(name, "purpose") for name in context.purpose_names if name]
+    purposes = [(name, "purpose") for name in context.purpose_names if name in PURPOSE_CATEGORIES]
     purposes.sort(key=lambda item: len(item[0]), reverse=True)
     entities = _entities(context)
     mention_list = [
         item for item in mentions if isinstance(item, Mention) and item.start < item.end
     ]
     pieces: list[dict[str, object]] = []
-    budget = {"numbers": 0, "structured": 0, "clocks": 0, "dates": 0}
+    budget = _fresh_budget()
+    room_numbers = _room_numbers_from_forms(rooms)
     index = 0
     limit = len(normalized)
     while index < limit:
@@ -453,7 +592,9 @@ def _scan(
             )
             index = end
             continue
-        match = _longest(normalized, index, rooms, purposes, entities, budget)
+        match = _longest(
+            normalized, index, rooms, purposes, entities, budget, room_numbers
+        )
         if match is None:
             pieces.append(
                 {
@@ -503,7 +644,98 @@ def _pull_marks(normalized: str, index: int) -> int:
     return start
 
 
-_EMITTED_CATEGORY = {"structured-clock": "clock", "structured-date": "day"}
+_EMITTED_CATEGORY = {
+    "structured-clock": "clock",
+    "structured-date": "day",
+    "time": "clock",
+    "date-month": "day",
+    "date-day": "day",
+    "room-ordinal": "room",
+}
+_ORDINAL_RE = re.compile(r"^(\d{1,2})号(?:房间|会议室)$")
+_WEEKDAY_LABELS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+_SERVER_CLOCK_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+_SERVER_CONTEXT_RE = re.compile(
+    r"^今天是(\d{4})-(\d{2})-(\d{2})（(星期[一二三四五六日])），"
+    r"当前时间(\d{2}:\d{2})。工作时段(\d{2}:\d{2})–(\d{2}:\d{2})。"
+    r"可用房间：(.*)。事项：(.*)。$"
+)
+_LEXICON_CANON = {
+    "一点": "1",
+    "两点": "2",
+    "三点": "3",
+    "四点": "4",
+    "五点": "5",
+    "六点": "6",
+    "七点": "7",
+    "八点": "8",
+    "九点": "9",
+    "十点": "10",
+    "十一点": "11",
+    "十二点": "12",
+    "一点半": "130",
+    "两点半": "230",
+    "三点半": "330",
+    "四点半": "430",
+    "五点半": "530",
+    "六点半": "630",
+    "七点半": "730",
+    "八点半": "830",
+    "九点半": "930",
+    "十点半": "1030",
+    "十一点半": "1130",
+    "十二点半": "1230",
+    "三十分": "30",
+    "十五分": "15",
+    "四十五分": "45",
+    "半小时": "30",
+    "半个小时": "30",
+    "半个钟头": "30",
+    "一个小时": "60",
+    "一小时": "60",
+    "一钟头": "60",
+    "一个钟头": "60",
+    "个把小时": "60",
+    "一个半小时": "90",
+    "三十分钟": "30",
+    "十五分钟": "15",
+    "四十五分钟": "45",
+    "一刻钟": "15",
+    "三刻钟": "45",
+    "半个": "30",
+    "一刻": "15",
+    "三刻": "45",
+    "两个小时": "120",
+    "两小时": "120",
+    "两钟头": "120",
+    "两个钟头": "120",
+    "两个半小时": "150",
+    "三个小时": "180",
+    "三小时": "180",
+}
+
+
+def _fresh_budget() -> dict[str, int]:
+    return {
+        "digits": 0,
+        "times": 0,
+        "dates": 0,
+        "durations": 0,
+        "day_numbers": 0,
+        "ordinals": 0,
+        "date_open": 0,
+    }
+
+
+def _lexicon_slot(word: str) -> tuple[str, int] | None:
+    canon = _LEXICON_CANON.get(word)
+    if canon is None:
+        return None
+    if word in _DURATION_LEXICON:
+        return ("duration", len(canon))
+    if word in _TIME_LEXICON:
+        return ("time", len(canon))
+    return None
 
 
 def _longest(
@@ -513,12 +745,17 @@ def _longest(
     purposes: list[tuple[str, str]],
     entities: list[tuple[str, str]],
     budget: dict[str, int],
+    room_numbers: set[int],
 ) -> tuple[int, int, str, str, str] | None:
     candidates: list[tuple[int, int, str, str, str]] = []
     for word, category in _BY_FIRST.get(text[index], ()):
-        if text.startswith(word, index):
-            candidates.append((len(word), 1, "lex", word, category))
-            break
+        if not text.startswith(word, index):
+            continue
+        slot = _lexicon_slot(word)
+        if slot is not None and not _fits(budget, slot[0], word, slot[1]):
+            continue
+        candidates.append((len(word), 1, "lex", word, category))
+        break
     for word, category in rooms:
         if text.startswith(word, index):
             candidates.append((len(word), 1, "lex", word, category))
@@ -528,16 +765,21 @@ def _longest(
             candidates.append((len(word), 1, "lex", word, category))
             break
     clock = _match_clock_at(text, index)
-    if clock is not None and _fits(budget, "structured-clock", clock):
+    if clock is not None and _fits(budget, "time", clock, sum(char.isdigit() for char in clock)):
         candidates.append((len(clock), 0, "lex", clock, "structured-clock"))
     date = _match_date_at(text, index)
-    if date is not None and _fits(budget, "structured-date", date):
+    if date is not None and _fits(budget, "date", date, sum(char.isdigit() for char in date)):
         candidates.append((len(date), 0, "lex", date, "structured-date"))
     numbered = _clock_at(text, index)
     if numbered is not None:
-        surface, category = numbered
-        if _fits(budget, category, surface):
+        surface, category, digits = numbered
+        if _fits(budget, category, surface, digits):
             candidates.append((len(surface), 0, "lex", surface, category))
+    ordinal = _ordinal_at(text, index, room_numbers)
+    if ordinal is not None and _fits(
+        budget, "room-ordinal", ordinal, sum(char.isdigit() for char in ordinal)
+    ):
+        candidates.append((len(ordinal), 0, "lex", ordinal, "room-ordinal"))
     for surface, kind in entities:
         if surface and text.startswith(surface, index):
             candidates.append((len(surface), 2, "entity", surface, kind))
@@ -547,63 +789,242 @@ def _longest(
     return max(candidates, key=lambda item: (item[0], item[1]))
 
 
-def _fits(budget: dict[str, int], category: str, surface: str) -> bool:
-    digits = sum(char.isdigit() for char in surface)
-    if category == "structured-clock":
-        return (
-            budget["clocks"] + 1 <= MAX_CLOCK_TOKENS
-            and budget["structured"] + digits <= MAX_STRUCTURED_DIGITS
-        )
-    if category == "structured-date":
-        return (
-            budget["dates"] + 1 <= MAX_DATE_TOKENS
-            and budget["structured"] + digits <= MAX_STRUCTURED_DIGITS
-        )
-    if category in {"clock", "duration"}:
-        return budget["numbers"] + digits <= MAX_RELEASED_DIGITS
+def _fits(
+    budget: dict[str, int],
+    category: str,
+    surface: str,
+    digits: int | None = None,
+    *,
+    previous_was_month: bool | None = None,
+) -> bool:
+    kind, cost = _slot_of(category, surface, digits)
+    if budget["digits"] + cost > MAX_NUMERIC_DIGITS:
+        return False
+    open_month = budget["date_open"] == 1 if previous_was_month is None else previous_was_month
+    if kind == "time":
+        return budget["times"] + 1 <= MAX_TIME_EXPRESSIONS
+    if kind == "date":
+        return budget["dates"] + 1 <= MAX_DATE_EXPRESSIONS
+    if kind == "date-month":
+        return budget["dates"] + 1 <= MAX_DATE_EXPRESSIONS
+    if kind == "date-day":
+        if surface.endswith("号") and budget["day_numbers"] + 1 > MAX_DAY_NUMBERS:
+            return False
+        if open_month:
+            return True
+        return budget["dates"] + 1 <= MAX_DATE_EXPRESSIONS
+    if kind == "duration":
+        return budget["durations"] + 1 <= MAX_DURATION_TOKENS
+    if kind == "room-ordinal":
+        return budget["ordinals"] + 1 <= MAX_ROOM_ORDINALS
     return True
 
 
-def _charge(budget: dict[str, int], category: str, surface: str) -> None:
-    digits = sum(char.isdigit() for char in surface)
-    if category == "structured-clock":
-        budget["clocks"] += 1
-        budget["structured"] += digits
-    elif category == "structured-date":
+def _charge(
+    budget: dict[str, int],
+    category: str,
+    surface: str,
+    digits: int | None = None,
+    *,
+    previous_was_month: bool | None = None,
+) -> None:
+    kind, cost = _slot_of(category, surface, digits)
+    open_month = budget["date_open"] == 1 if previous_was_month is None else previous_was_month
+    if kind == "time":
+        budget["times"] += 1
+    elif kind in {"date", "date-month"}:
         budget["dates"] += 1
-        budget["structured"] += digits
-    elif category in {"clock", "duration"}:
-        budget["numbers"] += digits
+    elif kind == "date-day":
+        if not open_month:
+            budget["dates"] += 1
+        if surface.endswith("号"):
+            budget["day_numbers"] += 1
+    elif kind == "duration":
+        budget["durations"] += 1
+    elif kind == "room-ordinal":
+        budget["ordinals"] += 1
+    if kind in {"time", "date", "date-month", "date-day", "duration", "room-ordinal"}:
+        budget["digits"] += cost
+    budget["date_open"] = 1 if kind == "date-month" else 0
 
 
-def _clock_at(text: str, index: int) -> tuple[str, str] | None:
+def _slot_of(category: str, surface: str, digits: int | None) -> tuple[str, int]:
+    lex = _lexicon_slot(surface)
+    if lex is not None:
+        return lex
+    kind = {
+        "structured-clock": "time",
+        "structured-date": "date",
+    }.get(category, category)
+    if digits is None:
+        digits = sum(char.isdigit() for char in surface)
+        if digits == 0:
+            parsed = _classify_number_token(surface)
+            if parsed is not None:
+                return parsed
+    return kind, digits
+
+
+def _clock_at(text: str, index: int) -> tuple[str, str, int] | None:
     decimal = _decimal_at(text, index)
     if decimal is not None:
-        return decimal, "duration"
+        return decimal, "duration", sum(char.isdigit() for char in decimal)
     span = _digit_span(text, index)
     if span is not None:
         number = int(text[index:span])
-        length = span - index
-        unit = _unit_at(text, span)
-        if unit is not None:
-            surface = text[index : span + len(unit)]
-            if length <= 2 and number <= 60:
-                return surface, "clock"
-            if (
-                unit == "分钟"
-                and length <= 3
-                and 61 <= number <= MAX_DURATION_MINUTES
-                and not (length >= 3 and number < 100)
-            ):
-                return surface, "duration"
-    for surface, _value in _CN_FORMS:
-        if not text.startswith(surface, index):
+        classified = _classify_unit(text, span, number, text[index:span])
+        if classified is not None:
+            return classified
+    for head, value in _CN_FORMS:
+        if not text.startswith(head, index):
             continue
-        unit = _unit_at(text, index + len(surface))
-        if unit is None:
-            continue
-        return text[index : index + len(surface) + len(unit)], "clock"
+        classified = _classify_unit(text, index + len(head), value, head)
+        if classified is not None:
+            return classified
     return None
+
+
+def _classify_unit(text: str, unit_index: int, number: int, head: str) -> tuple[str, str, int] | None:
+    """从数字或中文数字后面的单位判断这是时刻、日期还是时长。"""
+
+    if text.startswith("点半", unit_index) and _hour_ok(number, head):
+        surface = head + "点半"
+        return surface, "time", _value_width(number) + 2
+    unit = _unit_at(text, unit_index)
+    if unit is None:
+        return None
+    surface = head + unit
+    if unit in {"点", "时", "点钟"} and _hour_ok(number, head):
+        return surface, "time", _value_width(number)
+    if unit == "分" and number in ALLOWED_MINUTES and _plain_width(number, head, limit=2):
+        return surface, "time", _value_width(number)
+    if unit == "分钟" and _duration_value_ok(number, head):
+        return surface, "duration", _value_width(number)
+    if unit in {"小时", "钟头"} and _plain_width(number, head, limit=2):
+        minutes = number * 60
+        if minutes in _duration_values():
+            return surface, "duration", _value_width(minutes)
+    if unit == "月" and 1 <= number <= 12 and _plain_width(number, head, limit=2):
+        return surface, "date-month", _value_width(number)
+    if unit in {"日", "号"} and 1 <= number <= 31 and _plain_width(number, head, limit=2):
+        return surface, "date-day", _value_width(number)
+    return None
+
+
+def _hour_ok(number: int, head: str) -> bool:
+    return 0 <= number <= 23 and _plain_width(number, head, limit=2)
+
+
+def _plain_width(number: int, head: str, *, limit: int) -> bool:
+    if any(char.isdigit() for char in head):
+        return head.isdigit() and len(head) == len(str(number)) and len(head) <= limit
+    return True
+
+
+def _value_width(number: int) -> int:
+    return len(str(number))
+
+
+def _duration_values() -> set[int]:
+    return set(range(15, MAX_DURATION_MINUTES + 1, 15))
+
+
+def _duration_value_ok(number: int, head: str) -> bool:
+    if number not in _duration_values():
+        return False
+    if any(char.isdigit() for char in head):
+        return head.isdigit() and len(head) == len(str(number)) and len(head) <= 3
+    return True
+
+
+def _ordinal_at(text: str, index: int, room_numbers: set[int]) -> str | None:
+    if not room_numbers or (index > 0 and text[index - 1].isdigit()):
+        return None
+    end = index
+    while end < len(text) and text[end].isdigit():
+        end += 1
+    width = end - index
+    if width < 1 or width > 2:
+        return None
+    number = int(text[index:end])
+    if number not in room_numbers or len(str(number)) != width:
+        return None
+    for suffix in ("号房间", "号会议室"):
+        if text.startswith(suffix, end):
+            return text[index : end + len(suffix)]
+    return None
+
+
+def _room_numbers_from_forms(rooms: list[tuple[str, str]]) -> set[int]:
+    return _room_numbers_from_allowed(word for word, _category in rooms)
+
+
+def _room_numbers_from_allowed(allowed: Iterable[str]) -> set[int]:
+    numbers: set[int] = set()
+    for token in allowed:
+        compact = token.replace(" ", "")
+        matched = re.fullmatch(r"(.+?)(\d+)", compact)
+        if matched is None:
+            matched = re.fullmatch(r"(\d+)号.+", compact)
+            if matched is None:
+                continue
+            numbers.add(int(matched.group(1)))
+            continue
+        numbers.add(int(matched.group(2)))
+    return numbers
+
+
+def _outbound_slot(token: str, room_numbers: set[int]) -> tuple[str, int] | None:
+    lex = _lexicon_slot(token)
+    if lex is not None:
+        return lex
+    if _clock_token(token):
+        return ("time", sum(char.isdigit() for char in token))
+    if _date_token(token):
+        return ("date", sum(char.isdigit() for char in token))
+    ordinal = _ORDINAL_RE.fullmatch(token)
+    if ordinal is not None and int(ordinal.group(1)) in room_numbers:
+        return ("room-ordinal", sum(char.isdigit() for char in token))
+    return _classify_number_token(token)
+
+
+def _classify_number_token(token: str) -> tuple[str, int] | None:
+    if _clock_token(token) or _date_token(token):
+        return None
+    decimal = _decimal_minutes(token)
+    if decimal is not None:
+        return ("duration", sum(char.isdigit() for char in token))
+    for head, value in _CN_FORMS:
+        if token.startswith(head) and len(token) > len(head):
+            classified = _classify_unit(token, len(head), value, head)
+            if classified is not None and classified[0] == token:
+                return classified[1], classified[2]
+    if token[:1].isdigit():
+        end = 0
+        while end < len(token) and token[end].isdigit():
+            end += 1
+        if end == 0:
+            return None
+        classified = _classify_unit(token, end, int(token[:end]), token[:end])
+        if classified is not None and classified[0] == token:
+            return classified[1], classified[2]
+    return None
+
+
+def _digit_string(token: str) -> str:
+    canon = _LEXICON_CANON.get(token)
+    if canon is not None:
+        return canon
+    digits = "".join(char for char in token if char.isdigit())
+    if digits:
+        return digits
+    parsed = _classify_number_token(token)
+    if parsed is None:
+        return ""
+    for head, value in _CN_FORMS:
+        if token.startswith(head):
+            return str(value) if not token.endswith("点半") else f"{value}30"
+    return ""
 
 
 def _masked_decimal(text: str, index: int) -> int | None:
@@ -682,7 +1103,8 @@ def _match_clock_at(text: str, index: int) -> str | None:
     if minute_end - minute != 2 or (minute_end < len(text) and text[minute_end] == ":"):
         return None
     hour = int(text[index:end])
-    if hour > 23 or int(text[minute:minute_end]) > 59:
+    minute_value = int(text[minute:minute_end])
+    if hour > 23 or minute_value not in ALLOWED_MINUTES:
         return None
     return text[index:minute_end]
 
@@ -875,7 +1297,7 @@ def _decimal_minutes(token: str) -> int | None:
     if minutes <= 0 or minutes > MAX_DURATION_MINUTES:
         return None
     rounded = round(minutes)
-    if abs(minutes - rounded) > 1e-6:
+    if abs(minutes - rounded) > 1e-6 or rounded not in _duration_values():
         return None
     return int(rounded)
 

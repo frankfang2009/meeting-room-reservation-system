@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import re
 import socket
@@ -17,6 +18,7 @@ from unittest import mock
 from tests.test_backend import BackendTestCase
 from v2app.services.deid import (
     MAX_RELEASED_DIGITS,
+    PURPOSE_CATEGORIES,
     SURNAMES,
     DeidContext,
     Mention,
@@ -26,8 +28,11 @@ from v2app.services.deid import (
     encode_preview,
     lexicon_categories,
     is_grammar_token,
+    numeric_capacity_bits,
     release_outbound,
+    released_number_digits,
     satisfies_outbound_invariant,
+    validate_server_context,
 )
 
 
@@ -250,7 +255,7 @@ class EncoderInvariantTests(unittest.TestCase):
         both = deidentify("2026-10-28 14:00 15:30", context)
         self.assertIn("2026-10-28", both.text)
         self.assertIn("14:00", both.text)
-        self.assertNotIn("15:30", both.text)
+        self.assertIn("15:30", both.text)
         self.assertNotIn("14:00:30", deidentify("14:00:30", context).text)
         self.assertNotIn("10/28", deidentify("10/28/2026", context).text)
         self.assertNotIn("1123", deidentify("2026-1123 那个", context).text)
@@ -294,13 +299,13 @@ class EncoderInvariantTests(unittest.TestCase):
             release_outbound("200分钟", allowed)
         shared = deidentify("2026-10-28 1点2点3点4点", context)
         self.assertIn("2026-10-28", shared.text)
-        self.assertIn("4点", shared.text)
-        number_digits = sum(
-            sum(char.isdigit() for char in token)
-            for token in shared.text.split(" ")
-            if token[:1].isdigit() and ":" not in token and "-" not in token
+        self.assertIn("1点", shared.text)
+        self.assertIn("2点", shared.text)
+        self.assertNotIn("4点", shared.text)
+        self.assertLessEqual(
+            sum(char.isdigit() for char in released_number_digits(shared.text, allowed)),
+            MAX_RELEASED_DIGITS,
         )
-        self.assertLessEqual(number_digits, MAX_RELEASED_DIGITS)
 
     def test_separator_splits_cannot_smuggle_a_phone(self) -> None:
         context = DeidContext()
@@ -328,7 +333,72 @@ class EncoderInvariantTests(unittest.TestCase):
             self.assertLessEqual(len(clocks), 2, text)
             self.assertLessEqual(len(dates), 1, text)
             structured = sum(sum(char.isdigit() for char in token) for token in clocks + dates)
-            self.assertLessEqual(structured, 12, text)
+            self.assertLessEqual(structured, MAX_RELEASED_DIGITS, text)
+            self.assertNotIn(phone, released_number_digits(result.text, allowed), text)
+
+    def test_mixed_script_numbers_cannot_rebuild_a_long_secret(self) -> None:
+        """Codex round 6：电话不能拆成钟点、点号和中文数字再拼回去。"""
+
+        context = DeidContext(room_names=("笔录室 1", "笔录室 2"))
+        allowed = allowed_surface(context)
+        repros = (
+            ("13:38 12:34 5点6点7点", "13381234567"),
+            ("一号三号八号一号二号三号四号五号六号七号八号", "13812345678"),
+            ("１３：３８　１２：３４　５点６点７点", "13381234567"),
+        )
+        for text, secret in repros:
+            result = deidentify(text, context)
+            self.assertTrue(result.confident, (text, result.reasons))
+            digits = released_number_digits(result.text, allowed)
+            self.assertNotIn(secret, digits, (text, result.text, digits))
+            self.assertLess(len(digits), len(secret), (text, digits))
+            self.assertTrue(satisfies_outbound_invariant(result.text, allowed), result.text)
+        self.assertLess(numeric_capacity_bits(), math.log2(10**11))
+        self.assertLess(numeric_capacity_bits(), 33)
+        cn = "零一二三四五六七八九"
+        spoken = str.maketrans("0123456789", "洞幺两三四五六七八九")
+        rng = random.Random(20261020)
+        for _ in range(10_000):
+            width = rng.randint(7, 18)
+            secret = "".join(rng.choice("0123456789") for _ in range(width))
+            if secret[0] == "0":
+                secret = "1" + secret[1:]
+            mode = rng.randrange(6)
+            if mode == 0:
+                text = ":".join(secret[i : i + 2] for i in range(0, len(secret), 2))
+            elif mode == 1:
+                text = "".join(f"{digit}点" for digit in secret)
+            elif mode == 2:
+                text = "".join(f"{cn[int(digit)]}号" for digit in secret)
+            elif mode == 3:
+                text = "/".join(secret[i : i + 2] for i in range(0, len(secret), 2))
+            elif mode == 4:
+                text = secret.translate(spoken)
+            else:
+                text = "".join(
+                    digit.translate(str.maketrans("0123456789", "０１２３４５６７８９"))
+                    + rng.choice(("点", "号", "分", ":", "-", "/"))
+                    for digit in secret
+                )
+            result = deidentify("明天" + text, context)
+            self.assertTrue(result.confident, (text, result.reasons))
+            digits = released_number_digits(result.text, allowed)
+            self.assertNotIn(secret, digits, (text, result.text, digits))
+            self.assertTrue(satisfies_outbound_invariant(result.text, allowed), (text, result.text))
+
+    def test_preview_returns_the_dynamic_outbound_payload(self) -> None:
+        context = DeidContext(room_names=("笔录室 1",), purpose_names=PURPOSE_CATEGORIES)
+        sentence = "明天14:00笔录室1一小时"
+        server = "今天是2026-08-09（星期日），当前时间08:00。工作时段08:30–17:30。可用房间：笔录室 1。事项：询问笔录、谈话。"
+        preview = encode_preview(sentence, context, server_context=server)
+        self.assertEqual(preview["text"], deidentify(sentence, context).text)
+        self.assertIn(preview["text"], preview["outbound"])
+        self.assertIn("询问笔录", preview["outbound"])
+        self.assertEqual(validate_server_context(server), server)
+        leaked = "今天是2026-08-09（星期日），当前时间08:00。工作时段08:30–17:30。可用房间：笔录室 1。事项：询问孙某，电话13812345678。"
+        blocked = encode_preview(sentence, context, server_context=leaked)
+        self.assertFalse(blocked["confident"])
+        self.assertNotIn("13812345678", blocked["outbound"])
 
     def test_gate_blocks_a_forged_name_and_accepts_encoder_output(self) -> None:
         allowed = allowed_surface(DeidContext(room_names=("笔录室 1",)))
