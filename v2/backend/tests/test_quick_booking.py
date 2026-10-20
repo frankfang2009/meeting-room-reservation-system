@@ -92,7 +92,7 @@ def _script(encoded, **overrides) -> dict:
         day = {"month": date_body["month"], "day": date_body["day"]}
     else:
         day = None
-    day_evidence = indexes("day")[:1]
+    day_evidence = indexes("day")
     if day is not None and not day_evidence:
         day = None
 
@@ -109,7 +109,21 @@ def _script(encoded, **overrides) -> dict:
         "any": "any",
     }.get(part, "any")
     clock = (legacy["time"] or {}).get("start")
-    start_evidence = indexes("period", "clock")[:1]
+    start_evidence: list[int] = []
+    if period != "any":
+        start_evidence.extend(
+            index
+            for index, token in enumerate(tokens)
+            if token.category == "period"
+            or any(item.startswith("period:") for item in token.values)
+        )
+    if clock:
+        start_evidence.extend(
+            index
+            for index, token in enumerate(tokens)
+            if token.category == "clock"
+            and any(item.startswith("time:") or item.startswith("minute:") for item in token.values)
+        )
     if (period != "any" or clock) and not start_evidence:
         period = "any"
         clock = None
@@ -117,21 +131,25 @@ def _script(encoded, **overrides) -> dict:
         start_evidence = []
 
     duration = legacy["duration_minutes"]
-    duration_evidence = indexes("duration", "clock")[:1]
+    duration_evidence = [
+        index
+        for index, token in enumerate(tokens)
+        if any(item.startswith("minutes:") for item in token.values) or token.category == "duration"
+    ]
     if duration is not None and not duration_evidence:
         duration = None
 
     room_body = legacy.get("room")
     room_name = room_body.get("name") if isinstance(room_body, dict) else None
-    room_evidence = indexes("room")[:1]
+    room_evidence = indexes("room")
     if room_name and not room_evidence:
         room_name = None
 
     evidence: dict[str, list[int]] = {}
     if day is not None and day_evidence:
-        evidence["day"] = day_evidence
+        evidence["day"] = list(dict.fromkeys(day_evidence))
     if start_evidence and (period != "any" or clock):
-        evidence["start"] = start_evidence
+        evidence["start"] = list(dict.fromkeys(start_evidence))
     if duration is not None and duration_evidence:
         evidence["duration"] = duration_evidence
     if room_name and room_evidence:
@@ -170,6 +188,52 @@ def _script(encoded, **overrides) -> dict:
         "unknown": [],
         "missing": missing,
         "need_clarification": bool(legacy["need_clarification"]),
+    }
+
+
+def _citing(encoded, *, day, start, minutes, room) -> dict:
+    """证据指向这句里的时间词，字段值由调用方给定，用来制造对不上的稿。"""
+
+    tokens = encoded.tokens
+    evidence: dict[str, list[int]] = {}
+    day_indexes = [
+        index for index, token in enumerate(tokens) if token.category == "day" and token.values
+    ]
+    start_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if token.category in {"period", "clock"}
+        and token.values
+        and not any(item.startswith("minutes:") for item in token.values)
+    ]
+    duration_indexes = [
+        index
+        for index, token in enumerate(tokens)
+        if any(item.startswith("minutes:") for item in token.values)
+    ]
+    room_indexes = [index for index, token in enumerate(tokens) if token.category == "room"]
+    if day is not None and day_indexes:
+        evidence["day"] = day_indexes
+    if start_indexes and (start["period"] != "any" or start["time"] is not None or True):
+        evidence["start"] = start_indexes
+    if minutes is not None and duration_indexes:
+        evidence["duration"] = duration_indexes
+    if room and room_indexes:
+        evidence["room"] = room_indexes
+    if not evidence.get("start"):
+        evidence.pop("start", None)
+    return {
+        "intent": "book",
+        "day": day,
+        "start": start,
+        "duration": {"minutes": minutes},
+        "room": room,
+        "purpose": None,
+        "refs": [],
+        "evidence": evidence,
+        "unknown": [],
+        "missing": [],
+        "need_clarification": False,
     }
 
 
@@ -284,6 +348,188 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         self.assertIs(self.bootstrap()["permissions"]["useConversation"], False)
         self.assertEqual(self.client.get("/api/v1/conversations").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/admin/conversation-settings").status_code, 404)
+        preview = self.write("POST", "/api/v1/conversations/preview", {"text": "明天下午"})
+        self.assertEqual(preview.status_code, 403, preview.get_json())
+        self.assertEqual(preview.get_json()["error"]["code"], "FEATURE_DISABLED")
+
+    def test_mutated_model_values_clarify_without_a_token(self) -> None:
+        user, client, _rooms = self.begin()
+        samples = (
+            ("明天18:30笔录室1一小时", {"period": "any", "time": "16:30"}, {"offset": 1}, 60),
+            ("明天14:15笔录室1一小时", {"period": "any", "time": "14:00"}, {"offset": 1}, 60),
+            ("明天07:00笔录室1", {"period": "any", "time": None}, {"offset": 1}, None),
+            ("明天下午十点笔录室1", {"period": "any", "time": "12:00"}, {"offset": 1}, None),
+            ("明天14:15一小时笔录室1", {"period": "any", "time": "14:15"}, {"offset": 2}, 120),
+        )
+        for sentence, start, day, minutes in samples:
+            with self.app.app_context():
+                encoded = deidentify(sentence, deid_context_for_user(get_db(), user["id"]))
+            payload = _citing(encoded, day=day, start=start, minutes=minutes, room="笔录室 1")
+            provider = FakeProvider([json.dumps(payload, ensure_ascii=False)])
+            self.enable(provider)
+            response = self.write(
+                "POST",
+                "/api/v1/conversations/new/messages",
+                {"text": sentence},
+                client=client,
+            )
+            body = response.get_json()
+            self.assertEqual(response.status_code, 200, (sentence, body))
+            self.assertEqual(body["reply"]["kind"], "clarify", (sentence, body["reply"]))
+            self.assertNotIn("prepared", body["reply"])
+            self.assertIn("spans", body["reply"])
+            self.assertIn("options", body["reply"])
+
+    def test_preview_shares_the_send_limit_and_mention_offsets(self) -> None:
+        _user, client, _rooms = self.begin()
+        self.enable(FakeProvider(["{}"]))
+        response = self.write(
+            "POST",
+            "/api/v1/conversations/preview",
+            {
+                "text": "  明天下午",
+                "mentions": [{"start": 2, "end": 4, "kind": "party", "value": "孙某"}],
+            },
+            client=client,
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertTrue(body["text"].startswith("[P1]"))
+        self.assertIn("下午", body["text"])
+        self.assertNotIn("孙某", json.dumps(body, ensure_ascii=False))
+        self.assertNotIn("工作时段", body["outbound"])
+        self.assertEqual(self.client.get("/api/v1/conversations/preview").status_code, 404)
+
+    def test_placeholders_stay_stable_and_follow_ups_do_not_keep_the_card(self) -> None:
+        user, client, _rooms = self.begin()
+        first = "明天约孙某"
+        second = "后天约钱某，孙某"
+        with self.app.app_context():
+            context = deid_context_for_user(get_db(), user["id"])
+            first_encoded = deidentify(first, context)
+            second_encoded = deidentify(second, context)
+        provider = FakeProvider(
+            [
+                json.dumps(_script(first_encoded), ensure_ascii=False),
+                json.dumps(
+                    _citing(
+                        second_encoded,
+                        day={"offset": 2},
+                        start={"period": "any", "time": None},
+                        minutes=None,
+                        room=None,
+                    ),
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+        self.enable(provider)
+        opened = self.write(
+            "POST", "/api/v1/conversations/new/messages", {"text": first}, client=client
+        )
+        self.assertEqual(opened.status_code, 200, opened.get_json())
+        conversation_id = opened.get_json()["conversation"]["id"]
+        follow = self.write(
+            "POST",
+            f"/api/v1/conversations/{conversation_id}/messages",
+            {"text": second},
+            client=client,
+        )
+        body = follow.get_json()
+        self.assertEqual(follow.status_code, 200, body)
+        sent = provider.calls[1][1].content
+        self.assertIn("[P2]", sent)
+        self.assertIn("[P1]", sent)
+        self.assertLess(sent.index("[P2]"), sent.index("[P1]"))
+        prepared = body["reply"].get("prepared", {}).get("booking", {})
+        self.assertNotEqual(prepared.get("date"), "2026-08-10")
+
+    def test_admin_enable_requires_notice_and_purges_stale_drafts(self) -> None:
+        self.setup_system()
+        self.login()
+        refused = self.write("PUT", "/api/v1/admin/conversation", {"enabled": True})
+        self.assertEqual(refused.status_code, 422, refused.get_json())
+        self.assertIn("externalNoticeAccepted", refused.get_json()["error"]["fields"])
+        accepted = self.write(
+            "PUT",
+            "/api/v1/admin/conversation",
+            {"enabled": True, "externalNoticeAccepted": True, "retentionDays": 30},
+        )
+        saved = accepted.get_json()
+        self.assertEqual(accepted.status_code, 200, saved)
+        self.assertTrue(saved["enabled"])
+        self.assertEqual(saved["mode"], "external")
+        self.assertTrue(saved["externalNoticeAcceptedAt"])
+        with self.app.app_context():
+            db = get_db()
+            admin_id = db.execute("SELECT id FROM users WHERE username = 'admin'").fetchone()["id"]
+            db.execute(
+                """
+                INSERT INTO conversations (id, owner_user_id, title, draft_json, updated_at)
+                VALUES ('old-draft', ?, '旧', '{"partyName":"孙某"}', '2020-01-01T00:00:00.000Z')
+                """,
+                (admin_id,),
+            )
+            db.execute(
+                """
+                INSERT INTO prepared_bookings (
+                    id, token_hash, owner_user_id, session_version, conversation_id,
+                    payload_json, expires_at, created_at
+                ) VALUES ('old-token', 'hash-old', ?, 1, 'old-draft', '{}',
+                          '2020-01-02T00:00:00.000Z', '2020-01-01T00:00:00.000Z')
+                """,
+                (admin_id,),
+            )
+            db.commit()
+        again = self.write(
+            "PUT",
+            "/api/v1/admin/conversation",
+            {"enabled": True, "externalNoticeAccepted": True},
+        )
+        self.assertEqual(again.status_code, 200, again.get_json())
+        with self.app.app_context():
+            db = get_db()
+            draft = db.execute(
+                "SELECT draft_json FROM conversations WHERE id = 'old-draft'"
+            ).fetchone()
+            leftover = db.execute(
+                "SELECT id FROM prepared_bookings WHERE id = 'old-token'"
+            ).fetchone()
+        self.assertEqual(draft["draft_json"], "{}")
+        self.assertIsNone(leftover)
+
+    def test_fallback_prefills_the_latest_unended_booking(self) -> None:
+        user, client, rooms = self.begin()
+        room = next(item for item in rooms if item["name"] == "笔录室 1")
+        self.write(
+            "POST",
+            "/api/v1/reservations",
+            self.booking_payload(
+                room["id"],
+                date="2026-08-09",
+                start="10:00",
+                partyName=OWN_PARTY,
+                caseNumber=OWN_CASE,
+                purpose=OWN_PURPOSE,
+            ),
+            client=client,
+        )
+        self.enable(FakeProvider(["{}"]))
+        response = self.write(
+            "POST",
+            "/api/v1/conversations/new/messages",
+            {"text": "明天约一下"},
+            client=client,
+        )
+        body = response.get_json()
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual(body["reply"]["kind"], "fallback")
+        prefill = body["reply"]["formPrefill"]
+        self.assertEqual(prefill["roomId"], room["id"])
+        self.assertEqual(prefill["duration"], 60)
+        self.assertEqual(prefill["partyName"], OWN_PARTY)
+        self.assertEqual(prefill["caseNumber"], OWN_CASE)
+        self.assertEqual(prefill["purpose"], OWN_PURPOSE)
 
     def test_happy_path_prefers_the_most_used_room_and_own_history(self) -> None:
         user, client, rooms = self.begin()
@@ -631,7 +877,7 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         _provider, response = self.ask(
             client,
             user["id"],
-            "明天上午做笔录",
+            "下周一上午做笔录",
             date={"week_offset": 1, "weekday": 1},
             time={"part": "morning", "start": None, "end": None},
             duration_minutes=None,
@@ -1192,6 +1438,8 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
         cases = payload["cases"]
         self.assertGreaterEqual(len(cases), 150)
         matched = 0
+        one_shot_hits = 0
+        prepared_cases = 0
         mismatches: list[str] = []
         for case in cases:
             provider = FakeProvider([json.dumps(case["recorded"], ensure_ascii=False)])
@@ -1219,6 +1467,8 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
                     if len(original) >= 2:
                         self.assertNotIn(original, sent, case["id"])
             expect = case["expect"]
+            if expect["kind"] == "prepared":
+                prepared_cases += 1
             ok = reply["kind"] == expect["kind"]
             if ok and expect["kind"] == "prepared":
                 booking = reply["prepared"]["booking"]
@@ -1242,17 +1492,24 @@ class QuickBookingTests(_NoNetwork, BackendTestCase):
                         ok = False
             if ok:
                 matched += 1
+                if expect["kind"] == "prepared":
+                    one_shot_hits += 1
             elif len(mismatches) < 12:
                 got = reply.get("prepared", {}).get("booking", {})
                 mismatches.append(
                     f"{case['id']} {case['text']} expect={expect} got={reply['kind']} {got}"
                 )
         ratio = matched / len(cases)
+        one_shot_ratio = one_shot_hits / prepared_cases if prepared_cases else 0
         # Q 用假模型回放录制稿，衡量的是本机编排是否按稿还原卡片，不是 DeepSeek 的理解率。
         print(f"Q={matched}/{len(cases)} ({ratio:.1%}) fake-provider replay")
+        print(
+            f"one-shot cards={one_shot_hits}/{prepared_cases} ({one_shot_ratio:.1%}) "
+            "benign prepared"
+        )
         for line in mismatches:
             print(line)
-        self.assertGreaterEqual(ratio, 0.5)
+        self.assertGreaterEqual(ratio, 0.9)
 
     def test_v4_database_gains_disabled_quick_booking_tables(self) -> None:
         self.setup_system()

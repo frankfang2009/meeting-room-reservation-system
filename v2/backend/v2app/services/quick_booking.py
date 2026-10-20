@@ -1,13 +1,14 @@
 """把模型给出的引用编排成可确认的草稿。
 
-每句话都走模型。本模块只做日期加减、工作时间与时长硬约束、本人历史补全
-和占位符回填。时段词只约束开始时间：上午 08:30–12:00，中午 11:30–13:30，
-下午 12:00–17:30，晚上 18:00–23:00。开始必须落在窗口和工作时间的交集里，
-结束可以越过时段窗口，不能越过工作时间。用户说出的钟点、日期或时长一旦
-要被吸附、钳制或挪走，只给出最近的合法选项，不改写原话，也不发凭证。
-没说钟点时，开始时间取该时段在工作时间内的起点。用户点选之后才准备。
-当事人和案号只来自本句占位符或本人历史。事项不采用模型自由文本。
-功能默认关闭。
+每句话都走模型。词表词的候选值对不上时只澄清，不推断、不发凭证。
+本模块只做日期加减、工作时间与时长硬约束、本人历史补全和占位符回填。
+时段词只约束开始时间：上午 08:30–12:00，中午 11:30–13:30，下午 12:00–17:30，
+晚上 18:00–23:00。开始必须落在窗口和工作时间的交集里，结束可以越过时段窗口，
+不能越过工作时间。已经绑定的钟点、日期或时长一旦要被吸附、钳制或挪走，
+只给出最近的合法选项，不改写原话，也不发凭证。没说钟点时，开始时间取该时段
+在工作时间内的起点。用户点选之后才准备。后一句不继承上一张卡片的字段，
+只沿用会话里的占位符编号。当事人和案号只来自本句占位符或本人历史。
+事项不采用模型自由文本。功能默认关闭。
 """
 
 from __future__ import annotations
@@ -26,13 +27,14 @@ from ..common import canonical_json, clean_text, local_now, minutes_to_time, new
 from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import locked_actor
-from .deid import PURPOSE_CATEGORIES, DeidContext, Mention
+from .deid import MAX_SOURCE_CHARS, PURPOSE_CATEGORIES, DeidContext, Mention, encode_preview
 from .model_intent import (
     FALLBACK_UNAVAILABLE,
     BookingIntent,
     ModelSettings,
     interpret_booking_sentence,
     model_request_audit,
+    render_server_context,
 )
 from .model_provider import read_model_api_key
 from .reservations import _create_in_transaction, _row_for_id, serialize_reservation
@@ -57,6 +59,7 @@ _PERIOD_LABELS = {
     "afternoon": "下午",
     "evening": "晚上",
 }
+_WEEKDAY_LABELS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 
 def conversation_available(db: sqlite3.Connection) -> bool:
@@ -129,12 +132,13 @@ def send_message(
 
     db = get_db()
     settings = _require_feature(db)
-    sentence = _sentence(text)
-    parsed_mentions = _parse_mentions(mentions)
+    sentence, parsed_mentions = _prepare_sentence(text, mentions)
     actor = locked_actor(db)
     existing = None
+    prior = None
     if conversation_id != "new":
         existing = _own_conversation(db, conversation_id, actor["id"])
+        prior = _load_draft(existing["draft_json"]).get("placeholderPrior") or None
     context = deid_context_for_user(db, actor["id"])
     result = interpret_booking_sentence(
         sentence,
@@ -149,22 +153,29 @@ def send_message(
         record_audit=model_request_audit(db, actor_user_id=actor["id"]),
         data_dir=_data_dir(),
         mentions=parsed_mentions,
+        prior=prior if isinstance(prior, dict) else None,
     )
-    if result.kind == "intent" and result.intent is not None and result.intent.intent == "book":
+    if result.kind == "intent" and result.intent is not None and result.intent.unbound:
+        planned = _unbound_clarify(result.intent, result.tokens)
+    elif result.kind == "intent" and result.intent is not None and result.intent.intent == "book":
         planned = _plan(
             db,
             actor["id"],
             result.intent,
             result.mapping,
             result.mention_roles,
+            result.tokens,
         )
     elif result.kind == "intent" and result.intent is not None:
         planned = _guide()
     else:
-        planned = _fallback(result.text or FALLBACK_UNAVAILABLE)
+        planned = _fallback(db, actor["id"], result.text or FALLBACK_UNAVAILABLE)
+    if isinstance(planned.get("draft"), dict):
+        planned["draft"]["placeholderPrior"] = dict(result.mapping)
     with transaction(db):
         actor = locked_actor(db)
         _require_feature(db)
+        _purge_expired(db)
         if existing is None:
             conversation_id = new_id()
             db.execute(
@@ -315,20 +326,36 @@ def _model_settings(row: sqlite3.Row) -> ModelSettings:
     )
 
 
-def _sentence(text: object) -> str:
+def _prepare_sentence(text: object, mentions: object) -> tuple[str, tuple[Mention, ...] | None]:
+    """发送和预览共用：先去掉首尾空白，再按编码器上限截断前拒绝。"""
+
     if not isinstance(text, str):
         raise ApiError(422, "VALIDATION_ERROR", "请检查输入内容", fields={"text": "请输入一句话"})
+    leading = len(text) - len(text.lstrip())
     sentence = text.strip()
     if not sentence:
         raise ApiError(422, "VALIDATION_ERROR", "请检查输入内容", fields={"text": "请输入一句话"})
-    if len(sentence) > 200:
+    if len(sentence) > MAX_SOURCE_CHARS:
         raise ApiError(
             422,
             "VALIDATION_ERROR",
             "请检查输入内容",
-            fields={"text": "一句话不能超过 200 个字符"},
+            fields={"text": f"一句话不能超过 {MAX_SOURCE_CHARS} 个字符"},
         )
-    return sentence
+    parsed = _parse_mentions(mentions)
+    if not parsed:
+        return sentence, parsed
+    limit = len(sentence)
+    adjusted: list[Mention] = []
+    for mention in parsed:
+        start = mention.start - leading
+        end = mention.end - leading
+        if start < 0 or end > limit or start >= end:
+            raise ApiError(
+                422, "VALIDATION_ERROR", "请检查输入内容", fields={"mentions": "引用格式不正确"}
+            )
+        adjusted.append(Mention(start=start, end=end, kind=mention.kind, value=mention.value))
+    return sentence, tuple(adjusted)
 
 
 def _own_conversation(db: sqlite3.Connection, conversation_id: str, user_id: str) -> sqlite3.Row:
@@ -380,10 +407,12 @@ def _plan(
     intent: BookingIntent,
     mapping: dict[str, str],
     mention_roles: dict[str, str] | None = None,
+    tokens: tuple[Any, ...] = (),
 ) -> dict[str, Any]:
     today = local_now().date()
     target = _resolve_date(intent, today)
     state = _blank_state()
+    state["spans"] = _evidence_spans(intent, tokens)
     state["timePart"] = intent.period or "any"
     state["timeStart"] = intent.time_start
     state["periodLabel"] = _PERIOD_LABELS.get(intent.period or "", "")
@@ -1096,7 +1125,12 @@ def _clarify(
         for option in options:
             if option.get("date") is None and option.get("type") == "room":
                 option["date"] = state["date"]
-    reply: dict[str, Any] = {"kind": "clarify", "text": text, "options": options}
+    reply: dict[str, Any] = {
+        "kind": "clarify",
+        "text": text,
+        "options": options,
+        "spans": list(state.get("spans") or []),
+    }
     if duration:
         default = default_duration if default_duration in (60, 120) else 60
         reply["duration"] = {"choices": list(_DURATION_CHOICES), "default": default}
@@ -1130,6 +1164,7 @@ def _prepared_plan(state: dict[str, Any], room_name: str) -> dict[str, Any]:
         missing.append("purpose")
     booking = {
         "date": state["date"],
+        "weekday": _WEEKDAY_LABELS[target.weekday()],
         "start": start,
         "duration": duration,
         "end": end,
@@ -1269,16 +1304,16 @@ def _guide() -> dict[str, Any]:
         "kind": "clarify",
         "title": "我的预约",
         "draft": _blank_state(),
-        "reply": {"kind": "clarify", "text": _GUIDE_TEXT, "options": []},
+        "reply": {"kind": "clarify", "text": _GUIDE_TEXT, "options": [], "spans": []},
     }
 
 
-def _fallback(text: str) -> dict[str, Any]:
+def _fallback(db: sqlite3.Connection, user_id: str, text: str) -> dict[str, Any]:
     return {
         "kind": "fallback",
         "title": "手动预约",
         "draft": _blank_state(),
-        "reply": {"kind": "fallback", "text": text, "formPrefill": {}},
+        "reply": {"kind": "fallback", "text": text, "formPrefill": _form_prefill(db, user_id)},
     }
 
 
@@ -1319,6 +1354,8 @@ def _blank_state() -> dict[str, Any]:
         "purposeFromHistory": False,
         "historyDate": None,
         "periodLabel": None,
+        "spans": [],
+        "placeholderPrior": {},
     }
 
 
@@ -1334,10 +1371,200 @@ def _load_draft(raw: str) -> dict[str, Any]:
     return state
 
 
+def _unbound_clarify(intent: BookingIntent, tokens: tuple[Any, ...]) -> dict[str, Any]:
+    """候选值对不上时只澄清。不吸附，也不沿用上一张卡片的时间。"""
+
+    state = _blank_state()
+    state["mustClarify"] = True
+    state["spans"] = _evidence_spans(intent, tokens)
+    return _clarify(state, "这句话里的时间和原话对不上，请再说明。", options=[])
+
+
+def _evidence_spans(intent: BookingIntent, tokens: tuple[Any, ...]) -> list[dict[str, Any]]:
+    spans: list[dict[str, Any]] = []
+    for field_name, indexes in intent.evidence.items():
+        for index in indexes:
+            if index < 0 or index >= len(tokens):
+                continue
+            token = tokens[index]
+            spans.append(
+                {
+                    "field": field_name,
+                    "start": token.start,
+                    "end": token.end,
+                    "text": token.text,
+                }
+            )
+    return spans
+
+
+def _form_prefill(db: sqlite3.Connection, user_id: str) -> dict[str, Any]:
+    """降级表单只用本人最近一条尚未结束的预约。"""
+
+    now = local_now()
+    today = now.date().isoformat()
+    clock = now.strftime("%H:%M")
+    row = db.execute(
+        """
+        SELECT room_id, room_name_snapshot, start_time, end_time,
+               party_name, case_number, purpose
+        FROM reservations
+        WHERE owner_user_id = ? AND status = 'active'
+          AND (booking_date > ? OR (booking_date = ? AND end_time > ?))
+        ORDER BY booking_date DESC, start_time DESC
+        LIMIT 1
+        """,
+        (user_id, today, today, clock),
+    ).fetchone()
+    if row is None:
+        return {}
+    start = time_to_minutes(row["start_time"], field="start")
+    end = time_to_minutes(row["end_time"], field="end")
+    return {
+        "roomId": row["room_id"],
+        "roomName": row["room_name_snapshot"],
+        "duration": end - start,
+        "partyName": row["party_name"],
+        "caseNumber": row["case_number"],
+        "purpose": row["purpose"],
+    }
+
+
+def _purge_expired(db: sqlite3.Connection) -> None:
+    """按保留天数清掉过期草稿和未使用的准备凭证。比较用库里的 UTC 时间。"""
+
+    row = db.execute("SELECT retention_days FROM conversation_settings WHERE id = 1").fetchone()
+    days = int(row["retention_days"]) if row is not None else 30
+    modifier = f"-{days} days"
+    db.execute(
+        """
+        UPDATE conversations
+        SET draft_json = '{}'
+        WHERE updated_at < strftime('%Y-%m-%dT%H:%M:%fZ','now', ?)
+        """,
+        (modifier,),
+    )
+    db.execute(
+        """
+        DELETE FROM prepared_bookings
+        WHERE created_at < strftime('%Y-%m-%dT%H:%M:%fZ','now', ?)
+        """,
+        (modifier,),
+    )
+
+
+def preview_sentence(
+    text: object,
+    mentions: object = None,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
+    """和发送共用归一化入口，返回将要外发的编码，不带映射原文。"""
+
+    db = get_db()
+    _require_feature(db)
+    sentence, parsed = _prepare_sentence(text, mentions)
+    actor = locked_actor(db)
+    prior = None
+    if conversation_id:
+        existing = _own_conversation(db, conversation_id, actor["id"])
+        stored = _load_draft(existing["draft_json"]).get("placeholderPrior")
+        prior = stored if isinstance(stored, dict) else None
+    context = deid_context_for_user(db, actor["id"])
+    server = render_server_context(
+        now=local_now(),
+        work_start=_work_clock(db, "work_start"),
+        work_end=_work_clock(db, "work_end"),
+        room_names=context.room_names,
+        purpose_names=context.purpose_names,
+    )
+    return encode_preview(
+        sentence,
+        context,
+        mentions=parsed,
+        server_context=server,
+        prior=prior,
+    )
+
+
+def update_conversation_feature(payload: dict[str, Any]) -> dict[str, Any]:
+    """管理员开启外部模式前必须接受外发告知，并按保留天数清理旧草稿。"""
+
+    if not isinstance(payload, dict):
+        raise ApiError(400, "JSON_REQUIRED", "请求 JSON 必须是对象")
+    unknown = set(payload) - {"enabled", "externalNoticeAccepted", "retentionDays"}
+    if unknown or "enabled" not in payload:
+        raise ApiError(
+            422, "VALIDATION_ERROR", "请检查输入内容", fields={"enabled": "请选择是否开启"}
+        )
+    enabled = payload["enabled"]
+    if type(enabled) is not bool:
+        raise ApiError(
+            422, "VALIDATION_ERROR", "请检查输入内容", fields={"enabled": "请选择是否开启"}
+        )
+    if enabled and payload.get("externalNoticeAccepted") is not True:
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "请检查输入内容",
+            fields={"externalNoticeAccepted": "请确认外发告知"},
+        )
+    retention = payload.get("retentionDays")
+    if retention is not None and (
+        type(retention) is not int or isinstance(retention, bool) or not 1 <= retention <= 180
+    ):
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "请检查输入内容",
+            fields={"retentionDays": "保留天数需要在 1 到 180 之间"},
+        )
+    db = get_db()
+    with transaction(db):
+        actor = locked_actor(db, admin=True)
+        if enabled:
+            db.execute(
+                """
+                UPDATE conversation_settings
+                SET enabled = 1, mode = 'external',
+                    external_notice_accepted_at = COALESCE(
+                        external_notice_accepted_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                    ),
+                    external_notice_accepted_by = COALESCE(external_notice_accepted_by, ?),
+                    retention_days = COALESCE(?, retention_days),
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                WHERE id = 1
+                """,
+                (actor["id"], retention),
+            )
+        else:
+            db.execute(
+                """
+                UPDATE conversation_settings
+                SET enabled = 0, mode = 'off',
+                    retention_days = COALESCE(?, retention_days),
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                WHERE id = 1
+                """,
+                (retention,),
+            )
+        _purge_expired(db)
+        row = db.execute("SELECT * FROM conversation_settings WHERE id = 1").fetchone()
+    return {
+        "enabled": bool(row["enabled"]),
+        "mode": row["mode"],
+        "retentionDays": int(row["retention_days"]),
+        "externalNoticeAcceptedAt": row["external_notice_accepted_at"],
+        "externalNoticeAcceptedBy": row["external_notice_accepted_by"],
+    }
+
+
 def _resolve_date(intent: BookingIntent, today: date) -> date | None:
     choice = intent.date
     if choice.kind == "relative" and choice.relative_days is not None:
         return today + timedelta(days=choice.relative_days)
+    if choice.kind == "weekday" and choice.weekday is not None:
+        # 只核对过的星期几，落到今天或之后最近的那一天。
+        return today + timedelta(days=(choice.weekday - 1 - today.weekday()) % 7)
     if choice.kind == "week" and choice.week_offset is not None and choice.weekday is not None:
         monday = today - timedelta(days=today.weekday())
         return monday + timedelta(days=choice.week_offset * 7 + choice.weekday - 1)

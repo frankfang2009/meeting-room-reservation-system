@@ -19,6 +19,7 @@ from ..db import get_db, transaction
 from ..errors import ApiError
 from ..security import admin_required, current_user, locked_actor, serialize_user
 from ..services.audit import write_security_audit
+from ..services.quick_booking import update_conversation_feature
 from ..services.reservations import serialize_reservation
 from .core import _serialize_settings, serialize_room_with_metrics, serialize_rooms_with_metrics
 
@@ -77,6 +78,12 @@ def update_system_settings():
             details={"before": before, "after": after},
         )
     return jsonify(_serialize_settings(db))
+
+
+@bp.put("/admin/conversation")
+@admin_required
+def update_conversation_settings():
+    return jsonify(update_conversation_feature(parse_json_object()))
 
 
 def _validate_role(value: Any) -> str:

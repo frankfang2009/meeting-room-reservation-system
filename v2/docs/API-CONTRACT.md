@@ -332,7 +332,9 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
 
 - `POST /api/v1/conversations/{id}/messages`，请求体 `{ "text": "..." }`，
   可选 `mentions`（`start`、`end`、`kind=party|case`、`value`）。`id` 为 `new`
-  时由服务端新建会话。一句最长 200 字。
+  时由服务端新建会话。发送和预览先去掉首尾空白，再按 500 字拒绝。
+  `POST /api/v1/conversations/preview` 使用同一入口，返回将要外发的编码。
+  `@` / `#` 的下标按去掉的前缀回退。
 - `POST /api/v1/quick-booking/prepare`，请求体 `{ "draftId", roomId?, duration?, caseNumber?, purpose?, partyName? }`。
   `duration` 可以是 30–180 的 30 倍数，或 `"window"`。此接口不调用模型。
 - `POST /api/v1/quick-booking/commit`，请求体 `{ "token": "qb_..." }`。成功 `201`，
@@ -350,7 +352,7 @@ revision 冲突返回 `409 REVISION_CONFLICT`，`error.current` 是最新预约�
       "token": "qb_...",
       "expiresAt": "2026-08-09T08:10:00+08:00",
       "booking": {
-        "date": "2026-08-10", "start": "12:00", "duration": 60, "end": "13:00",
+        "date": "2026-08-10", "weekday": "星期一", "start": "12:00", "duration": 60, "end": "13:00",
         "roomId": "...", "roomName": "笔录室 1",
         "partyName": "孙某", "caseNumber": "2026-087", "purpose": "询问笔录",
         "notes": "", "tagId": "tag-1"

@@ -12,6 +12,19 @@ from ..services import quick_booking
 bp = Blueprint("conversation_api", __name__, url_prefix="/api/v1/conversations")
 
 
+@bp.post("/preview")
+@login_required
+def post_preview():
+    body = parse_json_object()
+    return jsonify(
+        quick_booking.preview_sentence(
+            body.get("text"),
+            mentions=body.get("mentions"),
+            conversation_id=body.get("conversationId"),
+        )
+    )
+
+
 @bp.post("/<conversation_id>/messages")
 @login_required
 def post_message(conversation_id: str):

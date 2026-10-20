@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model. Rows c156 onward add colon clocks, structured dates, durations above 60 minutes, and out-of-hours clarification. Codex round 6 (2026-10-20): expectations for c043, c044, c050, c051, c055, c059, c071, c113, c118, c120, c152, c153, c154, and c155 changed from a prepared card to clarification. Those rows are evening periods; the approved spec says an empty intersection with working hours offers the nearest legal start and does not prepare a card. Recorded transcripts are unchanged. Other c001–c155 expectations were not edited. Rows c169 onward cover a stated clock that would otherwise be snapped, and a numeric-smuggling sentence that must not book the hidden digits.",
+  "note": "Q replays these recorded transcripts through FakeProvider. It measures the local resolver, not a live model. Rows c156 onward add colon clocks, structured dates, durations above 60 minutes, and out-of-hours clarification. Codex round 6 (2026-10-20): expectations for c043, c044, c050, c051, c055, c059, c071, c113, c118, c120, c152, c153, c154, and c155 changed from a prepared card to clarification. Those rows are evening periods; the approved spec says an empty intersection with working hours offers the nearest legal start and does not prepare a card. Recorded transcripts are unchanged. Other c001–c155 expectations were not edited. Rows c169 onward cover a stated clock that would otherwise be snapped, and a numeric-smuggling sentence that must not book the hidden digits. Codex round 7 (2026-10-20): evidence indexes cite every released time token whose candidates contain the field value. Bare weekdays use {weekday:n}. Compound words such as 明早 cite both the offset and the period. Expectations were not edited.",
   "cases": [
     {
       "text": "帮我约明天下午一小时",
@@ -50,7 +50,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:30"
         },
         "duration": {
@@ -64,10 +64,12 @@
             0
           ],
           "start": [
-            1
+            1,
+            2,
+            3
           ],
           "duration": [
-            2
+            7
           ],
           "room": [
             5
@@ -293,7 +295,7 @@
           "time": null
         },
         "duration": {
-          "minutes": null
+          "minutes": 90
         },
         "room": "笔录室 2",
         "purpose": null,
@@ -309,6 +311,9 @@
           ],
           "start": [
             1
+          ],
+          "duration": [
+            2
           ],
           "room": [
             3
@@ -334,7 +339,6 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 5
         },
         "start": {
@@ -540,7 +544,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:30"
         },
         "duration": {
@@ -554,10 +558,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            6
           ],
           "room": [
             4
@@ -586,11 +591,11 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
-          "time": "15:00"
+          "period": "afternoon",
+          "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": "笔录室 2",
         "purpose": null,
@@ -600,10 +605,9 @@
             0
           ],
           "start": [
-            1
-          ],
-          "duration": [
-            2
+            1,
+            2,
+            4
           ],
           "room": [
             6
@@ -632,7 +636,7 @@
           "offset": 2
         },
         "start": {
-          "period": "afternoon",
+          "period": "noon",
           "time": null
         },
         "duration": {
@@ -672,7 +676,7 @@
           "weekday": 3
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "14:00"
         },
         "duration": {
@@ -686,10 +690,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            5
           ]
         },
         "unknown": [],
@@ -711,7 +716,7 @@
           "offset": 0
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "10:00"
         },
         "duration": {
@@ -725,10 +730,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            6
           ],
           "room": [
             4
@@ -776,7 +782,7 @@
             0
           ],
           "start": [
-            3
+            1
           ],
           "duration": [
             3
@@ -809,7 +815,7 @@
           "weekday": 1
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "15:30"
         },
         "duration": {
@@ -823,10 +829,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ]
         },
         "unknown": [],
@@ -933,7 +940,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:00"
         },
         "duration": {
@@ -947,10 +954,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            6
           ],
           "room": [
             4
@@ -998,7 +1006,7 @@
             0
           ],
           "start": [
-            3
+            1
           ],
           "duration": [
             3
@@ -1031,7 +1039,7 @@
           "weekday": 5
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "14:30"
         },
         "duration": {
@@ -1045,10 +1053,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            6
           ],
           "room": [
             4
@@ -1077,7 +1086,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "noon",
           "time": "12:00"
         },
         "duration": {
@@ -1091,10 +1100,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ]
         },
         "unknown": [],
@@ -1113,11 +1123,10 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 6
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "10:00"
         },
         "duration": {
@@ -1136,10 +1145,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            6
           ],
           "room": [
             4
@@ -1168,7 +1178,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -1180,6 +1190,11 @@
         "evidence": {
           "day": [
             0
+          ],
+          "start": [
+            1,
+            2,
+            4
           ]
         },
         "unknown": [
@@ -1203,7 +1218,7 @@
           "weekday": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:00"
         },
         "duration": {
@@ -1217,10 +1232,11 @@
             1
           ],
           "start": [
-            2
+            2,
+            3
           ],
           "duration": [
-            3
+            7
           ],
           "room": [
             5
@@ -1288,7 +1304,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:30"
         },
         "duration": {
@@ -1302,10 +1318,12 @@
             0
           ],
           "start": [
-            1
+            1,
+            2,
+            3
           ],
           "duration": [
-            2
+            7
           ],
           "room": [
             5
@@ -1334,7 +1352,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "14:00"
         },
         "duration": {
@@ -1348,10 +1366,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            3
           ]
         },
         "unknown": [],
@@ -1370,7 +1389,6 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 5
         },
         "start": {
@@ -1521,7 +1539,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:30"
         },
         "duration": {
@@ -1535,7 +1553,9 @@
             0
           ],
           "start": [
-            1
+            1,
+            2,
+            3
           ]
         },
         "unknown": [],
@@ -1590,7 +1610,6 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 5
         },
         "start": {
@@ -1667,7 +1686,7 @@
           "offset": 2
         },
         "start": {
-          "period": "afternoon",
+          "period": "noon",
           "time": null
         },
         "duration": {
@@ -1703,7 +1722,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "10:00"
         },
         "duration": {
@@ -1717,10 +1736,11 @@
             0
           ],
           "start": [
+            0,
             1
           ],
           "duration": [
-            1
+            4
           ],
           "room": [
             2
@@ -1880,7 +1900,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "14:30"
         },
         "duration": {
@@ -1894,10 +1914,11 @@
             2
           ],
           "start": [
-            3
+            3,
+            4
           ],
           "duration": [
-            4
+            8
           ],
           "room": [
             0
@@ -1954,12 +1975,16 @@
           "time": null
         },
         "duration": {
-          "minutes": null
+          "minutes": 60
         },
         "room": null,
         "purpose": null,
         "refs": [],
-        "evidence": {},
+        "evidence": {
+          "duration": [
+            1
+          ]
+        },
         "unknown": [],
         "missing": [],
         "need_clarification": false
@@ -1978,7 +2003,7 @@
           "offset": 0
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:00"
         },
         "duration": {
@@ -1992,10 +2017,11 @@
             0
           ],
           "start": [
+            0,
             1
           ],
           "duration": [
-            1
+            3
           ],
           "room": [
             2
@@ -2038,7 +2064,7 @@
             0
           ],
           "start": [
-            2
+            0
           ],
           "duration": [
             2
@@ -2080,7 +2106,7 @@
             0
           ],
           "start": [
-            2
+            0
           ],
           "duration": [
             2
@@ -2108,7 +2134,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "15:00"
         },
         "duration": {
@@ -2122,10 +2148,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -2155,7 +2182,7 @@
         },
         "start": {
           "period": "morning",
-          "time": "08:30"
+          "time": null
         },
         "duration": {
           "minutes": 30
@@ -2248,7 +2275,7 @@
         },
         "start": {
           "period": "evening",
-          "time": "17:00"
+          "time": null
         },
         "duration": {
           "minutes": 30
@@ -2289,11 +2316,11 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
-          "time": "14:00"
+          "period": "afternoon",
+          "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": "笔录室 1",
         "purpose": null,
@@ -2303,10 +2330,9 @@
             1
           ],
           "start": [
-            2
-          ],
-          "duration": [
-            3
+            2,
+            3,
+            5
           ],
           "room": [
             7
@@ -2335,7 +2361,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "11:00"
         },
         "duration": {
@@ -2349,10 +2375,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            7
           ],
           "room": [
             4
@@ -2382,7 +2409,7 @@
         },
         "start": {
           "period": "afternoon",
-          "time": "12:00"
+          "time": null
         },
         "duration": {
           "minutes": 120
@@ -2470,7 +2497,7 @@
           "weekday": 4
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "10:00"
         },
         "duration": {
@@ -2484,10 +2511,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -2555,7 +2583,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "morning",
           "time": "09:00"
         },
         "duration": {
@@ -2569,10 +2597,11 @@
             1
           ],
           "start": [
-            2
+            2,
+            3
           ],
           "duration": [
-            3
+            9
           ],
           "room": [
             6
@@ -2601,7 +2630,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "noon",
           "time": "12:30"
         },
         "duration": {
@@ -2615,10 +2644,11 @@
             1
           ],
           "start": [
-            2
+            2,
+            3
           ],
           "duration": [
-            3
+            6
           ],
           "room": [
             4
@@ -2647,7 +2677,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "15:30"
         },
         "duration": {
@@ -2661,10 +2691,11 @@
             1
           ],
           "start": [
-            2
+            2,
+            3
           ],
           "duration": [
-            3
+            8
           ],
           "room": [
             6
@@ -2693,7 +2724,7 @@
           "offset": 0
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": "14:00"
         },
         "duration": {
@@ -2707,10 +2738,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -2786,8 +2818,8 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
-          "time": null
+          "period": "evening",
+          "time": "11:00"
         },
         "duration": {
           "minutes": 60
@@ -2799,8 +2831,12 @@
           "day": [
             0
           ],
-          "duration": [
+          "start": [
+            1,
             2
+          ],
+          "duration": [
+            4
           ],
           "room": [
             3
@@ -2869,7 +2905,7 @@
         },
         "start": {
           "period": "afternoon",
-          "time": "12:00"
+          "time": null
         },
         "duration": {
           "minutes": 60
@@ -2882,7 +2918,7 @@
             1
           ],
           "start": [
-            0
+            2
           ],
           "duration": [
             0
@@ -2916,7 +2952,7 @@
         },
         "start": {
           "period": "morning",
-          "time": "08:30"
+          "time": null
         },
         "duration": {
           "minutes": 30
@@ -2958,7 +2994,6 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 6
         },
         "start": {
@@ -3004,7 +3039,7 @@
           "offset": 2
         },
         "start": {
-          "period": "any",
+          "period": "noon",
           "time": "13:00"
         },
         "duration": {
@@ -3023,10 +3058,11 @@
             3
           ],
           "start": [
-            4
+            4,
+            5
           ],
           "duration": [
-            5
+            9
           ],
           "room": [
             7
@@ -3055,8 +3091,8 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
-          "time": null
+          "period": "afternoon",
+          "time": "17:00"
         },
         "duration": {
           "minutes": 60
@@ -3068,8 +3104,12 @@
           "day": [
             0
           ],
-          "duration": [
+          "start": [
+            1,
             2
+          ],
+          "duration": [
+            4
           ],
           "room": [
             3
@@ -3099,7 +3139,7 @@
         },
         "start": {
           "period": "morning",
-          "time": null
+          "time": "10:00"
         },
         "duration": {
           "minutes": 60
@@ -3112,10 +3152,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -3189,10 +3230,10 @@
         },
         "start": {
           "period": "afternoon",
-          "time": null
+          "time": "14:00"
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3207,9 +3248,7 @@
             5
           ],
           "start": [
-            6
-          ],
-          "duration": [
+            6,
             7
           ]
         },
@@ -3229,10 +3268,11 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "week_offset": 1,
+          "weekday": 3
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -3311,7 +3351,7 @@
           "offset": 1
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -3349,10 +3389,10 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "offset": 2
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -3395,7 +3435,7 @@
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3407,10 +3447,7 @@
         ],
         "evidence": {
           "start": [
-            2
-          ],
-          "duration": [
-            2
+            3
           ]
         },
         "unknown": [],
@@ -3466,7 +3503,8 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "week_offset": 1,
+          "weekday": 1
         },
         "start": {
           "period": "any",
@@ -3507,11 +3545,11 @@
           "offset": 1
         },
         "start": {
-          "period": "afternoon",
-          "time": null
+          "period": "any",
+          "time": "09:00"
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3523,13 +3561,10 @@
         ],
         "evidence": {
           "day": [
-            3
+            2
           ],
           "start": [
-            1
-          ],
-          "duration": [
-            1
+            3
           ]
         },
         "unknown": [],
@@ -3551,7 +3586,7 @@
           "offset": 1
         },
         "start": {
-          "period": "any",
+          "period": "afternoon",
           "time": null
         },
         "duration": {
@@ -3563,6 +3598,9 @@
         "evidence": {
           "day": [
             1
+          ],
+          "start": [
+            2
           ]
         },
         "unknown": [
@@ -3585,7 +3623,7 @@
           "offset": 1
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -3623,14 +3661,14 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "weekday": 4
         },
         "start": {
           "period": "afternoon",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3646,13 +3684,10 @@
         ],
         "evidence": {
           "day": [
-            5
+            4
           ],
           "start": [
-            3
-          ],
-          "duration": [
-            3
+            5
           ]
         },
         "unknown": [],
@@ -3712,7 +3747,8 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "week_offset": 1,
+          "weekday": 3
         },
         "start": {
           "period": "any",
@@ -3750,10 +3786,10 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "weekday": 5
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -3870,14 +3906,14 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "offset": 1
+          "offset": 2
         },
         "start": {
-          "period": "afternoon",
+          "period": "any",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3889,13 +3925,7 @@
         ],
         "evidence": {
           "day": [
-            5
-          ],
-          "start": [
-            1
-          ],
-          "duration": [
-            1
+            4
           ]
         },
         "unknown": [],
@@ -3913,28 +3943,20 @@
       "source": "deid-canary",
       "recorded": {
         "intent": "book",
-        "day": {
-          "offset": 1
-        },
+        "day": null,
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
         "refs": [],
         "evidence": {
-          "day": [
-            1
-          ],
           "start": [
-            2
-          ],
-          "duration": [
-            2
+            3
           ]
         },
         "unknown": [],
@@ -3952,13 +3974,16 @@
       "source": "deid-canary",
       "recorded": {
         "intent": "book",
-        "day": null,
+        "day": {
+          "month": 10,
+          "day": 20
+        },
         "start": {
-          "period": "afternoon",
+          "period": "any",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -3969,11 +3994,9 @@
           }
         ],
         "evidence": {
-          "start": [
-            0
-          ],
-          "duration": [
-            0
+          "day": [
+            0,
+            1
           ]
         },
         "unknown": [],
@@ -3990,13 +4013,16 @@
       "source": "deid-canary",
       "recorded": {
         "intent": "book",
-        "day": null,
+        "day": {
+          "month": 10,
+          "day": 28
+        },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": 120
         },
         "room": null,
         "purpose": null,
@@ -4007,6 +4033,9 @@
           }
         ],
         "evidence": {
+          "day": [
+            0
+          ],
           "start": [
             1
           ],
@@ -4032,7 +4061,7 @@
           "offset": 1
         },
         "start": {
-          "period": "afternoon",
+          "period": "morning",
           "time": null
         },
         "duration": {
@@ -4335,7 +4364,7 @@
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -4345,10 +4374,9 @@
             0
           ],
           "start": [
-            1
-          ],
-          "duration": [
-            2
+            1,
+            2,
+            4
           ]
         },
         "unknown": [],
@@ -4485,8 +4513,8 @@
         "intent": "book",
         "day": null,
         "start": {
-          "period": "any",
-          "time": null
+          "period": "afternoon",
+          "time": "04:30"
         },
         "duration": {
           "minutes": null
@@ -4494,7 +4522,12 @@
         "room": null,
         "purpose": null,
         "refs": [],
-        "evidence": {},
+        "evidence": {
+          "start": [
+            0,
+            1
+          ]
+        },
         "unknown": [
           1
         ],
@@ -4591,11 +4624,11 @@
           "offset": 1
         },
         "start": {
-          "period": "afternoon",
+          "period": "any",
           "time": null
         },
         "duration": {
-          "minutes": 60
+          "minutes": null
         },
         "room": null,
         "purpose": null,
@@ -4607,12 +4640,6 @@
         ],
         "evidence": {
           "day": [
-            2
-          ],
-          "start": [
-            1
-          ],
-          "duration": [
             1
           ]
         },
@@ -4696,10 +4723,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -4923,10 +4951,11 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
-            2
+            4
           ],
           "room": [
             3
@@ -5040,7 +5069,6 @@
       "recorded": {
         "intent": "book",
         "day": {
-          "week_offset": 1,
           "weekday": 5
         },
         "start": {
@@ -7035,7 +7063,8 @@
             0
           ],
           "start": [
-            1
+            1,
+            2
           ],
           "duration": [
             4
