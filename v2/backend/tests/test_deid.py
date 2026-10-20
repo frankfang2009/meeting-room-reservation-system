@@ -455,6 +455,10 @@ class EncoderInvariantTests(unittest.TestCase):
         self.assertEqual(by_text["一小时"], ("minutes:60",))
         self.assertEqual(by_text["14:15"], ("time:14:15",))
         self.assertEqual(by_text["下周四"], ("week_offset:1", "weekday:4"))
+        compound = deidentify("明早十点明晚", context)
+        compound_values = {token.text: token.values for token in compound.tokens}
+        self.assertEqual(compound_values["明早"], ("offset:1", "period:morning"))
+        self.assertEqual(compound_values["明晚"], ("offset:1", "period:evening"))
         minute = deidentify("14点30分", context)
         minute_values = {token.text: token.values for token in minute.tokens}
         self.assertEqual(minute_values["14点"], ("time:14:00",))

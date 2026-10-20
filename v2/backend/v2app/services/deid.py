@@ -417,7 +417,11 @@ def release_outbound_payload(
 ) -> None:
     """整包闸门。系统提示必须是审过的常量，动态上下文和用户句分别复验。"""
 
-    if not isinstance(system, str) or not isinstance(user, str) or not isinstance(system_prefix, str):
+    if (
+        not isinstance(system, str)
+        or not isinstance(user, str)
+        or not isinstance(system_prefix, str)
+    ):
         raise OutboundBlocked()
     prefix = system_prefix + "\n"
     if not system.startswith(prefix):
@@ -606,9 +610,7 @@ def _scan(
             )
             index = end
             continue
-        match = _longest(
-            normalized, index, rooms, purposes, entities, budget, room_numbers
-        )
+        match = _longest(normalized, index, rooms, purposes, entities, budget, room_numbers)
         if match is not None and not _grammar_number_delimited(normalized, index, match, pieces):
             match = None
         if match is None:
@@ -695,9 +697,7 @@ def _grammar_number_delimited(
     )
 
 
-def _left_delimits_number(
-    text: str, index: int, pieces: list[dict[str, object]]
-) -> bool:
+def _left_delimits_number(text: str, index: int, pieces: list[dict[str, object]]) -> bool:
     if index == 0:
         return True
     if text[index - 1].isspace() or text[index - 1] in _PUNCT_CHARS:
@@ -772,6 +772,14 @@ _OFFSET_CANON = {
     "昨天": -1,
     "前天": -2,
 }
+# 这些词同时说出日期偏移和时段。两个键都是候选，不是本机另推的时间。
+_OFFSET_PERIOD = {
+    "今早": "morning",
+    "明早": "morning",
+    "当晚": "evening",
+    "今晚": "evening",
+    "明晚": "evening",
+}
 _WEEKDAY_CANON = {}
 for _label, _number in (
     ("一", 1),
@@ -792,6 +800,11 @@ _WEEK_OFFSET_CANON = {"下周": 1, "上周": -1, "这周": 0, "本周": 0}
 def _annotate(surface: str, category: str) -> tuple[str, ...]:
     """词表词自己带上候选值。本机只核对，不从句子里另推一个时间。"""
 
+    if surface in _OFFSET_CANON and surface in _OFFSET_PERIOD:
+        return (
+            f"offset:{_OFFSET_CANON[surface]}",
+            f"period:{_OFFSET_PERIOD[surface]}",
+        )
     if surface in _PERIOD_CANON:
         return (f"period:{_PERIOD_CANON[surface]}",)
     if surface in _OFFSET_CANON:
@@ -859,7 +872,7 @@ def _spoken_clock(surface: str) -> tuple[str, ...]:
     head = surface
     if surface.endswith("点半"):
         minute = 30
-        head = surface[: -2]
+        head = surface[:-2]
     elif surface.endswith("点") or surface.endswith("时") or surface.endswith("点钟"):
         for suffix in ("点钟", "点", "时"):
             if surface.endswith(suffix):
@@ -1199,7 +1212,9 @@ def _clock_at(text: str, index: int) -> tuple[str, str, int] | None:
     span = _digit_span(text, index)
     if span is not None:
         number = _ascii_int(text[index:span])
-        classified = None if number is None else _classify_unit(text, span, number, text[index:span])
+        classified = (
+            None if number is None else _classify_unit(text, span, number, text[index:span])
+        )
         if classified is not None:
             return classified
     for head, value in _CN_FORMS:
@@ -1211,7 +1226,9 @@ def _clock_at(text: str, index: int) -> tuple[str, str, int] | None:
     return None
 
 
-def _classify_unit(text: str, unit_index: int, number: int, head: str) -> tuple[str, str, int] | None:
+def _classify_unit(
+    text: str, unit_index: int, number: int, head: str
+) -> tuple[str, str, int] | None:
     """从数字或中文数字后面的单位判断这是时刻、日期还是时长。"""
 
     if text.startswith("点半", unit_index) and _hour_ok(number, head):
@@ -1625,7 +1642,11 @@ def _date_token(token: str) -> bool:
         month, day = token.split(separator)
         month_value = _ascii_int(month) if re.fullmatch(r"\d{1,2}", month) else None
         day_value = _ascii_int(day) if re.fullmatch(r"\d{1,2}", day) else None
-        if month_value is not None and day_value is not None and _real_month_day(month_value, day_value):
+        if (
+            month_value is not None
+            and day_value is not None
+            and _real_month_day(month_value, day_value)
+        ):
             return True
     return False
 
