@@ -90,8 +90,9 @@ _SYSTEM_RULES = (
     "字段只允许：intent、day、start、duration、room、purpose、refs、evidence、"
     "unknown、missing、need_clarification。\n"
     "intent 是 book、reschedule、cancel、query、other 之一。\n"
-    'day 是 {"offset":整数}、{"week_offset":整数,"weekday":1到7}、'
-    '{"month":1到12,"day":1到31} 或 null。不要输出公历日期。\n'
+    'day 是 {"offset":整数}、{"weekday":1到7}、{"week_offset":整数,"weekday":1到7}、'
+    '{"month":1到12,"day":1到31} 或 null。不要输出公历日期。'
+    "只说了星期几、没说本周或下周时，用单独的 weekday。\n"
     "start.period 是 morning、noon、afternoon、evening、any 之一；"
     "start.time 是 HH:MM 或 null。时段只约束开始时间。\n"
     "用户消息里的 HH:MM（分钟只取 00、15、30、45）、YYYY-MM-DD、M/D、M-D 是钟点或日期词；"
@@ -620,8 +621,13 @@ def _evidence(value: object, tokens: Sequence[OutboundToken]) -> dict[str, tuple
             raise _SchemaError()
         indexes = tuple(raw)
         allowed = _EVIDENCE_CATEGORY[field_name]
+        value_keys = _FIELD_VALUE_KEYS.get(field_name, frozenset())
         for index in indexes:
-            if index < 0 or index >= len(tokens) or tokens[index].category not in allowed:
+            if index < 0 or index >= len(tokens):
+                raise _SchemaError()
+            token = tokens[index]
+            keys = set(_grouped_values(token))
+            if token.category not in allowed and not keys & value_keys:
                 raise _SchemaError()
         parsed[field_name] = indexes
     return parsed
@@ -653,6 +659,17 @@ _START_VALUE_KEYS = frozenset({"time", "minute", "period"})
 _DURATION_VALUE_KEYS = frozenset({"minutes"})
 
 
+_FIELD_VALUE_KEYS = {
+    "day": _DAY_VALUE_KEYS,
+    "start": _START_VALUE_KEYS,
+    "duration": _DURATION_VALUE_KEYS,
+}
+
+
+def _fields_for_value_keys(keys: set[str]) -> set[str]:
+    return {name for name, allowed in _FIELD_VALUE_KEYS.items() if keys & allowed}
+
+
 def _values_bind(
     tokens: Sequence[OutboundToken],
     evidence: Mapping[str, tuple[int, ...]],
@@ -662,7 +679,11 @@ def _values_bind(
     clock: str | None,
     minutes: int | None,
 ) -> bool:
-    """带候选值的词元必须被对应字段引用，字段里的每个成分也必须有引用。"""
+    """带候选值的词元必须被对应字段引用，字段里的每个成分也必须有引用。
+
+    一个词可以同时带日期和时段（「明早」）。它要被两个字段一起引用，
+    每个字段只核对属于自己的键。
+    """
 
     cited = {name: set(indexes) for name, indexes in evidence.items()}
     grouped_by_field: dict[str, list[dict[str, frozenset[str]]]] = {
@@ -674,10 +695,18 @@ def _values_bind(
         grouped = _grouped_values(token)
         if not grouped:
             continue
-        field_name = _field_for_value_keys(set(grouped))
-        if field_name is None or index not in cited.get(field_name, set()):
+        fields = _fields_for_value_keys(set(grouped))
+        if not fields:
             return False
-        grouped_by_field[field_name].append(grouped)
+        for field_name in fields:
+            if index not in cited.get(field_name, set()):
+                return False
+            relevant = {
+                key: values
+                for key, values in grouped.items()
+                if key in _FIELD_VALUE_KEYS[field_name]
+            }
+            grouped_by_field[field_name].append(relevant)
     return (
         _day_values_bind(date, grouped_by_field["day"])
         and _start_values_bind(period, clock, grouped_by_field["start"])
@@ -696,16 +725,6 @@ def _grouped_values(token: OutboundToken) -> dict[str, frozenset[str]]:
     return {key: frozenset(values) for key, values in grouped.items()}
 
 
-def _field_for_value_keys(keys: set[str]) -> str | None:
-    if keys & _DURATION_VALUE_KEYS:
-        return "duration"
-    if keys & _START_VALUE_KEYS:
-        return "start"
-    if keys & _DAY_VALUE_KEYS:
-        return "day"
-    return None
-
-
 def _day_values_bind(value: IntentDate, groups: Sequence[Mapping[str, frozenset[str]]]) -> bool:
     components = _day_components(value)
     covered: set[str] = set()
@@ -720,6 +739,8 @@ def _day_values_bind(value: IntentDate, groups: Sequence[Mapping[str, frozenset[
 def _day_components(value: IntentDate) -> dict[str, str]:
     if value.kind == "relative" and value.relative_days is not None:
         return {"offset": str(value.relative_days)}
+    if value.kind == "weekday" and value.weekday is not None:
+        return {"weekday": str(value.weekday)}
     if value.kind == "week":
         parts: dict[str, str] = {}
         if value.week_offset is not None:
@@ -835,6 +856,8 @@ def _date(value: object) -> IntentDate:
         return IntentDate(
             kind="relative", relative_days=_as_int(value["offset"], minimum=-366, maximum=366)
         )
+    if set(value) == {"weekday"}:
+        return IntentDate(kind="weekday", weekday=_as_int(value["weekday"], minimum=1, maximum=7))
     if set(value) == {"week_offset", "weekday"}:
         return IntentDate(
             kind="week",

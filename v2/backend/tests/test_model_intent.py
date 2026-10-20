@@ -417,9 +417,17 @@ class ModelIntentTests(_NoNetwork):
     def test_field_values_must_sit_inside_the_cited_candidates(self) -> None:
         clock = {"period": "any", "time": "14:15"}
         samples = (
-            ("明天18:30", {"start": {"period": "any", "time": "16:30"}}, {"start": {"period": "any", "time": "18:30"}}),
+            (
+                "明天18:30",
+                {"start": {"period": "any", "time": "16:30"}},
+                {"start": {"period": "any", "time": "18:30"}},
+            ),
             ("明天14:15", {"start": {"period": "any", "time": "14:00"}}, {"start": clock}),
-            ("明天07:00", {"start": {"period": "any", "time": None}}, {"start": {"period": "any", "time": "07:00"}}),
+            (
+                "明天07:00",
+                {"start": {"period": "any", "time": None}},
+                {"start": {"period": "any", "time": "07:00"}},
+            ),
             (
                 "明天下午十点",
                 {"start": {"period": "any", "time": "12:00"}},
@@ -436,6 +444,57 @@ class ModelIntentTests(_NoNetwork):
             with self.subTest(sentence=sentence):
                 self.assertTrue(self._parsed(encoded, **wrong).unbound)
                 self.assertFalse(self._parsed(encoded, **right).unbound)
+
+    def test_compound_day_and_bare_weekday_bind_only_their_candidates(self) -> None:
+        morning = deidentify("明早十点", DeidContext())
+        cited = _intent_for(morning)
+        cited["day"] = {"offset": 1}
+        cited["start"] = {"period": "morning", "time": "10:00"}
+        cited["evidence"] = {
+            "day": [0],
+            "start": [0, 1],
+        }
+        parsed = parse_booking_intent(
+            json.dumps(cited, ensure_ascii=False),
+            room_names=ROOMS,
+            purpose_names=PURPOSES,
+            tokens=morning.tokens,
+        )
+        self.assertFalse(parsed.unbound)
+        missed = json.loads(json.dumps(cited))
+        missed["evidence"]["start"] = [1]
+        self.assertTrue(
+            parse_booking_intent(
+                json.dumps(missed, ensure_ascii=False),
+                room_names=ROOMS,
+                purpose_names=PURPOSES,
+                tokens=morning.tokens,
+            ).unbound
+        )
+        friday = deidentify("周五下午", DeidContext())
+        bare = _intent_for(friday)
+        bare["day"] = {"weekday": 5}
+        bare["start"] = {"period": "afternoon", "time": None}
+        bare["evidence"]["day"] = [0]
+        bare["evidence"]["start"] = [1]
+        self.assertFalse(
+            parse_booking_intent(
+                json.dumps(bare, ensure_ascii=False),
+                room_names=ROOMS,
+                purpose_names=PURPOSES,
+                tokens=friday.tokens,
+            ).unbound
+        )
+        invented = json.loads(json.dumps(bare))
+        invented["day"] = {"week_offset": 1, "weekday": 5}
+        self.assertTrue(
+            parse_booking_intent(
+                json.dumps(invented, ensure_ascii=False),
+                room_names=ROOMS,
+                purpose_names=PURPOSES,
+                tokens=friday.tokens,
+            ).unbound
+        )
 
     def test_http_failure_still_writes_an_audit_row(self) -> None:
         audits: list[dict] = []
@@ -582,6 +641,7 @@ class ModelProviderTests(_NoNetwork):
             http.client.IncompleteRead(b"sk-secret"),
             http.client.LineTooLong("header"),
         ):
+
             def explode(_request, timeout=None, raised=error):  # noqa: ARG001
                 raise raised
 
