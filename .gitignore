@@ -31,6 +31,7 @@ v2/backend/v2app/runtime/**/__pycache__/
 *.db-shm
 *.log
 .secret_key
+.model_api_key
 首次登录账号密码.txt
 
 # 已交付的不可变归档及本机生成物不作为源码上传。
