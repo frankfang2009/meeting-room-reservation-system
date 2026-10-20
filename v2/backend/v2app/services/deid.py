@@ -24,10 +24,10 @@
 ``13:38``、``12:34``、``6:7``、``13:81``、``14:00:30`` 不合格。超出个数的
 ``5点6点7点`` 或 ``一号三号八号`` 只留下额度内的第一段，其余是占位符。
 
-能留下来的信息量约 25 比特：日期 ``log2(12×31)``，两个刻钟
-``2×log2(24×4)``，一个 15 分钟对齐的时长 ``log2(12)``。手机号大约 33 比特，
-身份证号大约 60 比特，带法院代字的案号更长。这条通道装不下一整串电话、
-证件号或案号。见 :func:`numeric_capacity_bits`。
+一条消息里的数字文法大约是 :func:`numeric_capacity_bits` 给出的比特数
+（年份只取服务器当年或下一年，并且必须是 ``date()`` 认的日期）。这只挡住
+一句里偶然拆开的数字碎片。换一句可以再送一次，词表选词那条通道也不在这笔
+预算里，所以它不是“装不下一串电话”的证明。
 
 不变式 I1：每个外发词元要么在词表（含本次房间名、事项类别和上述合法数字）里，
 要么是占位符，并且没有超出上面的额度。``release_outbound`` 复验单条文本。
@@ -38,9 +38,10 @@
 全部由调用方按现行权限放进 :class:`DeidContext`。事项只接受代码里的类别，
 不接受历史里的自由文本。已知姓名和案号按整段精确匹配收成占位符。
 
-残余风险（负责人 2026-10-20 已确认）：完全由词表词拼成的名字（如「周五」，
-或「高明天」里的「明天」）会以这些词离开本机。预约词和这种名字无法区分，
-``@`` 引用可以避开；单字姓氏不进词表，所以姓本身不会作为单字放行。
+残余风险（approved by owner 2026-10-20）：完全由词表词组成的名字，以及名字里
+那些本身是词表词的片段（如「周五」，「张会」里的「会」，「高明天」里的「明天」）
+会以这些词离开本机。预约词和这种名字无法区分，``@`` 引用可以避开；单字姓氏不进
+词表。管理员配置的房间名会原样进入服务器上下文，只检查长度。
 阿拉伯-印度数字、泰文数字和故意交错的编码不在本词表的归一化范围内。
 """
 
@@ -237,6 +238,7 @@ class OutboundToken:
     category: str
     start: int
     end: int
+    values: tuple[str, ...] = ()
 
 
 @dataclass
@@ -432,24 +434,25 @@ def validate_server_context(text: str) -> str:
     matched = _SERVER_CONTEXT_RE.fullmatch(text)
     if matched is None:
         raise OutboundBlocked()
-    year, month, day = (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+    year = _ascii_int(matched.group(1))
+    month = _ascii_int(matched.group(2))
+    day = _ascii_int(matched.group(3))
+    if year is None or month is None or day is None:
+        raise OutboundBlocked()
     try:
         found = date(year, month, day)
-    except ValueError as error:
-        raise OutboundBlocked() from error
+    except ValueError:
+        raise OutboundBlocked() from None
     if _WEEKDAY_LABELS[found.weekday()] != matched.group(4):
         raise OutboundBlocked()
-    for clock in (matched.group(5), matched.group(6), matched.group(7)):
-        if _SERVER_CLOCK_RE.fullmatch(clock) is None:
-            raise OutboundBlocked()
-    if matched.group(6) >= matched.group(7):
+    if _SERVER_CLOCK_RE.fullmatch(matched.group(5)) is None:
         raise OutboundBlocked()
-    rooms = matched.group(8)
+    rooms = matched.group(6)
     if rooms != "（无）":
         for room in rooms.split("、"):
             if not room or len(room) > 80 or any(char in room for char in "\n\r"):
                 raise OutboundBlocked()
-    purposes = matched.group(9)
+    purposes = matched.group(7)
     if purposes != "（无）":
         for purpose in purposes.split("、"):
             if purpose not in PURPOSE_CATEGORIES:
@@ -458,14 +461,23 @@ def validate_server_context(text: str) -> str:
 
 
 def numeric_capacity_bits() -> float:
-    """一条消息里用户还能决定的数字信息量，单位是比特。
+    """一条消息里数字文法的上限，单位是比特。
 
-    日期是 12×31，两个时刻各是 24×4（分钟只取 00/15/30/45），时长是 15 到 180
-    的 15 分钟倍数，共 12 档。房间序号只能复述已经公开的房间号，不另计。
-    四位年份必须和月日组成真实日期，不是独立的 0000–9999。
+    日期取「当年或下一年里 ``date()`` 认的 ISO 日期」和「12×31 的月日」里更大的
+    那个。两个时刻各是 24×4，时长是 12 档。这只描述一句消息。下一句可以再送，
+    词表选词也不在这里，所以这个数不是电话或证件号的上界。
     """
 
-    date_space = 12 * 31
+    iso_dates = 0
+    for year in _allowed_years():
+        for month in range(1, 13):
+            for day in range(1, 32):
+                try:
+                    date(year, month, day)
+                except ValueError:
+                    continue
+                iso_dates += 1
+    date_space = max(iso_dates, 12 * 31)
     time_space = 24 * len(ALLOWED_MINUTES)
     duration_space = len(range(15, MAX_DURATION_MINUTES + 1, 15))
     return (
@@ -476,7 +488,7 @@ def numeric_capacity_bits() -> float:
 
 
 def released_number_digits(text: str, allowed: Iterable[str] | None = None) -> str:
-    """按词元顺序抽出数字通道里的十进制数字，用来证明电话拼不回去。"""
+    """按词元顺序抽出一条消息数字通道里的十进制数字。"""
 
     if not isinstance(text, str) or not text.strip():
         return ""
@@ -574,6 +586,7 @@ def _scan(
                     "key": f"mention:{mention.kind}:{mention.value}",
                     "value": mention.value.strip(),
                     "role": mention.kind,
+                    "norm_end": end,
                 }
             )
             index = end
@@ -588,6 +601,7 @@ def _scan(
                     "end": spans[end - 1][1],
                     "key": normalized[index:end],
                     "value": original[spans[index][0] : spans[end - 1][1]],
+                    "norm_end": end,
                 }
             )
             index = end
@@ -595,6 +609,8 @@ def _scan(
         match = _longest(
             normalized, index, rooms, purposes, entities, budget, room_numbers
         )
+        if match is not None and not _grammar_number_delimited(normalized, index, match, pieces):
+            match = None
         if match is None:
             pieces.append(
                 {
@@ -603,6 +619,7 @@ def _scan(
                     "end": spans[index][1],
                     "key": normalized[index],
                     "value": original[spans[index][0] : spans[index][1]],
+                    "norm_end": index + 1,
                 }
             )
             index += 1
@@ -620,17 +637,21 @@ def _scan(
                     "key": surface,
                     "value": original[spans[index][0] : orig_end].strip() or surface,
                     "role": category if category in {"party", "case"} else "",
+                    "norm_end": index + length,
                 }
             )
         else:
             _charge(budget, category, surface)
+            emitted = _EMITTED_CATEGORY.get(category, category)
             pieces.append(
                 {
                     "kind": "lex",
                     "text": surface.replace(" ", ""),
-                    "category": _EMITTED_CATEGORY.get(category, category),
+                    "category": emitted,
+                    "values": _annotate(surface.replace(" ", ""), category),
                     "start": orig_start,
                     "end": orig_end,
+                    "norm_end": index + length,
                 }
             )
         index += length
@@ -642,6 +663,313 @@ def _pull_marks(normalized: str, index: int) -> int:
     while start > 0 and normalized[start - 1] in "@#":
         start -= 1
     return start
+
+
+_GRAMMAR_NUMBER = frozenset(
+    {
+        "structured-clock",
+        "structured-date",
+        "time",
+        "date-month",
+        "date-day",
+        "duration",
+        "room-ordinal",
+    }
+)
+_PUNCT_CHARS = frozenset("，。、；！？,.!?;:：…、")
+
+
+def _grammar_number_delimited(
+    text: str,
+    index: int,
+    match: tuple[int, int, str, str, str],
+    pieces: list[dict[str, object]],
+) -> bool:
+    """数字词两边都必须是词表词、标点、空白或字符串边界，否则并进占位符。"""
+
+    length, _rank, kind, surface, category = match
+    if kind != "lex" or category not in _GRAMMAR_NUMBER or surface in LEXICON:
+        return True
+    return _left_delimits_number(text, index, pieces) and _right_delimits_number(
+        text, index + length
+    )
+
+
+def _left_delimits_number(
+    text: str, index: int, pieces: list[dict[str, object]]
+) -> bool:
+    if index == 0:
+        return True
+    if text[index - 1].isspace() or text[index - 1] in _PUNCT_CHARS:
+        return True
+    if not pieces:
+        return False
+    last = pieces[-1]
+    if int(last.get("norm_end") or -1) != index or last.get("kind") != "lex":
+        return False
+    if str(last.get("text") or "") == "案号":
+        return False
+    return True
+
+
+def _right_delimits_number(text: str, end: int) -> bool:
+    if end >= len(text):
+        return True
+    if text[end].isspace() or text[end] in _PUNCT_CHARS:
+        return True
+    for word, _category in _BY_FIRST.get(text[end], ()):
+        if text.startswith(word, end) and word != "案号":
+            return True
+    # 10月20日：右边另一个数字文法词也是边界。案号尾巴旁边是未匹配汉字，到不了这里。
+    return _grammar_number_at(text, end)
+
+
+def _grammar_number_at(text: str, index: int) -> bool:
+    if index >= len(text):
+        return False
+    if _match_clock_at(text, index) or _match_date_at(text, index):
+        return True
+    return _clock_at(text, index) is not None
+
+
+def _ascii_int(text: str) -> int | None:
+    """只解析 ASCII 数字。失败时不把原文放进异常。"""
+
+    if not text or any(char not in "0123456789" for char in text):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+_PERIOD_CANON = {
+    "上午": "morning",
+    "早上": "morning",
+    "凌晨": "morning",
+    "中午": "noon",
+    "下午": "afternoon",
+    "晚上": "evening",
+    "傍晚": "evening",
+    "夜里": "evening",
+}
+_OFFSET_CANON = {
+    "今天": 0,
+    "当天": 0,
+    "当日": 0,
+    "今早": 0,
+    "今晚": 0,
+    "今儿": 0,
+    "当晚": 0,
+    "明天": 1,
+    "明早": 1,
+    "明晚": 1,
+    "明儿": 1,
+    "次日": 1,
+    "后天": 2,
+    "后儿": 2,
+    "大后天": 3,
+    "昨天": -1,
+    "前天": -2,
+}
+_WEEKDAY_CANON = {}
+for _label, _number in (
+    ("一", 1),
+    ("二", 2),
+    ("三", 3),
+    ("四", 4),
+    ("五", 5),
+    ("六", 6),
+    ("日", 7),
+    ("天", 7),
+):
+    _WEEKDAY_CANON[f"星期{_label}"] = _number
+    _WEEKDAY_CANON[f"周{_label}"] = _number
+    _WEEKDAY_CANON[f"礼拜{_label}"] = _number
+_WEEK_OFFSET_CANON = {"下周": 1, "上周": -1, "这周": 0, "本周": 0}
+
+
+def _annotate(surface: str, category: str) -> tuple[str, ...]:
+    """词表词自己带上候选值。本机只核对，不从句子里另推一个时间。"""
+
+    if surface in _PERIOD_CANON:
+        return (f"period:{_PERIOD_CANON[surface]}",)
+    if surface in _OFFSET_CANON:
+        return (f"offset:{_OFFSET_CANON[surface]}",)
+    compound = _compound_week(surface)
+    if compound is not None:
+        offset, weekday = compound
+        return (f"week_offset:{offset}", f"weekday:{weekday}")
+    if surface in _WEEK_OFFSET_CANON:
+        return (f"week_offset:{_WEEK_OFFSET_CANON[surface]}",)
+    if surface in _WEEKDAY_CANON:
+        return (f"weekday:{_WEEKDAY_CANON[surface]}",)
+    clock = _clock_candidates(surface)
+    if clock:
+        return clock
+    duration = _duration_candidates(surface)
+    if duration:
+        return duration
+    if category in {"structured-date", "date", "date-month", "date-day"} or _date_token(surface):
+        return _date_candidates(surface)
+    return ()
+
+
+_WEEKDAY_CHAR = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7}
+
+
+def _compound_week(surface: str) -> tuple[int, int] | None:
+    for prefix, offset in (("下周", 1), ("上周", -1), ("本周", 0), ("这周", 0)):
+        if not surface.startswith(prefix):
+            continue
+        rest = surface[len(prefix) :]
+        if rest in _WEEKDAY_CANON:
+            return offset, _WEEKDAY_CANON[rest]
+        if rest in _WEEKDAY_CHAR:
+            return offset, _WEEKDAY_CHAR[rest]
+    return None
+
+
+def _clock_candidates(surface: str) -> tuple[str, ...]:
+    matched = _CLOCK_TOKEN_RE.fullmatch(surface)
+    if matched:
+        hour, minute = surface.split(":")
+        hour_value = _ascii_int(hour)
+        minute_value = _ascii_int(minute)
+        if hour_value is None or minute_value is None:
+            return ()
+        return (f"time:{hour_value:02d}:{minute_value:02d}",)
+    if surface in _TIME_LEXICON:
+        return _spoken_clock(surface)
+    if surface[:1].isdigit() or surface[:1] in "零一二三四五六七八九十两〇":
+        classified = _classify_number_token(surface)
+        if classified is not None and classified[0] == "time":
+            spoken = _spoken_clock(surface)
+            if spoken:
+                return spoken
+            if surface.endswith("分") and not surface.endswith("分钟"):
+                number = _head_number(_strip_unit(surface))
+                if number is not None and number in ALLOWED_MINUTES:
+                    return (f"minute:{number:02d}",)
+    return ()
+
+
+def _spoken_clock(surface: str) -> tuple[str, ...]:
+    minute = 0
+    head = surface
+    if surface.endswith("点半"):
+        minute = 30
+        head = surface[: -2]
+    elif surface.endswith("点") or surface.endswith("时") or surface.endswith("点钟"):
+        for suffix in ("点钟", "点", "时"):
+            if surface.endswith(suffix):
+                head = surface[: -len(suffix)]
+                break
+    elif surface in {"三十分", "十五分", "四十五分"}:
+        return (f"minute:{_LEXICON_CANON[surface]}",)
+    else:
+        return ()
+    hour = _head_number(head)
+    if hour is None:
+        return ()
+    return _hour_pair(hour, minute)
+
+
+def _hour_pair(hour: int, minute: int) -> tuple[str, ...]:
+    exact = f"time:{hour:02d}:{minute:02d}"
+    if hour == 0 or hour > 12:
+        return (exact,)
+    other = (hour + 12) % 24
+    return (exact, f"time:{other:02d}:{minute:02d}")
+
+
+def _head_number(head: str) -> int | None:
+    if head.isdigit():
+        return _ascii_int(head)
+    for surface, value in _CN_FORMS:
+        if head == surface:
+            return value
+    return None
+
+
+def _duration_candidates(surface: str) -> tuple[str, ...]:
+    canon = _LEXICON_CANON.get(surface)
+    if canon is not None and surface in _DURATION_LEXICON:
+        return (f"minutes:{canon}",)
+    parsed = _classify_number_token(surface)
+    if parsed is not None and parsed[0] == "duration":
+        decimal = _decimal_minutes(surface)
+        if decimal is not None:
+            return (f"minutes:{decimal}",)
+        number = _number_value(surface)
+        if number is not None:
+            return (f"minutes:{number}",)
+    return ()
+
+
+def _date_candidates(surface: str) -> tuple[str, ...]:
+    iso = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", surface)
+    if iso and _real_iso(iso.group(1), iso.group(2), iso.group(3)):
+        month_value = _ascii_int(iso.group(2))
+        day_value = _ascii_int(iso.group(3))
+        if month_value is None or day_value is None:
+            return ()
+        return (f"month:{month_value}", f"day:{day_value}")
+    for separator in "-/":
+        if surface.count(separator) != 1:
+            continue
+        month, day = surface.split(separator)
+        month_value = _ascii_int(month)
+        day_value = _ascii_int(day)
+        if month_value is None or day_value is None:
+            continue
+        if _real_month_day(month_value, day_value):
+            return (f"month:{month_value}", f"day:{day_value}")
+    parsed = _classify_number_token(surface)
+    if parsed is None:
+        return ()
+    if parsed[0] == "date-month":
+        number = _head_number(_strip_unit(surface))
+        return () if number is None else (f"month:{number}",)
+    if parsed[0] == "date-day":
+        number = _head_number(_strip_unit(surface))
+        return () if number is None else (f"day:{number}",)
+    return ()
+
+
+def _strip_unit(surface: str) -> str:
+    for unit in _UNITS:
+        if surface.endswith(unit) and len(surface) > len(unit):
+            return surface[: -len(unit)]
+    return surface
+
+
+def _allowed_years(today: date | None = None) -> set[int]:
+    year = (today or date.today()).year
+    return {year, year + 1}
+
+
+def _real_iso(year_text: str, month_text: str, day_text: str) -> bool:
+    year = _ascii_int(year_text)
+    month = _ascii_int(month_text)
+    day = _ascii_int(day_text)
+    if year is None or month is None or day is None or year not in _allowed_years():
+        return False
+    try:
+        date(year, month, day)
+    except ValueError:
+        return False
+    return True
+
+
+def _real_month_day(month: int, day: int) -> bool:
+    for year in _allowed_years():
+        try:
+            date(year, month, day)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 _EMITTED_CATEGORY = {
@@ -657,8 +985,7 @@ _WEEKDAY_LABELS = ("星期一", "星期二", "星期三", "星期四", "星期�
 _SERVER_CLOCK_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 _SERVER_CONTEXT_RE = re.compile(
     r"^今天是(\d{4})-(\d{2})-(\d{2})（(星期[一二三四五六日])），"
-    r"当前时间(\d{2}:\d{2})。工作时段(\d{2}:\d{2})–(\d{2}:\d{2})。"
-    r"可用房间：(.*)。事项：(.*)。$"
+    r"当前时间(\d{2}:\d{2})。可用房间：(.*)。事项：(.*)。$"
 )
 _LEXICON_CANON = {
     "一点": "1",
@@ -871,8 +1198,8 @@ def _clock_at(text: str, index: int) -> tuple[str, str, int] | None:
         return decimal, "duration", sum(char.isdigit() for char in decimal)
     span = _digit_span(text, index)
     if span is not None:
-        number = int(text[index:span])
-        classified = _classify_unit(text, span, number, text[index:span])
+        number = _ascii_int(text[index:span])
+        classified = None if number is None else _classify_unit(text, span, number, text[index:span])
         if classified is not None:
             return classified
     for head, value in _CN_FORMS:
@@ -946,8 +1273,8 @@ def _ordinal_at(text: str, index: int, room_numbers: set[int]) -> str | None:
     width = end - index
     if width < 1 or width > 2:
         return None
-    number = int(text[index:end])
-    if number not in room_numbers or len(str(number)) != width:
+    number = _ascii_int(text[index:end])
+    if number is None or number not in room_numbers or len(str(number)) != width:
         return None
     for suffix in ("号房间", "号会议室"):
         if text.startswith(suffix, end):
@@ -968,9 +1295,13 @@ def _room_numbers_from_allowed(allowed: Iterable[str]) -> set[int]:
             matched = re.fullmatch(r"(\d+)号.+", compact)
             if matched is None:
                 continue
-            numbers.add(int(matched.group(1)))
+            number = _ascii_int(matched.group(1))
+            if number is not None:
+                numbers.add(number)
             continue
-        numbers.add(int(matched.group(2)))
+        number = _ascii_int(matched.group(2))
+        if number is not None:
+            numbers.add(number)
     return numbers
 
 
@@ -983,7 +1314,8 @@ def _outbound_slot(token: str, room_numbers: set[int]) -> tuple[str, int] | None
     if _date_token(token):
         return ("date", sum(char.isdigit() for char in token))
     ordinal = _ORDINAL_RE.fullmatch(token)
-    if ordinal is not None and int(ordinal.group(1)) in room_numbers:
+    ordinal_number = None if ordinal is None else _ascii_int(ordinal.group(1))
+    if ordinal_number is not None and ordinal_number in room_numbers:
         return ("room-ordinal", sum(char.isdigit() for char in token))
     return _classify_number_token(token)
 
@@ -1005,7 +1337,8 @@ def _classify_number_token(token: str) -> tuple[str, int] | None:
             end += 1
         if end == 0:
             return None
-        classified = _classify_unit(token, end, int(token[:end]), token[:end])
+        number = _ascii_int(token[:end])
+        classified = None if number is None else _classify_unit(token, end, number, token[:end])
         if classified is not None and classified[0] == token:
             return classified[1], classified[2]
     return None
@@ -1102,9 +1435,9 @@ def _match_clock_at(text: str, index: int) -> str | None:
         minute_end += 1
     if minute_end - minute != 2 or (minute_end < len(text) and text[minute_end] == ":"):
         return None
-    hour = int(text[index:end])
-    minute_value = int(text[minute:minute_end])
-    if hour > 23 or minute_value not in ALLOWED_MINUTES:
+    hour = _ascii_int(text[index:end])
+    minute_value = _ascii_int(text[minute:minute_end])
+    if hour is None or minute_value is None or hour > 23 or minute_value not in ALLOWED_MINUTES:
         return None
     return text[index:minute_end]
 
@@ -1135,7 +1468,7 @@ def _iso_date_at(text: str, index: int) -> str | None:
         return None
     value, month_end = month
     day = _read_part(text, month_end + 1, None)
-    if day is None or not (1 <= value <= 12 and 1 <= day[0] <= 31):
+    if day is None or not _real_iso(text[index:end], str(value), str(day[0])):
         return None
     return text[index : day[1]]
 
@@ -1146,7 +1479,7 @@ def _short_date_at(text: str, index: int, separator: str) -> str | None:
         return None
     value, month_end = month
     day = _read_part(text, month_end + 1, None)
-    if day is None or not (1 <= value <= 12 and 1 <= day[0] <= 31):
+    if day is None or not _real_month_day(value, day[0]):
         return None
     return text[index : day[1]]
 
@@ -1163,14 +1496,18 @@ def _read_part(text: str, index: int, separator: str | None) -> tuple[int, int] 
         else:
             two_ok = after < len(text) and text[after] == separator
         if two_ok:
-            return int(text[index:after]), after
+            value = _ascii_int(text[index:after])
+            return None if value is None else (value, after)
     after = index + 1
+    value = _ascii_int(text[index])
+    if value is None:
+        return None
     if separator is None:
         if after < len(text) and (text[after].isdigit() or text[after] in "-/"):
             return None
-        return int(text[index]), after
+        return value, after
     if after < len(text) and text[after] == separator:
-        return int(text[index]), after
+        return value, after
     return None
 
 
@@ -1239,12 +1576,14 @@ def _assign(
     roles: dict[str, str] = {}
     for piece in pieces:
         if piece["kind"] == "lex":
+            raw_values = piece.get("values") or ()
             tokens.append(
                 OutboundToken(
                     text=str(piece["text"]),
                     category=str(piece["category"]),
                     start=int(piece["start"]),
                     end=int(piece["end"]),
+                    values=tuple(str(item) for item in raw_values),
                 )
             )
             continue
@@ -1279,13 +1618,15 @@ def _clock_token(token: str) -> bool:
 def _date_token(token: str) -> bool:
     iso = re.fullmatch(r"(\d{4})-(\d{1,2})-(\d{1,2})", token)
     if iso:
-        return 1 <= int(iso.group(2)) <= 12 and 1 <= int(iso.group(3)) <= 31
+        return _real_iso(iso.group(1), iso.group(2), iso.group(3))
     for separator in "-/":
         if token.count(separator) != 1:
             continue
         month, day = token.split(separator)
-        if re.fullmatch(r"\d{1,2}", month) and re.fullmatch(r"\d{1,2}", day):
-            return 1 <= int(month) <= 12 and 1 <= int(day) <= 31
+        month_value = _ascii_int(month) if re.fullmatch(r"\d{1,2}", month) else None
+        day_value = _ascii_int(day) if re.fullmatch(r"\d{1,2}", day) else None
+        if month_value is not None and day_value is not None and _real_month_day(month_value, day_value):
+            return True
     return False
 
 
@@ -1293,7 +1634,13 @@ def _decimal_minutes(token: str) -> int | None:
     matched = _DECIMAL_HOUR_RE.fullmatch(token)
     if matched is None:
         return None
-    minutes = float(matched.group(1)) * 60
+    number = matched.group(1)
+    if any(char not in "0123456789." for char in number):
+        return None
+    try:
+        minutes = float(number) * 60
+    except ValueError:
+        return None
     if minutes <= 0 or minutes > MAX_DURATION_MINUTES:
         return None
     rounded = round(minutes)
@@ -1318,7 +1665,9 @@ def _number_value(token: str) -> int | None:
     if not unit:
         return None
     if head.isdigit():
-        value = int(head)
+        value = _ascii_int(head)
+        if value is None:
+            return None
         if unit == "分钟" and 0 <= value <= MAX_DURATION_MINUTES and len(head) <= 3:
             if len(head) >= 3 and value < 100:
                 return None

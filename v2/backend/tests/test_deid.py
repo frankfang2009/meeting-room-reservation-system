@@ -12,6 +12,7 @@ import random
 import re
 import socket
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest import mock
 
@@ -353,8 +354,7 @@ class EncoderInvariantTests(unittest.TestCase):
             self.assertNotIn(secret, digits, (text, result.text, digits))
             self.assertLess(len(digits), len(secret), (text, digits))
             self.assertTrue(satisfies_outbound_invariant(result.text, allowed), result.text)
-        self.assertLess(numeric_capacity_bits(), math.log2(10**11))
-        self.assertLess(numeric_capacity_bits(), 33)
+        self._assert_capacity_is_a_fragment_budget(context, allowed)
         cn = "零一二三四五六七八九"
         spoken = str.maketrans("0123456789", "洞幺两三四五六七八九")
         rng = random.Random(20261020)
@@ -386,16 +386,98 @@ class EncoderInvariantTests(unittest.TestCase):
             self.assertNotIn(secret, digits, (text, result.text, digits))
             self.assertTrue(satisfies_outbound_invariant(result.text, allowed), (text, result.text))
 
+    def _assert_capacity_is_a_fragment_budget(self, context: DeidContext, allowed: set[str]) -> None:
+        """一句话的数字文法有上界；下一句和词表选词不在这笔里。"""
+
+        iso_dates = 0
+        year = date.today().year
+        for candidate in (year, year + 1):
+            for month in range(1, 13):
+                for day in range(1, 32):
+                    try:
+                        date(candidate, month, day)
+                    except ValueError:
+                        continue
+                    iso_dates += 1
+        expected = (
+            math.log2(max(iso_dates, 12 * 31))
+            + 2 * math.log2(24 * 4)
+            + math.log2(12)
+        )
+        self.assertAlmostEqual(numeric_capacity_bits(), expected, places=6)
+        first = deidentify("2026-08-20 10:15", context)
+        second = deidentify("2026-08-21 11:30", context)
+        combined = released_number_digits(first.text, allowed) + released_number_digits(
+            second.text, allowed
+        )
+        self.assertGreater(len(combined), MAX_RELEASED_DIGITS)
+        self.assertLessEqual(
+            len(released_number_digits(first.text, allowed)), MAX_RELEASED_DIGITS
+        )
+        lexicon = deidentify(" ".join(("明天", "下午", "笔录") * 40), context)
+        self.assertNotIn("[P", lexicon.text)
+        self.assertEqual(released_number_digits(lexicon.text, allowed), "")
+        smuggle = deidentify("5678-7-18 明天 6:45 到 11:00 15分钟", context)
+        self.assertNotIn("5678", smuggle.text)
+        self.assertNotIn("13812345678", released_number_digits(smuggle.text, allowed))
+
+    def test_case_number_tails_stay_inside_the_placeholder(self) -> None:
+        context = DeidContext()
+        folded = deidentify("(2026)京0105民初3号", context)
+        self.assertEqual(folded.text, "[P1]")
+        self.assertNotIn("3号", folded.text)
+        case_tail = deidentify("案号12号", context)
+        self.assertNotIn("12号", case_tail.text)
+        self.assertIn("案号", case_tail.text)
+        kept = deidentify("明天3号", context)
+        self.assertIn("3号", kept.text)
+        month_day = deidentify("10月20日", context)
+        self.assertIn("10月", month_day.text)
+        self.assertIn("20日", month_day.text)
+
+    def test_iso_years_must_be_current_or_next_and_real(self) -> None:
+        context = DeidContext()
+        for text in ("1990-1-1", "1990-01-01", "2026-02-31", "1381-2-3", "5678-7-18"):
+            result = deidentify(text, context)
+            self.assertNotIn(text.replace(" ", ""), result.text.replace(" ", ""), text)
+            self.assertIn("[P1]", result.text, text)
+        kept = deidentify("2026-08-20", context)
+        self.assertIn("2026-08-20", kept.text)
+        next_year = deidentify("2027-01-15", context)
+        self.assertIn("2027-01-15", next_year.text)
+
+    def test_value_annotations_cover_released_time_tokens(self) -> None:
+        context = DeidContext()
+        result = deidentify("明天十点一小时14:15下周四", context)
+        by_text = {token.text: token.values for token in result.tokens}
+        self.assertEqual(by_text["明天"], ("offset:1",))
+        self.assertEqual(by_text["十点"], ("time:10:00", "time:22:00"))
+        self.assertEqual(by_text["一小时"], ("minutes:60",))
+        self.assertEqual(by_text["14:15"], ("time:14:15",))
+        self.assertEqual(by_text["下周四"], ("week_offset:1", "weekday:4"))
+        minute = deidentify("14点30分", context)
+        minute_values = {token.text: token.values for token in minute.tokens}
+        self.assertEqual(minute_values["14点"], ("time:14:00",))
+        self.assertEqual(minute_values["30分"], ("minute:30",))
+
+    def test_unicode_digits_do_not_raise_or_echo(self) -> None:
+        context = DeidContext(room_names=("笔录室 1",))
+        samples = ("明天١٢٣٤٥", "٢٠٢٦-٠٨-٢٠", "３点", "案号１２号")
+        for text in samples:
+            result = deidentify(text, context)
+            self.assertTrue(result.confident, (text, result.reasons))
+            self.assertNotIn("١٢٣", result.text)
+
     def test_preview_returns_the_dynamic_outbound_payload(self) -> None:
         context = DeidContext(room_names=("笔录室 1",), purpose_names=PURPOSE_CATEGORIES)
         sentence = "明天14:00笔录室1一小时"
-        server = "今天是2026-08-09（星期日），当前时间08:00。工作时段08:30–17:30。可用房间：笔录室 1。事项：询问笔录、谈话。"
+        server = "今天是2026-08-09（星期日），当前时间08:00。可用房间：笔录室 1。事项：询问笔录、谈话。"
         preview = encode_preview(sentence, context, server_context=server)
         self.assertEqual(preview["text"], deidentify(sentence, context).text)
         self.assertIn(preview["text"], preview["outbound"])
         self.assertIn("询问笔录", preview["outbound"])
         self.assertEqual(validate_server_context(server), server)
-        leaked = "今天是2026-08-09（星期日），当前时间08:00。工作时段08:30–17:30。可用房间：笔录室 1。事项：询问孙某，电话13812345678。"
+        leaked = "今天是2026-08-09（星期日），当前时间08:00。可用房间：笔录室 1。事项：询问孙某，电话13812345678。"
         blocked = encode_preview(sentence, context, server_context=leaked)
         self.assertFalse(blocked["confident"])
         self.assertNotIn("13812345678", blocked["outbound"])
