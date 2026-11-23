@@ -146,7 +146,7 @@ class ReleasedMacUpgrade(unittest.TestCase):
                 room = boot["rooms"][0]["id"]
                 day = (datetime.date.fromisoformat(boot["serverDate"]) + datetime.timedelta(days=2)).isoformat()
                 payload = {"date": day, "roomId": room, "start": "10:00", "duration": 30,
-                           "partyName": "合成演练", "purpose": "升级前记录", "tagId": "tag-1"}
+                           "partyName": "合成演练", "caseNumber": "SYN-251", "purpose": "升级前记录", "tagId": "tag-1"}
                 record = api.request("/api/v1/reservations", payload)
                 until(lambda: any((old / "backups").glob("*.db")))
                 api.request("/api/v1/admin/backups", {})
@@ -195,4 +195,3 @@ class ReleasedMacUpgrade(unittest.TestCase):
                 self.assertEqual((old/name).read_bytes(), (fresh/name).read_bytes())
             self.assertEqual(snapshot(old), original_after_fallback)
             print("MAC_RELEASE_UPGRADE_AND_FALLBACK_PASS", flush=True)
-
