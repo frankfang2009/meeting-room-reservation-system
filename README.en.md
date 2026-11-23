@@ -37,6 +37,8 @@ Apple Silicon users on macOS 13 or later do not need to install Python or Node.j
 
 The administrator update check only reports a newer GitHub Release and links to it; it never downloads or installs updates automatically.
 
+For an existing installation, copy the new application to a separate writable folder and leave it unopened. Pause changes, verify a current backup, and stop the old service. Keep its folder intact. Copy the complete `data/`, `backups/`, and `logs/` directories into the fresh application before starting it. Verify the original account, bookings, rooms, working hours, version, and backup before resuming use. If the new installation may already contain business changes, preserve both copies for recovery. See section four of the [packaged instructions](v2/installer/payload_templates_macos/使用说明.txt).
+
 ## Development quick start
 
 The complete local gate pins Python 3.13.14, Node.js 22.17.1, npm, and [uv](https://docs.astral.sh/uv/); direct backend dependencies are Flask 3.1.3 and Waitress 3.0.2. Production packages include the frozen runtime, so end users do not install Python or Node.js separately.
