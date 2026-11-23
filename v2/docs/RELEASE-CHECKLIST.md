@@ -20,6 +20,15 @@ main 手动运行或由与 `v2/VERSION` 一致的 `v2.*` 标签触发，同一�
 累计升级两套候选、macOS 便携包/DMG 候选及各自侧车，只保留 7 天且不自动创建
 GitHub Release；V1 `windows-upgrade.yml` 只在 V1 路径变化或手动触发时运行。
 
+## Mac 手动升级与回退演练（2026-11-24）
+
+| 编号 | 环境与证据 | 验收范围 |
+| --- | --- | --- |
+| E108 | Apple Silicon macOS 托管机，[PR #71 的正式包演练](https://github.com/frankfang2009/meeting-room-reservation-system/actions/runs/45214058410/job/137830301353)及[同一提交的演练脚本](https://github.com/frankfang2009/meeting-room-reservation-system/blob/bf2bc8b75486b221691c4493b9feef2f9b1a2e2e/v2/installer/tests/test_macos_released_upgrade.py) | 从 GitHub Release 下载 V2.5.0、V2.5.1 DMG 及 V2.5.1 ZIP，校验 E105–E107 所列摘要。对 V2.5.1 正式包复跑九步验收，并用合成账号和预约走通旧版备份、停服、复制三个完整目录、新版登录与核对。新版首次启动缺少运行时时，用旧目录恢复服务；重新复制升级后，在新版写入并重启，新增预约保留，旧目录未被改写。 |
+| E109 | Apple Silicon 本机隔离数据演练（Flask 测试客户端，V2.5.0 标签后端与 V2.5.1 正式 ZIP 内的运行时和应用） | 核对账号、笔录室、工作时间、原预约和最近备份，逐字节比对安装身份与隐藏密钥。两份目录中的备份数据库均通过 SQLite 完整性检查，保有升级前预约；新版新增记录在重新打开后可读，旧库中不存在该记录。 |
+
+上述托管机验收使用命令行挂载和启动，团队成员在实体机通过访达完成首启及系统授权的抽验仍单列。现有 v2.5.1 标签与四份公开资产继续使用 E106/E107 的摘要。
+
 ## V2.5.0 Windows 自动化测试证据（历史，2026-08-29）
 
 当时的实体 Windows 10/11 验收按
