@@ -17,7 +17,7 @@ import uuid
 import webbrowser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from server import run_server_once
 
@@ -522,14 +522,16 @@ def _open_browser_once() -> None:
         return
 
 
-def _launch_backup_catch_up(identity: dict[str, Any]) -> None:
-    """Start the idempotent catch-up worker without blocking the listener."""
+def _launch_backup_worker(
+    identity: dict[str, Any], mode: str
+) -> Optional[subprocess.Popen]:
+    """Start the identity-bound backup CLI without blocking the listener."""
 
     logger = logging.getLogger("meeting_room_v2.service")
     command = [
         sys.executable,
         str(APP_DIR / "backup.py"),
-        "--catch-up",
+        mode,
         "--expected-install-id",
         identity["install_id"],
     ]
@@ -546,12 +548,41 @@ def _launch_backup_catch_up(identity: dict[str, Any]) -> None:
     if os.name == "nt":
         options["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        subprocess.Popen(command, **options)
-        logger.info("backup catch-up worker launched")
+        worker = subprocess.Popen(command, **options)
+        logger.info("backup worker launched mode=%s", mode)
+        return worker
     except Exception:
         # Backup failures must never take the listener down. The service log
         # records launch failures; a launched worker has its own backup.log.
-        logger.exception("failed to launch backup catch-up worker")
+        logger.exception("failed to launch backup worker mode=%s", mode)
+        return None
+
+
+def _run_macos_backup_schedule(
+    identity: dict[str, Any],
+    stop_event: threading.Event,
+    started_at: dt.datetime,
+    *,
+    now: Callable[[], dt.datetime] = dt.datetime.now,
+) -> None:
+    # Use local wall time. A short bounded wait also notices wake and clock changes.
+    two_am = dt.time(2)
+    next_due = dt.datetime.combine(started_at.date(), two_am)
+    if started_at > next_due:
+        next_due += dt.timedelta(days=1)
+    while not stop_event.is_set():
+        current = now()
+        if current < next_due:
+            stop_event.wait(min(60, (next_due - current).total_seconds()))
+            continue
+        worker = _launch_backup_worker(identity, "--scheduled")
+        if worker is None or worker.wait() != 0:
+            stop_event.wait(15 * 60)
+            continue
+        # Coalesce missed days, keeping today's 02:00 if it is still ahead.
+        next_due = dt.datetime.combine(current.date(), two_am)
+        if next_due <= current:
+            next_due += dt.timedelta(days=1)
 
 
 def _launch_update_check_worker() -> None:
@@ -575,10 +606,17 @@ def run_service(identity: dict[str, Any]) -> None:
     record = _claim_pid(identity)
     logger.info("service process starting pid=%s port=%s", record["pid"], SERVICE_PORT)
     stop_event = threading.Event()
+    macos = _edition_is_macos()
+    started_at = dt.datetime.now()
     if os.environ.get("MEETING_ROOM_OPEN_BROWSER") == "1":
         threading.Thread(target=_open_browser_once, daemon=True).start()
-    _launch_backup_catch_up(identity)
-    if _edition_is_macos():
+    _launch_backup_worker(identity, "--catch-up")
+    if macos:
+        threading.Thread(
+            target=_run_macos_backup_schedule,
+            args=(identity, stop_event, started_at),
+            daemon=True,
+        ).start()
         threading.Thread(target=_launch_update_check_worker, daemon=True).start()
     config = {
         "DATA_DIR": str(DATA_DIR),
@@ -586,7 +624,7 @@ def run_service(identity: dict[str, Any]) -> None:
         "STATIC_DIR": str(APP_DIR / "static"),
         "SERVICE_CONTROL": record,
         "SERVICE_STOP_EVENT": stop_event,
-        "UPDATE_CHECK_ENABLED": _edition_is_macos(),
+        "UPDATE_CHECK_ENABLED": macos,
     }
     try:
         while run_server_once(
@@ -597,8 +635,10 @@ def run_service(identity: dict[str, Any]) -> None:
             # The first worker intentionally skips an incomplete setup. Once
             # setup commits and the listener is recreated in LAN mode, launch
             # catch-up again so the first durable backup is not delayed a day.
-            _launch_backup_catch_up(identity)
+            _launch_backup_worker(identity, "--catch-up")
     finally:
+        if macos:
+            stop_event.set()
         _remove_pid_if_token(record["token"])
         logger.info("service process stopped pid=%s", record["pid"])
 

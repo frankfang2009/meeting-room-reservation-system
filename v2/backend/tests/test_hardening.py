@@ -1395,7 +1395,7 @@ class BackupRestoreAndServiceHardeningTests(BackendTestCase):
         self.assertEqual(backup_entrypoint.PROGRAM_DIR, backup_entrypoint.APP_DIR.parent)
         self.assertEqual(restore_entrypoint.PROGRAM_DIR, restore_entrypoint.APP_DIR.parent)
         with mock.patch.object(service_entrypoint.subprocess, "Popen") as popen:
-            service_entrypoint._launch_backup_catch_up({"install_id": INSTALL_ID})
+            service_entrypoint._launch_backup_worker({"install_id": INSTALL_ID}, "--catch-up")
         command = popen.call_args.args[0]
         self.assertEqual(command[1], str(service_entrypoint.APP_DIR / "backup.py"))
         self.assertEqual(
