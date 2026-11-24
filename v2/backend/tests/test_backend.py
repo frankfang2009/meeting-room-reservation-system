@@ -1718,7 +1718,7 @@ class ServiceEntrypointTests(BackendTestCase):
             service_entrypoint, "_remove_pid_if_token", return_value=True
         ), mock.patch.object(
             service_entrypoint,
-            "_launch_backup_catch_up",
+            "_launch_backup_worker",
         ) as catch_up, mock.patch.object(
             service_entrypoint.threading, "Thread"
         ) as thread_type, mock.patch.dict(
@@ -1729,7 +1729,7 @@ class ServiceEntrypointTests(BackendTestCase):
         self.assertEqual(config["STATIC_DIR"], str(service_entrypoint.SERVICE_DIR / "static"))
         self.assertNotIn("LAN_ADDRESS", config)
         self.assertEqual(run_once.call_args.args, (8080,))
-        catch_up.assert_called_once_with(identity)
+        catch_up.assert_called_once_with(identity, "--catch-up")
         thread_type.assert_called_once()
 
         with mock.patch.object(
