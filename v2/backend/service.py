@@ -606,11 +606,12 @@ def run_service(identity: dict[str, Any]) -> None:
     record = _claim_pid(identity)
     logger.info("service process starting pid=%s port=%s", record["pid"], SERVICE_PORT)
     stop_event = threading.Event()
+    macos = _edition_is_macos()
     started_at = dt.datetime.now()
     if os.environ.get("MEETING_ROOM_OPEN_BROWSER") == "1":
         threading.Thread(target=_open_browser_once, daemon=True).start()
     _launch_backup_worker(identity, "--catch-up")
-    if _edition_is_macos():
+    if macos:
         threading.Thread(
             target=_run_macos_backup_schedule,
             args=(identity, stop_event, started_at),
@@ -623,7 +624,7 @@ def run_service(identity: dict[str, Any]) -> None:
         "STATIC_DIR": str(APP_DIR / "static"),
         "SERVICE_CONTROL": record,
         "SERVICE_STOP_EVENT": stop_event,
-        "UPDATE_CHECK_ENABLED": _edition_is_macos(),
+        "UPDATE_CHECK_ENABLED": macos,
     }
     try:
         while run_server_once(
@@ -636,7 +637,8 @@ def run_service(identity: dict[str, Any]) -> None:
             # catch-up again so the first durable backup is not delayed a day.
             _launch_backup_worker(identity, "--catch-up")
     finally:
-        stop_event.set()
+        if macos:
+            stop_event.set()
         _remove_pid_if_token(record["token"])
         logger.info("service process stopped pid=%s", record["pid"])
 

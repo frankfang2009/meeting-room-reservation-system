@@ -1729,6 +1729,7 @@ class ServiceEntrypointTests(BackendTestCase):
         self.assertEqual(config["STATIC_DIR"], str(service_entrypoint.SERVICE_DIR / "static"))
         self.assertNotIn("LAN_ADDRESS", config)
         self.assertEqual(run_once.call_args.args, (8080,))
+        self.assertFalse(config["SERVICE_STOP_EVENT"].is_set())
         catch_up.assert_called_once_with(identity, "--catch-up")
         thread_type.assert_called_once()
 
