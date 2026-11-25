@@ -40,24 +40,30 @@ export function serializeSessionBookingDraft(userId, { bookingForm, preservedDra
   return JSON.stringify(payload);
 }
 
-export function writeSessionBookingDraft(storage, userId, drafts) {
+export function writeSessionBookingDraft(userId, drafts, storage) {
   const key = storageKey(userId);
-  if (!key) return false;
+  if (!key) return drafts.bookingForm || drafts.preservedDraft ? "failed" : "empty";
   try {
     const serialized = serializeSessionBookingDraft(userId, drafts);
-    if (serialized) storage.setItem(key, serialized);
-    else storage.removeItem(key);
-    return Boolean(serialized);
+    if (!serialized) {
+      clearSessionBookingDraft(userId, storage);
+      return "empty";
+    }
+    (storage ?? globalThis.sessionStorage).setItem(key, serialized);
+    return "saved";
   } catch {
-    return false;
+    // A rejected write can leave an older draft at the same key.
+    clearSessionBookingDraft(userId, storage);
+    return "failed";
   }
 }
 
-export function consumeSessionBookingDraft(storage, userId) {
+export function consumeSessionBookingDraft(userId, storage) {
   const key = storageKey(userId);
   if (!key) return null;
   try {
-    const raw = storage.getItem(key);
+    const target = storage ?? globalThis.sessionStorage;
+    const raw = target.getItem(key);
     if (!raw) return null;
     const payload = JSON.parse(raw);
     if (payload?.version !== 1 || payload.userId !== String(userId)) return null;
@@ -66,18 +72,18 @@ export function consumeSessionBookingDraft(storage, userId) {
       preservedDraft: sanitizeDraft(payload.preservedDraft),
     };
     if (!drafts.bookingForm && !drafts.preservedDraft) return null;
-    storage.removeItem(key);
+    target.removeItem(key);
     return drafts;
   } catch {
     return null;
   }
 }
 
-export function clearSessionBookingDraft(storage, userId) {
+export function clearSessionBookingDraft(userId, storage) {
   const key = storageKey(userId);
   if (!key) return;
   try {
-    storage.removeItem(key);
+    (storage ?? globalThis.sessionStorage).removeItem(key);
   } catch {
     // Storage can be unavailable in hardened browser profiles; logout still proceeds.
   }
