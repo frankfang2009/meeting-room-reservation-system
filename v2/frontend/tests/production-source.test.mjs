@@ -515,9 +515,10 @@ test("filter races cannot let stale history or audit responses win", () => {
 });
 
 test("logout only leaves the authenticated shell after server confirmation", () => {
-  assert.match(app, /await api\.logout\(\);[\s\S]{0,120}clearSessionBookingDraft[\s\S]{0,120}onLoggedOut\(\)/);
-  assert.match(app, /退出失败，请确认网络后重试/);
-  assert.match(app, /SYSTEM_RECOVERY_REQUIRED"\) onRecovery\(error\)/);
+  const logout = app.slice(app.indexOf("async function logout()"), app.indexOf("return <SessionIsolationBoundary"));
+  assert.match(logout, /await api\.logout\(\);/);
+  assert.match(logout, /handleError\(error, "退出失败，请确认网络后重试"\);\s+return;/);
+  assert.match(logout, /sessionClosedRef\.current = true;\s+clearSessionBookingDraft\(currentUser\?\.id\);\s+onLoggedOut\(\)/);
 });
 
 test("production drawers and history reuse the frozen visual contract classes", () => {
@@ -601,10 +602,10 @@ test("reauthentication remounts scoped state only after session and bootstrap va
 
 test("expired sessions preserve and restore an account-scoped booking draft", () => {
   assert.match(app, /本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复/);
-  assert.match(app, /writeSessionBookingDraft\(window\.sessionStorage, latest\?\.userId/);
-  assert.match(app, /consumeSessionBookingDraft\([\s\S]{0,80}window\.sessionStorage/);
-  assert.match(app, /setToast\("已恢复未保存的预约草稿", "info"\)/);
-  assert.match(app, /clearSessionBookingDraft\(window\.sessionStorage, currentUser\?\.id\)/);
+  assert.match(app, /const status = writeSessionBookingDraft\(latest\?\.userId,[\s\S]*?setExpiredDraftStatus\(status\)/);
+  assert.match(app, /<SessionExpired draftStatus=\{expiredDraftStatus\}/);
+  assert.match(app, /consumeSessionBookingDraft\(currentUser\?\.id\)/);
+  assert.match(app, /if \(!draft\) return;[\s\S]*?setToast\("已恢复未保存的预约草稿", "info"\)/);
 });
 
 test("approved F19 decisions keep production UI and the frozen contract aligned", () => {

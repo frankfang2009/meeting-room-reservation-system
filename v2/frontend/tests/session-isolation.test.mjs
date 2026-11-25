@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   clearSessionBookingDraft,
   consumeSessionBookingDraft,
+  retryDeferredDraftClears,
   serializeSessionBookingDraft,
   SessionIsolationBoundary,
   writeSessionBookingDraft,
@@ -82,23 +83,104 @@ test("expired booking drafts serialize only the approved fields", () => {
 
 test("session draft storage is isolated by user and consumed after recovery", () => {
   const storage = memoryStorage();
-  assert.equal(writeSessionBookingDraft(storage, "user-1", {
+  assert.equal(writeSessionBookingDraft("user-1", {
     bookingForm: bookingDraft,
     preservedDraft: { ...bookingDraft, partyName: "待续草稿" },
-  }), true);
-  assert.equal(consumeSessionBookingDraft(storage, "user-2"), null);
-  assert.deepEqual(consumeSessionBookingDraft(storage, "user-1"), {
+  }, storage), "saved");
+  assert.equal(consumeSessionBookingDraft("user-2", storage), null);
+  assert.deepEqual(consumeSessionBookingDraft("user-1", storage), {
     bookingForm: bookingDraft,
     preservedDraft: { ...bookingDraft, partyName: "待续草稿" },
   });
-  assert.equal(consumeSessionBookingDraft(storage, "user-1"), null);
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
 });
 
 test("active logout clears only the current user's stored draft", () => {
   const storage = memoryStorage();
-  writeSessionBookingDraft(storage, "user-1", { bookingForm: bookingDraft });
-  writeSessionBookingDraft(storage, "user-2", { bookingForm: bookingDraft });
-  clearSessionBookingDraft(storage, "user-1");
-  assert.equal(consumeSessionBookingDraft(storage, "user-1"), null);
-  assert.ok(consumeSessionBookingDraft(storage, "user-2"));
+  writeSessionBookingDraft("user-1", { bookingForm: bookingDraft }, storage);
+  writeSessionBookingDraft("user-2", { bookingForm: bookingDraft }, storage);
+  clearSessionBookingDraft("user-1", storage);
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
+  assert.ok(consumeSessionBookingDraft("user-2", storage));
+});
+
+test("no pending form clears an old draft without claiming a save", () => {
+  const storage = memoryStorage();
+  writeSessionBookingDraft("user-1", { preservedDraft: bookingDraft }, storage);
+  assert.equal(writeSessionBookingDraft("user-1", {}, storage), "empty");
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
+});
+
+test("a rejected write does not offer a stale draft or clear a different account", () => {
+  const storage = memoryStorage();
+  for (const user of ["user-1", "user-2"]) {
+    writeSessionBookingDraft(user, { preservedDraft: bookingDraft }, storage);
+  }
+  storage.setItem = () => { throw new DOMException("full", "QuotaExceededError"); };
+  assert.equal(writeSessionBookingDraft("user-1", { bookingForm: bookingDraft }, storage), "failed");
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
+  assert.deepEqual(consumeSessionBookingDraft("user-2", storage).preservedDraft, bookingDraft);
+});
+
+test("denied access to the storage property still permits expiry, login and logout", () => {
+  const old = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+  Object.defineProperty(globalThis, "sessionStorage", {
+    configurable: true,
+    get() { throw new DOMException("unavailable", "SecurityError"); },
+  });
+  try {
+    assert.equal(writeSessionBookingDraft("user-1", { bookingForm: bookingDraft }), "failed");
+    assert.equal(writeSessionBookingDraft("user-1", {}), "empty");
+    assert.equal(consumeSessionBookingDraft("user-1"), null);
+    assert.doesNotThrow(() => clearSessionBookingDraft("user-1"));
+  } finally {
+    if (old) Object.defineProperty(globalThis, "sessionStorage", old);
+    else delete globalThis.sessionStorage;
+    clearSessionBookingDraft("user-1", memoryStorage());
+  }
+});
+
+test("an explicitly discarded draft cannot return when storage becomes available again", () => {
+  const storage = memoryStorage();
+  const blocked = { ...storage, removeItem() { throw new Error("removal denied"); } };
+  writeSessionBookingDraft("owner", { bookingForm: bookingDraft }, storage);
+  writeSessionBookingDraft("other", { bookingForm: bookingDraft }, storage);
+  clearSessionBookingDraft("owner", blocked);
+  assert.equal(retryDeferredDraftClears(blocked), false);
+  assert.equal(consumeSessionBookingDraft("owner", blocked), null);
+  assert.deepEqual(consumeSessionBookingDraft("other", storage).bookingForm, bookingDraft);
+  assert.equal(consumeSessionBookingDraft("owner", storage), null);
+  assert.equal(retryDeferredDraftClears(storage), true);
+});
+
+test("empty or malformed stored data does not count as a recovery", () => {
+  const storage = memoryStorage();
+  assert.equal(writeSessionBookingDraft("user-1", { bookingForm: {} }, storage), "empty");
+  const key = "meeting-room-v2:expired-booking-draft:user-1";
+  storage.setItem(key, JSON.stringify({ version: 1, userId: "user-1", bookingForm: {} }));
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
+  storage.setItem(key, "{");
+  assert.equal(consumeSessionBookingDraft("user-1", storage), null);
+});
+
+test("a reload retries outstanding deletion without putting booking content in history", async () => {
+  const history = { state: { page: "example" }, replaceState(next) { this.state = next; } };
+  const original = Object.getOwnPropertyDescriptor(globalThis, "history");
+  Object.defineProperty(globalThis, "history", { configurable: true, value: history });
+  const storage = memoryStorage();
+  try {
+    writeSessionBookingDraft("reload-user", { bookingForm: bookingDraft }, storage);
+    clearSessionBookingDraft("reload-user", { removeItem() { throw new Error("blocked"); } });
+    assert.deepEqual(history.state, {
+      page: "example",
+      meetingRoomDraftsToClear: ["meeting-room-v2:expired-booking-draft:reload-user"],
+    });
+    const reloaded = await import("../src/session-isolation.js?after-logout");
+    assert.equal(reloaded.consumeSessionBookingDraft("reload-user", storage), null);
+    assert.deepEqual(history.state, { page: "example" });
+  } finally {
+    clearSessionBookingDraft("reload-user", storage);
+    if (original) Object.defineProperty(globalThis, "history", original);
+    else delete globalThis.history;
+  }
 });

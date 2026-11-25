@@ -45,6 +45,7 @@ import { readAuthenticatedContext, reauthenticateContext, scopedAppKey } from ".
 import {
   clearSessionBookingDraft,
   consumeSessionBookingDraft,
+  retryDeferredDraftClears,
   SessionIsolationBoundary,
   writeSessionBookingDraft,
 } from "./session-isolation.js";
@@ -449,6 +450,12 @@ function Login({ onAuthenticated, onRecovery }) {
   const usernameRef = useRef(null);
   const passwordRef = useRef(null);
   useDocumentTitle("登录");
+
+  useEffect(() => {
+    if (!retryDeferredDraftClears()) {
+      setMessage("浏览器暂时无法清理草稿。如果使用共用电脑，请关闭此标签页。");
+    }
+  }, []);
 
   useEffect(() => {
     if (busy) return;
@@ -872,7 +879,13 @@ function Drawer({ open, heading, onBack, onClose, children, className = "", back
   );
 }
 
-function SessionExpired({ onRecovered, onRecovery }) {
+const EXPIRED_SESSION_MESSAGES = {
+  saved: "本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复。",
+  empty: "请重新登录后继续。",
+  failed: "预约草稿未能保存，重新登录后需重新填写。",
+};
+
+function SessionExpired({ draftStatus, onRecovered, onRecovery }) {
   const ref = useRef(null);
   const [editing, setEditing] = useState(false);
   const [credentials, setCredentials] = useState({ username: "", password: "" });
@@ -896,7 +909,7 @@ function SessionExpired({ onRecovered, onRecovery }) {
   return <div className="session-expired-layer"><section ref={ref} className="session-expired-dialog" role="dialog" aria-modal="true" aria-labelledby="session-expired-heading">
     <span className="session-expired-icon" aria-hidden="true"><LockSimple size={22} /></span>
     <h2 id="session-expired-heading">登录已过期</h2>
-    <p>为保护账户安全，请重新登录。本标签页内的预约草稿已保留，使用同一账号重新登录后可以恢复。</p>
+    <p>{EXPIRED_SESSION_MESSAGES[draftStatus]}</p>
     {!editing ? <button type="button" data-initial-focus onClick={() => setEditing(true)}>重新登录</button> :
       <form className="session-reauth-form" onSubmit={submit}>
         <input data-initial-focus aria-label="用户名" autoComplete="username" placeholder="用户名" value={credentials.username} onChange={(event) => setCredentials((current) => ({ ...current, username: event.target.value }))} />
@@ -1027,7 +1040,9 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   const [conflictCheck, setConflictCheck] = useState({ busy: false, message: "" });
   const [loading, setLoading] = useState({ bootstrap: true, calendar: true, mine: true, history: true });
   const [networkOffline, setNetworkOffline] = useState(false);
-  const [sessionExpired, setSessionExpired] = useState(false);
+  const [expiredDraftStatus, setExpiredDraftStatus] = useState(null);
+  const sessionExpired = expiredDraftStatus !== null;
+  const sessionClosedRef = useRef(false);
   const [unauthorizedMessage, setUnauthorizedMessage] = useState("");
   const [successNotice, setSuccessNotice] = useState(null);
   const [toast, setToastState] = useState(null);
@@ -1149,22 +1164,22 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   useDocumentTitle({ mine: "我的预约", calendar: "预约日历", handovers: "工作交接", history: "预约记录", "data-center": "数据中心", rooms: "笔录室", users: "用户管理", system: "系统状态", settings: "个人中心", help: "帮助中心", unauthorized: "无权限" }[activeView] || "会议室预约系统");
 
   const expireSession = useCallback(() => {
+    // Polling and form submission can report the same expiration.
+    if (sessionClosedRef.current) return;
+    sessionClosedRef.current = true;
     const latest = sessionDraftRef.current;
     const activeForm = ["create", "edit", "slot-conflict"].includes(latest?.drawerType)
       ? latest.bookingForm
       : null;
-    writeSessionBookingDraft(window.sessionStorage, latest?.userId, {
+    const status = writeSessionBookingDraft(latest?.userId, {
       bookingForm: activeForm,
       preservedDraft: latest?.preservedDraft,
     });
-    setSessionExpired(true);
+    setExpiredDraftStatus(status);
   }, []);
 
   useEffect(() => {
-    const recovered = consumeSessionBookingDraft(
-      window.sessionStorage,
-      currentUser?.id,
-    );
+    const recovered = consumeSessionBookingDraft(currentUser?.id);
     const draft = recovered?.bookingForm || recovered?.preservedDraft;
     if (!draft) return;
     setBookingForm(draft);
@@ -2805,21 +2820,21 @@ function MainApp({ session, initialBootstrap, onAuthenticatedContext, onLoggedOu
   async function logout() {
     try {
       await api.logout();
-      clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
-      onLoggedOut();
     } catch (error) {
-      if (error?.code === "SYSTEM_RECOVERY_REQUIRED") onRecovery(error);
-      else if (error?.status === 401 || error?.code === "SESSION_REQUIRED" || error?.code === "SESSION_EXPIRED") {
-        clearSessionBookingDraft(window.sessionStorage, currentUser?.id);
-        onLoggedOut();
+      if (error?.status !== 401 && error?.code !== "SESSION_REQUIRED" && error?.code !== "SESSION_EXPIRED") {
+        handleError(error, "退出失败，请确认网络后重试");
+        return;
       }
-      else handleError(error, "退出失败，请确认网络后重试");
     }
+    // A late 401 from this account must not recreate its discarded draft.
+    sessionClosedRef.current = true;
+    clearSessionBookingDraft(currentUser?.id);
+    onLoggedOut();
   }
 
   return <SessionIsolationBoundary
     blocked={sessionExpired}
-    reauthentication={<SessionExpired onRecovery={onRecovery} onRecovered={onAuthenticatedContext} />}
+    reauthentication={<SessionExpired draftStatus={expiredDraftStatus} onRecovery={onRecovery} onRecovered={onAuthenticatedContext} />}
   ><div className={`app-shell ${drawer ? "drawer-open" : ""} ${drawer?.type?.startsWith("user") ? "user-drawer-open" : ""}`}>
     <div ref={mainRef} className="app-main-region">
       <aside className="icon-rail" aria-label="主导航">
