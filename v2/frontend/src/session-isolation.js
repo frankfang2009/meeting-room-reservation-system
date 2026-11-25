@@ -12,6 +12,52 @@ const DRAFT_FIELDS = [
   "start",
 ];
 
+// If removal is denied, retain only the account keys to discard. History state
+// survives a reload of this tab without putting draft content or IDs in the URL.
+const DEFERRED_CLEAR_KEY = "meetingRoomDraftsToClear";
+function readDeferredClears() {
+  try {
+    const keys = globalThis.history?.state?.[DEFERRED_CLEAR_KEY];
+    if (!Array.isArray(keys)) return new Set();
+    return new Set(keys.filter((key) =>
+      typeof key === "string" && key.startsWith(DRAFT_STORAGE_PREFIX),
+    ));
+  } catch {
+    return new Set();
+  }
+}
+const deferredClears = readDeferredClears();
+
+function setClearPending(key, pending) {
+  if (deferredClears.has(key) === pending) return;
+  if (pending) deferredClears.add(key);
+  else deferredClears.delete(key);
+  try {
+    const history = globalThis.history;
+    if (!history) return;
+    const state = { ...history.state };
+    if (deferredClears.size) state[DEFERRED_CLEAR_KEY] = [...deferredClears];
+    else delete state[DEFERRED_CLEAR_KEY];
+    history.replaceState(state, "");
+  } catch {
+    // If history is also restricted, the current page still honors the discard.
+  }
+}
+
+function removeStoredDraft(key, storage) {
+  try {
+    (storage ?? globalThis.sessionStorage).removeItem(key);
+    setClearPending(key, false);
+  } catch {
+    setClearPending(key, true);
+  }
+}
+
+export function retryDeferredDraftClears(storage) {
+  for (const key of deferredClears) removeStoredDraft(key, storage);
+  return deferredClears.size === 0;
+}
+
 function storageKey(userId) {
   const id = String(userId || "").trim();
   return id ? `${DRAFT_STORAGE_PREFIX}${id}` : "";
@@ -22,6 +68,7 @@ function sanitizeDraft(value) {
   const draft = Object.fromEntries(
     DRAFT_FIELDS.map((field) => [field, String(value[field] || "")]),
   );
+  if (DRAFT_FIELDS.every((field) => !draft[field])) return null;
   const duration = Number(value.duration);
   draft.duration = Number.isFinite(duration) && duration > 0 ? duration : 60;
   return draft;
@@ -50,6 +97,7 @@ export function writeSessionBookingDraft(userId, drafts, storage) {
       return "empty";
     }
     (storage ?? globalThis.sessionStorage).setItem(key, serialized);
+    setClearPending(key, false);
     return "saved";
   } catch {
     // A rejected write can leave an older draft at the same key.
@@ -59,8 +107,9 @@ export function writeSessionBookingDraft(userId, drafts, storage) {
 }
 
 export function consumeSessionBookingDraft(userId, storage) {
+  retryDeferredDraftClears(storage);
   const key = storageKey(userId);
-  if (!key) return null;
+  if (!key || deferredClears.has(key)) return null;
   try {
     const target = storage ?? globalThis.sessionStorage;
     const raw = target.getItem(key);
@@ -81,12 +130,7 @@ export function consumeSessionBookingDraft(userId, storage) {
 
 export function clearSessionBookingDraft(userId, storage) {
   const key = storageKey(userId);
-  if (!key) return;
-  try {
-    (storage ?? globalThis.sessionStorage).removeItem(key);
-  } catch {
-    // Storage can be unavailable in hardened browser profiles; logout still proceeds.
-  }
+  if (key) removeStoredDraft(key, storage);
 }
 
 /**

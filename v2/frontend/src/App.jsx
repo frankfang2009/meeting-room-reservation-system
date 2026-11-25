@@ -45,6 +45,7 @@ import { readAuthenticatedContext, reauthenticateContext, scopedAppKey } from ".
 import {
   clearSessionBookingDraft,
   consumeSessionBookingDraft,
+  retryDeferredDraftClears,
   SessionIsolationBoundary,
   writeSessionBookingDraft,
 } from "./session-isolation.js";
@@ -449,6 +450,12 @@ function Login({ onAuthenticated, onRecovery }) {
   const usernameRef = useRef(null);
   const passwordRef = useRef(null);
   useDocumentTitle("登录");
+
+  useEffect(() => {
+    if (!retryDeferredDraftClears()) {
+      setMessage("浏览器暂时无法清理草稿。如果使用共用电脑，请关闭此标签页。");
+    }
+  }, []);
 
   useEffect(() => {
     if (busy) return;
