@@ -297,3 +297,39 @@ calendar and role boundaries are unchanged.
 - The reminder poller now runs regardless of the two notification switches
   (handovers are to-dos, not notices); switch-off still clears change and
   upcoming presentation.
+
+## Calendar occupancy addendum — 2026-10-16
+
+Shared-calendar blocks distinguish the current user’s bookings from everyone
+else’s without a new API field. Ownership is `reservation.ownerId` compared
+with the authenticated user id. Missing `ownerId` stays visually flat and is
+not announced as either “mine” or “someone else’s”.
+
+- The current user’s blocks keep the V2.5.1 card: ultra-pale whole-card tag
+  tint, small solid tag dot, and no repeated tag name. They sit slightly
+  raised. A top-left sticky fold (12px, or 8px when the block is one row or
+  about 30 minutes) is clipped on the diagonal; the flap is that slot’s
+  `--tag-fold` and the card shadow follows the clipped outline. The fold is
+  the “mine” signal, so the shadow is one step quieter than the approved
+  mockup C. Sage and slate folds are darkened enough to stay visible. There
+  is no paper texture. Hover may lift the card by 1px only when the user has
+  not requested reduced motion. The dot, time, and title stay clear of the
+  fold, including on short cards. The card itself stays `overflow: visible`
+  so the fold and its shadow are not clipped. Title and case number live in
+  a separate shrinkable block: long names and case numbers (the API allows
+  120 characters) truncate with an ellipsis inside the card, on short cards
+  as well as ordinary ones, and the same rule applies to other people’s
+  blocks. The full name and case number stay in the button’s accessible name
+  and on hover titles. A countdown chip reserves space so the ellipsis
+  happens before the chip.
+- Other people’s blocks are flat on the canvas: `#f3efe8`, no shadow, no tag
+  dot or tag-colored emphasis, muted smaller text, and a slightly deeper
+  inset. Hover and focus stay quiet graphite, and tag filtering still fades
+  non-matching blocks.
+- Past slots and time outside working hours stay a separate, slightly darker
+  ivory band (`#ebe6dc`). The existing small label (“已开始” / “工作时间外”)
+  remains on hover and focus, so a full morning is not tiled with repeated
+  captions. There is no separate maintenance block in the API.
+- The accessible name includes “我的预约” or “他人预约” in addition to the
+  owner name. Selected-slot rings, focus outlines, countdown chips, and tag
+  muting continue to apply.
